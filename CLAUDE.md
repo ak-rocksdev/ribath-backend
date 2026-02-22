@@ -7,7 +7,7 @@ This file provides guidance to Claude Code when working with this repository.
 **Ribath Backend** is the REST API backend for the **Ribath Masjid Hub** pesantren (Islamic boarding school) management system, built for Ribath Masjid Riyadh Solo. This project is a migration from Supabase (BaaS) to a self-hosted Laravel 12 API.
 
 **Frontend:** React SPA at `C:\laragon\www\ribath-masjid-hub` (separate repo)
-**Roadmap:** See `C:\laragon\www\ribath-masjid-hub\ROADMAP-MIGRASI-BACKEND.md` for full migration plan
+**Roadmap:** See `docs/ROADMAP-MIGRASI-BACKEND.md` for full migration plan
 
 ## Development Philosophy
 
@@ -75,7 +75,11 @@ Vite (FE):  port 8080  (React frontend dev server)
 
 - Laragon runs both Apache and Nginx simultaneously
 - PostgreSQL is NOT managed by Laragon — it's a standalone install at `C:\Program Files\PostgreSQL\18\`
-- Database name: `ribath_backend`
+- Database name: `ribath_app_local`
+- Database naming convention per environment:
+  - Local: `ribath_app_local`
+  - Dev server: `ribath_app_dev`
+  - Production: `ribath_app_prod`
 - PHP extensions `pdo_pgsql` and `pgsql` enabled in `C:\laragon\bin\php\php-8.2.28-Win32-vs16-x64\php.ini`
 
 ## Development Commands
@@ -179,7 +183,7 @@ Tables are created **incrementally per batch**, not all at once. The existing Su
 
 ## Development Batches
 
-Development follows the roadmap in `ROADMAP-MIGRASI-BACKEND.md`:
+Development follows the roadmap in `docs/ROADMAP-MIGRASI-BACKEND.md`:
 
 | Batch | Feature | Status |
 |---|---|---|
