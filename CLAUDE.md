@@ -2,9 +2,39 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
+## Current Status & Next Steps
+
+### What's Done (Batch 0 — partial)
+- [x] Laravel 12.52.0 installed at `C:\laragon\www\ribath-backend`
+- [x] PostgreSQL 18 running on port 5432 (password reset done, user: `postgres`)
+- [x] PHP `pdo_pgsql` and `pgsql` extensions enabled
+- [x] Nginx configured on port 8181 in Laragon (alongside Apache on 80)
+- [x] Git initialized on `main` branch (4 commits, no remote yet)
+- [x] CLAUDE.md and docs/ROADMAP-MIGRASI-BACKEND.md created
+- [x] Supabase database backed up to `backups/` (schema + data + full)
+- [x] Pest testing framework installed
+- [x] Laravel Boost installed
+
+### What's Next (Batch 0 — remaining)
+1. **Create the local database**: `psql -U postgres -h 127.0.0.1 -c "CREATE DATABASE ribath_app_local;"`
+2. **Install Sanctum**: `composer require laravel/sanctum` + `php artisan install:api`
+3. **Install Spatie Permission**: `composer require spatie/laravel-permission` + publish config
+4. **Review Supabase schema** (`backups/supabase_schema_backup.sql`) — discuss which tables to create for Batch 0 (users, roles, permissions)
+5. **Create Laravel migrations** for Batch 0 tables (users table already exists from Laravel default)
+6. **Configure Spatie Permission** — add `HasRoles` trait to User model, set guard to `sanctum`
+7. **Create RolePermissionSeeder** — seed `super_admin` and `pengurus_pesantren` roles
+8. **Build Auth endpoints** — login, logout, me, change password (Sanctum-based)
+9. **Setup CORS** — allow requests from `localhost:8080` (React frontend)
+10. **Setup API response structure** — base controller or trait for consistent JSON responses
+11. **Create remote git repo** and push
+
+### After Batch 0 → Batch 1: PSB
+- Review PSB tables from Supabase backup before creating migrations
+- Implement PSB flow: quick registration → full wizard → admin review → approval
+
 ## Project Overview
 
-**Ribath Backend** is the REST API backend for the **Ribath Masjid Hub** pesantren (Islamic boarding school) management system, built for Ribath Masjid Riyadh Solo. This project is a migration from Supabase (BaaS) to a self-hosted Laravel 12 API.
+**Ribath Backend** is the REST API backend for the **Ribath Masjid Hub** pesantren (Islamic boarding school) management system, built initially for Ribath Masjid Riyadh Solo. This project is a migration from Supabase (BaaS) to a self-hosted Laravel 12 API.
 
 **Frontend:** React SPA at `C:\laragon\www\ribath-masjid-hub` (separate repo)
 **Roadmap:** See `docs/ROADMAP-MIGRASI-BACKEND.md` for full migration plan
@@ -187,7 +217,7 @@ Development follows the roadmap in `docs/ROADMAP-MIGRASI-BACKEND.md`:
 
 | Batch | Feature | Status |
 |---|---|---|
-| 0 | Foundation (Auth, RBAC, Config) | Not started |
+| 0 | Foundation (Auth, RBAC, Config) | **In progress** — Laravel 12 installed, DB backup done |
 | 1 | PSB (Pendaftaran Santri Baru) | Not started |
 | 2 | User & Santri Management | Not started |
 | 3 | Ustadz & SDM | Not started |
