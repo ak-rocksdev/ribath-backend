@@ -40,6 +40,14 @@ A mobile application (likely React Native or Flutter) will consume this same API
 - **Push notification infrastructure** (FCM tokens, device registration)
 - **Offline-friendly patterns** (timestamps, sync-friendly responses, ETags where appropriate)
 
+### Realtime Broadcasting (Laravel Reverb)
+
+Live notifications and broadcasting will be implemented using **Laravel Reverb** (WebSocket):
+- Used by the React frontend for real-time updates (new PSB registrations, payment confirmations, etc.)
+- Will also be consumed by the future mobile app
+- Events should be designed as **broadcastable from the start** — even if Reverb is set up in a later batch, the Event classes should implement `ShouldBroadcast` when the feature logically needs real-time updates
+- Channel authorization uses Spatie Permission roles (not separate channel logic)
+
 ## Tech Stack
 
 - **Framework:** Laravel 12 (API-only, no Blade views)
@@ -47,7 +55,7 @@ A mobile application (likely React Native or Flutter) will consume this same API
 - **Database:** PostgreSQL 18 (standalone install at `C:\Program Files\PostgreSQL\18\`)
 - **Auth:** Laravel Sanctum (SPA token-based)
 - **RBAC:** Spatie Laravel Permission (`spatie/laravel-permission`)
-- **Realtime:** Laravel Reverb (WebSocket, planned)
+- **Realtime:** Laravel Reverb (WebSocket) — for live notifications & broadcasting to React and mobile apps
 - **Queue:** Redis-backed (planned, currently database driver)
 - **Cache:** Redis (planned, currently database driver)
 - **Storage:** Laravel Filesystem (local → MinIO/S3 in production)
@@ -133,7 +141,6 @@ app/
 │   ├── Middleware/
 │   └── Requests/              # Form Request validation classes
 ├── Models/                    # Eloquent models
-├── Policies/                  # Authorization policies
 ├── Services/                  # Business logic layer
 ├── Events/                    # Event classes for broadcasting
 ├── Jobs/                      # Queue jobs
@@ -225,21 +232,51 @@ return response()->json([
 ]);
 ```
 
-### Code Style
+### Authorization Pattern (Spatie Permission Only — No Laravel Policies)
+
+**DO NOT use Laravel's built-in Policy classes.** Authorization is handled entirely through Spatie Permission:
+- Permissions are stored in the database and assigned to roles
+- Use Spatie middleware on routes: `->middleware('permission:manage-santri')`
+- Use Spatie methods in code: `$user->hasPermissionTo('manage-santri')`, `$user->hasRole('super_admin')`
+- Permission names should be descriptive and follow the pattern: `{action}-{resource}` (e.g., `view-psb-registrations`, `create-santri`, `manage-keuangan`)
+- All permission checks come from database values — no hardcoded authorization logic in Policy files
+- This avoids redundancy between Spatie and Laravel's native Policy system
+
+### Code Style & Readability
 
 - **PSR-12** via Laravel Pint
 - **Naming:** Models PascalCase, tables snake_case, routes kebab-case
 - **Controllers:** Always use Form Request classes for validation (never validate in controller)
 - **Business logic:** In Service classes, not in Controllers
-- **Authorization:** Use Policies + Spatie Permission middleware
 - **API versioning:** Routes prefixed with `/api/v1/`
+- **Prioritize clarity over brevity** — use descriptive, self-explanatory variable and method names even if they are long. Code should be readable by any developer without needing comments to explain what a variable holds or what a method does.
+  ```php
+  // GOOD — clear and self-explanatory
+  $activeRegistrationPeriod = PsbPeriod::where('is_active', true)->first();
+  $pendingRegistrationCount = CalonSantriRegistration::where('status', 'pending')->count();
+
+  // BAD — cryptic abbreviations
+  $period = PsbPeriod::where('is_active', true)->first();
+  $cnt = CalonSantriRegistration::where('status', 'pending')->count();
+  ```
+- **Method names** should describe what they do:
+  ```php
+  // GOOD
+  public function getApprovedRegistrationsByPeriod(PsbPeriod $period): Collection
+  public function calculateTotalOutstandingPayments(Santri $santri): int
+
+  // BAD
+  public function getRegs(PsbPeriod $p): Collection
+  public function calcTotal(Santri $s): int
+  ```
+- Always follow Laravel best practices and conventions
 
 ### Security
 
 - Never log passwords, tokens, or personal data
 - Use Form Request validation on all endpoints
 - Apply Spatie Permission middleware on all protected routes
-- Use Eloquent relationships to prevent N+1 queries
+- Use Eloquent relationships and eager loading to prevent N+1 queries
 - Use `$fillable` on all models (never `$guarded = []`)
 
 ### Testing
