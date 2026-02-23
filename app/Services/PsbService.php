@@ -127,6 +127,7 @@ class PsbService
             COUNT(*) FILTER (WHERE status = 'new') as new,
             COUNT(*) FILTER (WHERE status = 'contacted') as contacted,
             COUNT(*) FILTER (WHERE status = 'interview') as interview,
+            COUNT(*) FILTER (WHERE status = 'visited') as visited,
             COUNT(*) FILTER (WHERE status = 'accepted') as accepted,
             COUNT(*) FILTER (WHERE status = 'rejected') as rejected,
             COUNT(*) FILTER (WHERE status = 'waitlist') as waitlist,

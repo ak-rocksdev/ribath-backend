@@ -19,6 +19,8 @@ class Registration extends Model
 
     public const STATUS_INTERVIEW = 'interview';
 
+    public const STATUS_VISITED = 'visited';
+
     public const STATUS_ACCEPTED = 'accepted';
 
     public const STATUS_REJECTED = 'rejected';
@@ -31,6 +33,7 @@ class Registration extends Model
         self::STATUS_NEW,
         self::STATUS_CONTACTED,
         self::STATUS_INTERVIEW,
+        self::STATUS_VISITED,
         self::STATUS_ACCEPTED,
         self::STATUS_REJECTED,
         self::STATUS_WAITLIST,
@@ -55,6 +58,7 @@ class Registration extends Model
         'contacted_at',
         'contacted_by',
         'interviewed_at',
+        'visited_at',
         'reviewed_at',
         'reviewed_by',
         'rejection_reason',
@@ -66,6 +70,7 @@ class Registration extends Model
             'birth_date' => 'date',
             'contacted_at' => 'datetime',
             'interviewed_at' => 'datetime',
+            'visited_at' => 'datetime',
             'reviewed_at' => 'datetime',
         ];
     }

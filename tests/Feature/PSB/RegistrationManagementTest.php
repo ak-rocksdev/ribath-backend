@@ -302,6 +302,22 @@ test('can update status to interview', function () {
         ->assertJsonPath('data.status', 'interview');
 });
 
+test('can update status to visited and sets visited_at', function () {
+    $admin = createAdminUser();
+    $registration = Registration::factory()->create(['status' => Registration::STATUS_INTERVIEW]);
+
+    $response = $this->actingAs($admin)
+        ->patchJson("/api/v1/psb/registrations/{$registration->id}/status", [
+            'status' => 'visited',
+        ]);
+
+    $response->assertOk()
+        ->assertJsonPath('data.status', 'visited');
+
+    $registration->refresh();
+    expect($registration->visited_at)->not()->toBeNull();
+});
+
 test('can update status to waitlist', function () {
     $admin = createAdminUser();
     $registration = Registration::factory()->create(['status' => Registration::STATUS_NEW]);

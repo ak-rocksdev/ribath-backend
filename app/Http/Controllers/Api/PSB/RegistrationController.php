@@ -67,6 +67,10 @@ class RegistrationController extends Controller
             $updateData['contacted_by'] = $request->user()->id;
         }
 
+        if ($request->validated()['status'] === Registration::STATUS_VISITED) {
+            $updateData['visited_at'] = now();
+        }
+
         if (isset($request->validated()['admin_notes'])) {
             $updateData['admin_notes'] = $request->validated()['admin_notes'];
         }
