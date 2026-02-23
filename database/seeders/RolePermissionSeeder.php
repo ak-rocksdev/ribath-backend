@@ -22,6 +22,10 @@ class RolePermissionSeeder extends Seeder
             'delete-users',
             'manage-roles',
             'manage-settings',
+            'view-psb-registrations',
+            'manage-psb-registrations',
+            'view-psb-periods',
+            'manage-psb-periods',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -31,7 +35,14 @@ class RolePermissionSeeder extends Seeder
         $superAdmin = Role::firstOrCreate(['name' => 'super_admin']);
 
         $pengurusPesantren = Role::firstOrCreate(['name' => 'pengurus_pesantren']);
-        $pengurusPesantren->syncPermissions(['view-users', 'manage-settings']);
+        $pengurusPesantren->syncPermissions([
+            'view-users',
+            'manage-settings',
+            'view-psb-registrations',
+            'manage-psb-registrations',
+            'view-psb-periods',
+            'manage-psb-periods',
+        ]);
 
         $adminUser = User::firstOrCreate(
             ['email' => 'akhabsy110@gmail.com'],
