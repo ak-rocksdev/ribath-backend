@@ -14,11 +14,17 @@ class Registration extends Model
     use HasFactory, HasUuids, SoftDeletes;
 
     public const STATUS_NEW = 'new';
+
     public const STATUS_CONTACTED = 'contacted';
+
     public const STATUS_INTERVIEW = 'interview';
+
     public const STATUS_ACCEPTED = 'accepted';
+
     public const STATUS_REJECTED = 'rejected';
+
     public const STATUS_WAITLIST = 'waitlist';
+
     public const STATUS_CANCELLED = 'cancelled';
 
     public const STATUSES = [

@@ -46,7 +46,7 @@ class PsbService
 
             if ($registration->guardian_name !== null) {
                 $temporaryPassword = Str::random(10);
-                $guardianEmail = $registration->guardian_email ?? $registration->guardian_phone . '@wali.ribath.local';
+                $guardianEmail = $registration->guardian_email ?? $registration->guardian_phone.'@wali.ribath.local';
 
                 $guardianUser = User::create([
                     'name' => $registration->guardian_name,
@@ -54,7 +54,9 @@ class PsbService
                     'password' => Hash::make($temporaryPassword),
                 ]);
 
-                $guardianRole = Role::firstOrCreate(['name' => 'wali_santri']);
+                $guardianRole = Role::firstOrCreate(
+                    ['name' => 'wali_santri', 'guard_name' => 'web']
+                );
                 $guardianUser->assignRole($guardianRole);
             }
 

@@ -13,7 +13,7 @@ class RegistrationNumberGenerator
 
         $lastNumber = Registration::withTrashed()
             ->where('registration_number', 'like', "{$prefix}%")
-            ->orderByRaw("CAST(SUBSTRING(registration_number FROM '[0-9]+$') AS INTEGER) DESC")
+            ->orderBy('registration_number', 'desc')
             ->value('registration_number');
 
         $nextSequence = 1;
@@ -21,6 +21,6 @@ class RegistrationNumberGenerator
             $nextSequence = (int) substr($lastNumber, strrpos($lastNumber, '-') + 1) + 1;
         }
 
-        return $prefix . str_pad($nextSequence, 5, '0', STR_PAD_LEFT);
+        return $prefix.str_pad($nextSequence, 5, '0', STR_PAD_LEFT);
     }
 }
