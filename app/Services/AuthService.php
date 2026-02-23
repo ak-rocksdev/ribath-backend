@@ -23,6 +23,7 @@ class AuthService
                 'name' => $user->name,
                 'email' => $user->email,
                 'roles' => $user->getRoleNames(),
+                'permissions' => $user->getAllPermissions()->pluck('name'),
             ],
             'token' => $token,
         ];
@@ -40,6 +41,7 @@ class AuthService
             'name' => $user->name,
             'email' => $user->email,
             'roles' => $user->getRoleNames(),
+            'permissions' => $user->getAllPermissions()->pluck('name'),
         ];
     }
 
