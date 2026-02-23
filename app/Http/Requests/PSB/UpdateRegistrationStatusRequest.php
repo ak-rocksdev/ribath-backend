@@ -14,9 +14,8 @@ class UpdateRegistrationStatusRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'status' => ['required', 'string', 'in:dihubungi,interview,waitlist,batal'],
+            'status' => ['required', 'in:contacted,interview,waitlist,cancelled'],
             'admin_notes' => ['nullable', 'string'],
-            'interviewed_at' => ['nullable', 'date'],
         ];
     }
 }

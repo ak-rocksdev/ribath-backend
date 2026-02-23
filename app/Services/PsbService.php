@@ -2,9 +2,9 @@
 
 namespace App\Services;
 
-use App\Models\PsbPeriod;
-use App\Models\PsbRegistration;
-use App\Models\Santri;
+use App\Models\Registration;
+use App\Models\RegistrationPeriod;
+use App\Models\Student;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -17,81 +17,81 @@ class PsbService
         private RegistrationNumberGenerator $registrationNumberGenerator
     ) {}
 
-    public function register(array $validatedData): PsbRegistration
+    public function register(array $validatedData): Registration
     {
-        $activePeriod = PsbPeriod::where('is_active', true)
-            ->where('pendaftaran_buka', '<=', now())
-            ->where('pendaftaran_tutup', '>=', now())
+        $activePeriod = RegistrationPeriod::where('is_active', true)
+            ->where('registration_open', '<=', now())
+            ->where('registration_close', '>=', now())
             ->first();
 
-        $status = PsbRegistration::STATUS_BARU;
+        $status = Registration::STATUS_NEW;
 
-        if ($activePeriod && $activePeriod->kuota_santri !== null && $activePeriod->kuota_terisi >= $activePeriod->kuota_santri) {
-            $status = PsbRegistration::STATUS_WAITLIST;
+        if ($activePeriod && $activePeriod->student_quota !== null && $activePeriod->enrolled_count >= $activePeriod->student_quota) {
+            $status = Registration::STATUS_WAITLIST;
         }
 
-        return PsbRegistration::create([
+        return Registration::create([
             ...$validatedData,
-            'psb_period_id' => $activePeriod?->id,
+            'registration_period_id' => $activePeriod?->id,
             'registration_number' => $this->registrationNumberGenerator->generate(),
             'status' => $status,
         ]);
     }
 
-    public function acceptRegistration(PsbRegistration $registration, User $adminUser): array
+    public function acceptRegistration(Registration $registration, User $adminUser): array
     {
         return DB::transaction(function () use ($registration, $adminUser) {
-            $waliUser = null;
+            $guardianUser = null;
             $temporaryPassword = null;
 
-            if ($registration->nama_wali !== null) {
+            if ($registration->guardian_name !== null) {
                 $temporaryPassword = Str::random(10);
-                $waliEmail = $registration->email_wali ?? $registration->no_hp_wali . '@wali.ribath.local';
+                $guardianEmail = $registration->guardian_email ?? $registration->guardian_phone . '@wali.ribath.local';
 
-                $waliUser = User::create([
-                    'name' => $registration->nama_wali,
-                    'email' => $waliEmail,
+                $guardianUser = User::create([
+                    'name' => $registration->guardian_name,
+                    'email' => $guardianEmail,
                     'password' => Hash::make($temporaryPassword),
                 ]);
 
-                $waliSantriRole = Role::firstOrCreate(['name' => 'wali_santri']);
-                $waliUser->assignRole($waliSantriRole);
+                $guardianRole = Role::firstOrCreate(['name' => 'wali_santri']);
+                $guardianUser->assignRole($guardianRole);
             }
 
-            $tanggalMasuk = $registration->period?->tanggal_masuk ?? now()->toDateString();
+            $entryDate = $registration->period?->entry_date ?? now()->toDateString();
 
-            $santri = Santri::create([
-                'psb_registration_id' => $registration->id,
-                'wali_user_id' => $waliUser?->id,
-                'nama_lengkap' => $registration->nama_lengkap,
-                'tempat_lahir' => $registration->tempat_lahir,
-                'tanggal_lahir' => $registration->tanggal_lahir,
-                'jenis_kelamin' => $registration->jenis_kelamin,
-                'program' => $registration->program_minat,
-                'status' => 'aktif',
-                'tanggal_masuk' => $tanggalMasuk,
+            $student = Student::create([
+                'registration_id' => $registration->id,
+                'guardian_user_id' => $guardianUser?->id,
+                'full_name' => $registration->full_name,
+                'birth_place' => $registration->birth_place,
+                'birth_date' => $registration->birth_date,
+                'gender' => $registration->gender,
+                'program' => $registration->preferred_program,
+                'status' => 'active',
+                'entry_date' => $entryDate,
             ]);
 
             $registration->update([
-                'status' => PsbRegistration::STATUS_DITERIMA,
+                'status' => Registration::STATUS_ACCEPTED,
                 'reviewed_at' => now(),
                 'reviewed_by' => $adminUser->id,
             ]);
 
             if ($registration->period) {
-                $registration->period->increment('kuota_terisi');
+                $registration->period->increment('enrolled_count');
             }
 
             $result = [
-                'santri' => $santri,
+                'student' => $student,
                 'registration' => $registration->fresh(),
             ];
 
-            if ($waliUser) {
-                $result['wali_user'] = [
-                    'id' => $waliUser->id,
-                    'name' => $waliUser->name,
-                    'email' => $waliUser->email,
+            if ($guardianUser) {
+                $result['guardian_user'] = [
+                    'id' => $guardianUser->id,
+                    'name' => $guardianUser->name,
+                    'email' => $guardianUser->email,
                     'temporary_password' => $temporaryPassword,
                 ];
             }
@@ -100,10 +100,10 @@ class PsbService
         });
     }
 
-    public function rejectRegistration(PsbRegistration $registration, User $adminUser, string $rejectionReason): PsbRegistration
+    public function rejectRegistration(Registration $registration, User $adminUser, string $rejectionReason): Registration
     {
         $registration->update([
-            'status' => PsbRegistration::STATUS_DITOLAK,
+            'status' => Registration::STATUS_REJECTED,
             'reviewed_at' => now(),
             'reviewed_by' => $adminUser->id,
             'rejection_reason' => $rejectionReason,
@@ -112,23 +112,23 @@ class PsbService
         return $registration->fresh();
     }
 
-    public function getRegistrationStats(?string $psbPeriodId = null): array
+    public function getRegistrationStats(?string $registrationPeriodId = null): array
     {
-        $query = PsbRegistration::query();
+        $query = Registration::query();
 
-        if ($psbPeriodId) {
-            $query->where('psb_period_id', $psbPeriodId);
+        if ($registrationPeriodId) {
+            $query->where('registration_period_id', $registrationPeriodId);
         }
 
         $stats = $query->selectRaw("
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'baru') as baru,
-            COUNT(*) FILTER (WHERE status = 'dihubungi') as dihubungi,
+            COUNT(*) FILTER (WHERE status = 'new') as new,
+            COUNT(*) FILTER (WHERE status = 'contacted') as contacted,
             COUNT(*) FILTER (WHERE status = 'interview') as interview,
-            COUNT(*) FILTER (WHERE status = 'diterima') as diterima,
-            COUNT(*) FILTER (WHERE status = 'ditolak') as ditolak,
+            COUNT(*) FILTER (WHERE status = 'accepted') as accepted,
+            COUNT(*) FILTER (WHERE status = 'rejected') as rejected,
             COUNT(*) FILTER (WHERE status = 'waitlist') as waitlist,
-            COUNT(*) FILTER (WHERE status = 'batal') as batal
+            COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled
         ")->first();
 
         return $stats->toArray();

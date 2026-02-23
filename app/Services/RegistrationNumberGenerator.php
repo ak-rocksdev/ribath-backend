@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\PsbRegistration;
+use App\Models\Registration;
 
 class RegistrationNumberGenerator
 {
@@ -11,7 +11,7 @@ class RegistrationNumberGenerator
         $year = now()->year;
         $prefix = "PSB-{$year}-";
 
-        $lastNumber = PsbRegistration::withTrashed()
+        $lastNumber = Registration::withTrashed()
             ->where('registration_number', 'like', "{$prefix}%")
             ->orderByRaw("CAST(SUBSTRING(registration_number FROM '[0-9]+$') AS INTEGER) DESC")
             ->value('registration_number');

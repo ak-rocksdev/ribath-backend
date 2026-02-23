@@ -6,26 +6,23 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
-        Schema::create('psb_registrations', function (Blueprint $table) {
+        Schema::create('registrations', function (Blueprint $table) {
             $table->uuid('id')->primary();
-            $table->foreignUuid('psb_period_id')->nullable()->constrained('psb_periods')->nullOnDelete();
+            $table->foreignUuid('registration_period_id')->nullable()->constrained('registration_periods')->nullOnDelete();
             $table->string('registration_number')->unique();
-            $table->string('status', 20)->default('baru');
+            $table->string('status', 20)->default('new');
             $table->string('registrant_type', 10);
-            $table->string('nama_lengkap', 100);
-            $table->string('tempat_lahir', 100)->nullable();
-            $table->date('tanggal_lahir');
-            $table->string('jenis_kelamin', 1);
-            $table->string('program_minat', 20);
-            $table->string('nama_wali', 100)->nullable();
-            $table->string('no_hp_wali', 20);
-            $table->string('email_wali', 255)->nullable();
-            $table->string('sumber_info', 50)->nullable();
+            $table->string('full_name', 100);
+            $table->string('birth_place', 100)->nullable();
+            $table->date('birth_date');
+            $table->string('gender', 1);
+            $table->string('preferred_program', 20);
+            $table->string('guardian_name', 100)->nullable();
+            $table->string('guardian_phone', 20);
+            $table->string('guardian_email', 255)->nullable();
+            $table->string('info_source', 50)->nullable();
             $table->text('admin_notes')->nullable();
             $table->timestamp('contacted_at')->nullable();
             $table->foreignId('contacted_by')->nullable()->constrained('users')->nullOnDelete();
@@ -42,11 +39,8 @@ return new class extends Migration
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('psb_registrations');
+        Schema::dropIfExists('registrations');
     }
 };

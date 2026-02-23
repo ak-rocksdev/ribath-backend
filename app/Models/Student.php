@@ -7,41 +7,39 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Santri extends Model
+class Student extends Model
 {
     use HasFactory, HasUuids;
 
-    protected $table = 'santri';
-
     protected $fillable = [
-        'psb_registration_id',
-        'wali_user_id',
+        'registration_id',
+        'guardian_user_id',
         'user_id',
-        'nama_lengkap',
-        'tempat_lahir',
-        'tanggal_lahir',
-        'jenis_kelamin',
+        'full_name',
+        'birth_place',
+        'birth_date',
+        'gender',
         'program',
         'status',
-        'tanggal_masuk',
+        'entry_date',
     ];
 
     protected function casts(): array
     {
         return [
-            'tanggal_lahir' => 'date',
-            'tanggal_masuk' => 'date',
+            'birth_date' => 'date',
+            'entry_date' => 'date',
         ];
     }
 
-    public function psbRegistration(): BelongsTo
+    public function registration(): BelongsTo
     {
-        return $this->belongsTo(PsbRegistration::class, 'psb_registration_id');
+        return $this->belongsTo(Registration::class, 'registration_id');
     }
 
-    public function wali(): BelongsTo
+    public function guardian(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'wali_user_id');
+        return $this->belongsTo(User::class, 'guardian_user_id');
     }
 
     public function user(): BelongsTo

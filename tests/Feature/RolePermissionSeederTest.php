@@ -17,10 +17,10 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'delete-users')->exists())->toBeTrue()
         ->and(Permission::where('name', 'manage-roles')->exists())->toBeTrue()
         ->and(Permission::where('name', 'manage-settings')->exists())->toBeTrue()
-        ->and(Permission::where('name', 'view-psb-registrations')->exists())->toBeTrue()
-        ->and(Permission::where('name', 'manage-psb-registrations')->exists())->toBeTrue()
-        ->and(Permission::where('name', 'view-psb-periods')->exists())->toBeTrue()
-        ->and(Permission::where('name', 'manage-psb-periods')->exists())->toBeTrue();
+        ->and(Permission::where('name', 'view-registrations')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-registrations')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-registration-periods')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-registration-periods')->exists())->toBeTrue();
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {
@@ -30,10 +30,10 @@ test('seeder assigns permissions to pengurus_pesantren', function () {
 
     expect($pengurusPesantren->hasPermissionTo('view-users'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('manage-settings'))->toBeTrue()
-        ->and($pengurusPesantren->hasPermissionTo('view-psb-registrations'))->toBeTrue()
-        ->and($pengurusPesantren->hasPermissionTo('manage-psb-registrations'))->toBeTrue()
-        ->and($pengurusPesantren->hasPermissionTo('view-psb-periods'))->toBeTrue()
-        ->and($pengurusPesantren->hasPermissionTo('manage-psb-periods'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-registrations'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-registrations'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-registration-periods'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-registration-periods'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse();
 });
 

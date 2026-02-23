@@ -22,10 +22,10 @@ class RolePermissionSeeder extends Seeder
             'delete-users',
             'manage-roles',
             'manage-settings',
-            'view-psb-registrations',
-            'manage-psb-registrations',
-            'view-psb-periods',
-            'manage-psb-periods',
+            'view-registrations',
+            'manage-registrations',
+            'view-registration-periods',
+            'manage-registration-periods',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -38,10 +38,10 @@ class RolePermissionSeeder extends Seeder
         $pengurusPesantren->syncPermissions([
             'view-users',
             'manage-settings',
-            'view-psb-registrations',
-            'manage-psb-registrations',
-            'view-psb-periods',
-            'manage-psb-periods',
+            'view-registrations',
+            'manage-registrations',
+            'view-registration-periods',
+            'manage-registration-periods',
         ]);
 
         $adminUser = User::firstOrCreate(
