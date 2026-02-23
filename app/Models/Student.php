@@ -6,10 +6,37 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Student extends Model
 {
-    use HasFactory, HasUuids;
+    use HasFactory, HasUuids, SoftDeletes;
+
+    const STATUS_ACTIVE = 'active';
+    const STATUS_GRADUATED = 'graduated';
+    const STATUS_TRANSFERRED = 'transferred';
+    const STATUS_WITHDRAWN = 'withdrawn';
+
+    const STATUSES = [
+        self::STATUS_ACTIVE,
+        self::STATUS_GRADUATED,
+        self::STATUS_TRANSFERRED,
+        self::STATUS_WITHDRAWN,
+    ];
+
+    const CLASS_LEVELS = [
+        'tamhidi',
+        'ibtida_1',
+        'ibtida_2',
+        'tsanawiyah_1',
+        'tsanawiyah_2',
+        'tahfidz_1',
+        'tahfidz_2',
+        'tahfidz_3',
+        'takhassus_1',
+        'takhassus_2',
+        'takhassus_3',
+    ];
 
     protected $fillable = [
         'registration_id',
@@ -22,6 +49,10 @@ class Student extends Model
         'program',
         'status',
         'entry_date',
+        'class_level',
+        'address',
+        'photo_url',
+        'notes',
     ];
 
     protected function casts(): array

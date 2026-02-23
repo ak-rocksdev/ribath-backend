@@ -15,6 +15,10 @@ class AuthService
             return null;
         }
 
+        if (! $user->is_active) {
+            return null;
+        }
+
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return [
@@ -22,6 +26,8 @@ class AuthService
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'phone' => $user->phone,
+                'is_active' => $user->is_active,
                 'roles' => $user->getRoleNames(),
                 'permissions' => $user->getAllPermissions()->pluck('name'),
             ],
@@ -40,6 +46,8 @@ class AuthService
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
+            'phone' => $user->phone,
+            'is_active' => $user->is_active,
             'roles' => $user->getRoleNames(),
             'permissions' => $user->getAllPermissions()->pluck('name'),
         ];
