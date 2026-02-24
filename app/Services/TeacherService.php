@@ -83,4 +83,31 @@ class TeacherService
             ];
         });
     }
+
+    public function getRelationships(Teacher $teacher): array
+    {
+        $teacher->load('user.roles');
+
+        return [
+            'user' => $teacher->user ? [
+                'id' => $teacher->user->id,
+                'name' => $teacher->user->name,
+                'email' => $teacher->user->email,
+                'is_active' => $teacher->user->is_active,
+                'roles' => $teacher->user->roles->pluck('name')->toArray(),
+            ] : null,
+        ];
+    }
+
+    public function deleteWithCascade(Teacher $teacher, bool $cascadeUser = false): void
+    {
+        DB::transaction(function () use ($teacher, $cascadeUser) {
+            if ($cascadeUser && $teacher->user) {
+                $teacher->user->tokens()->delete();
+                $teacher->user->delete();
+            }
+
+            $teacher->delete();
+        });
+    }
 }

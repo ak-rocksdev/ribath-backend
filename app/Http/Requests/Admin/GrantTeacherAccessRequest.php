@@ -14,7 +14,7 @@ class GrantTeacherAccessRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'email', 'unique:users,email'],
+            'email' => ['required', 'email', 'unique:users,email,NULL,id,deleted_at,NULL'],
             'password' => ['required', 'string', 'min:8'],
         ];
     }

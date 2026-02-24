@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class UserService
@@ -90,5 +91,55 @@ class UserService
         $user->removeRole($roleName);
 
         return $user->fresh()->load('roles');
+    }
+
+    public function getRelationships(User $user): array
+    {
+        $user->load(['teacher', 'guardianStudents']);
+
+        return [
+            'teacher' => $user->teacher ? [
+                'id' => $user->teacher->id,
+                'full_name' => $user->teacher->full_name,
+                'code' => $user->teacher->code,
+                'status' => $user->teacher->status,
+            ] : null,
+            'guardian_students' => $user->guardianStudents->map(fn ($student) => [
+                'id' => $student->id,
+                'full_name' => $student->full_name,
+                'status' => $student->status,
+            ])->toArray(),
+        ];
+    }
+
+    public function checkEmail(string $email): ?array
+    {
+        $softDeletedUser = User::onlyTrashed()
+            ->where('email', $email)
+            ->first();
+
+        if (! $softDeletedUser) {
+            return null;
+        }
+
+        return [
+            'id' => $softDeletedUser->id,
+            'name' => $softDeletedUser->name,
+            'email' => $softDeletedUser->email,
+            'deleted_at' => $softDeletedUser->deleted_at->toISOString(),
+            'roles' => $softDeletedUser->roles->pluck('name')->toArray(),
+        ];
+    }
+
+    public function deleteWithCascade(User $user, bool $cascadeTeacher = false): void
+    {
+        DB::transaction(function () use ($user, $cascadeTeacher) {
+            if ($cascadeTeacher && $user->teacher) {
+                $user->teacher->delete();
+            }
+
+            $user->tokens()->delete();
+            $user->delete();
+        });
     }
 }

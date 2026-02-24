@@ -51,10 +51,29 @@ class UserController extends Controller
             return $this->errorResponse('Cannot delete your own account', code: 403);
         }
 
-        $user->tokens()->delete();
-        $user->delete();
+        $cascadeTeacher = filter_var($request->query('cascade_teacher', false), FILTER_VALIDATE_BOOLEAN);
+
+        $this->userService->deleteWithCascade($user, $cascadeTeacher);
 
         return $this->successResponse(null, 'User deleted');
+    }
+
+    public function relationships(User $user): JsonResponse
+    {
+        $relationships = $this->userService->getRelationships($user);
+
+        return $this->successResponse($relationships, 'User relationships retrieved');
+    }
+
+    public function checkEmail(Request $request): JsonResponse
+    {
+        $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $softDeletedUser = $this->userService->checkEmail($request->input('email'));
+
+        return $this->successResponse($softDeletedUser, 'Email check completed');
     }
 
     public function toggleStatus(Request $request, User $user): JsonResponse

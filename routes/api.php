@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Controllers\Api\Admin\DashboardController;
 use App\Http\Controllers\Api\Admin\RoleController;
+use App\Http\Controllers\Api\Admin\SchoolController;
 use App\Http\Controllers\Api\Admin\StudentController;
 use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\UserController;
@@ -40,7 +42,9 @@ Route::prefix('v1')->group(function () {
     Route::prefix('users')->middleware('auth:sanctum')->group(function () {
         Route::get('/', [UserController::class, 'index'])->middleware('permission:view-users');
         Route::post('/', [UserController::class, 'store'])->middleware('permission:create-users');
+        Route::post('/check-email', [UserController::class, 'checkEmail'])->middleware('permission:view-users');
         Route::get('/{user}', [UserController::class, 'show'])->middleware('permission:view-users');
+        Route::get('/{user}/relationships', [UserController::class, 'relationships'])->middleware('permission:view-users');
         Route::put('/{user}', [UserController::class, 'update'])->middleware('permission:edit-users');
         Route::delete('/{user}', [UserController::class, 'destroy'])->middleware('permission:delete-users');
         Route::patch('/{user}/toggle-status', [UserController::class, 'toggleStatus'])->middleware('permission:edit-users');
@@ -64,11 +68,18 @@ Route::prefix('v1')->group(function () {
         Route::patch('/{student}/status', [StudentController::class, 'updateStatus'])->middleware('permission:edit-students');
     });
 
+    // Schools route
+    Route::get('/schools', [SchoolController::class, 'index'])->middleware('auth:sanctum');
+
+    // Dashboard routes
+    Route::get('/dashboard/stats', [DashboardController::class, 'stats'])->middleware('auth:sanctum');
+
     // Teacher Management routes
     Route::prefix('teachers')->middleware('auth:sanctum')->group(function () {
         Route::get('/', [TeacherController::class, 'index'])->middleware('permission:view-teachers');
         Route::post('/', [TeacherController::class, 'store'])->middleware('permission:create-teachers');
         Route::get('/{teacher}', [TeacherController::class, 'show'])->middleware('permission:view-teachers');
+        Route::get('/{teacher}/relationships', [TeacherController::class, 'relationships'])->middleware('permission:view-teachers');
         Route::put('/{teacher}', [TeacherController::class, 'update'])->middleware('permission:edit-teachers');
         Route::delete('/{teacher}', [TeacherController::class, 'destroy'])->middleware('permission:delete-teachers');
         Route::patch('/{teacher}/status', [TeacherController::class, 'updateStatus'])->middleware('permission:edit-teachers');

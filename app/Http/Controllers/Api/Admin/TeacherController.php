@@ -46,11 +46,20 @@ class TeacherController extends Controller
         return $this->successResponse($updatedTeacher, 'Teacher updated');
     }
 
-    public function destroy(Teacher $teacher): JsonResponse
+    public function destroy(Request $request, Teacher $teacher): JsonResponse
     {
-        $teacher->delete();
+        $cascadeUser = filter_var($request->query('cascade_user', false), FILTER_VALIDATE_BOOLEAN);
+
+        $this->teacherService->deleteWithCascade($teacher, $cascadeUser);
 
         return $this->successResponse(null, 'Teacher deleted');
+    }
+
+    public function relationships(Teacher $teacher): JsonResponse
+    {
+        $relationships = $this->teacherService->getRelationships($teacher);
+
+        return $this->successResponse($relationships, 'Teacher relationships retrieved');
     }
 
     public function updateStatus(UpdateTeacherStatusRequest $request, Teacher $teacher): JsonResponse
