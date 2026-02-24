@@ -38,6 +38,17 @@ class Student extends Model
         'takhassus_3',
     ];
 
+    const REQUIRED_PROFILE_FIELDS = [
+        'full_name',
+        'birth_date',
+        'birth_place',
+        'gender',
+        'program',
+        'entry_date',
+        'class_level',
+        'address',
+    ];
+
     protected $fillable = [
         'registration_id',
         'guardian_user_id',
@@ -53,6 +64,12 @@ class Student extends Model
         'address',
         'photo_url',
         'notes',
+        'profile_completed_at',
+    ];
+
+    protected $appends = [
+        'is_profile_complete',
+        'incomplete_fields',
     ];
 
     protected function casts(): array
@@ -60,7 +77,37 @@ class Student extends Model
         return [
             'birth_date' => 'date',
             'entry_date' => 'date',
+            'profile_completed_at' => 'datetime',
         ];
+    }
+
+    public function isProfileComplete(): bool
+    {
+        return empty($this->getIncompleteFields());
+    }
+
+    public function getIncompleteFields(): array
+    {
+        $incompleteFields = [];
+
+        foreach (self::REQUIRED_PROFILE_FIELDS as $field) {
+            $value = $this->getAttribute($field);
+            if ($value === null || $value === '') {
+                $incompleteFields[] = $field;
+            }
+        }
+
+        return $incompleteFields;
+    }
+
+    public function getIsProfileCompleteAttribute(): bool
+    {
+        return $this->isProfileComplete();
+    }
+
+    public function getIncompleteFieldsAttribute(): array
+    {
+        return $this->getIncompleteFields();
     }
 
     public function registration(): BelongsTo

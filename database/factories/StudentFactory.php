@@ -25,6 +25,30 @@ class StudentFactory extends Factory
         ];
     }
 
+    public function profileComplete(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'full_name' => $this->faker->name(),
+            'birth_place' => $this->faker->city(),
+            'birth_date' => $this->faker->date(),
+            'gender' => $this->faker->randomElement(['L', 'P']),
+            'program' => $this->faker->randomElement(['tahfidz', 'regular']),
+            'entry_date' => $this->faker->date(),
+            'class_level' => $this->faker->randomElement(Student::CLASS_LEVELS),
+            'address' => $this->faker->address(),
+            'profile_completed_at' => now(),
+        ]);
+    }
+
+    public function incompleteProfile(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'class_level' => null,
+            'address' => null,
+            'profile_completed_at' => null,
+        ]);
+    }
+
     public function graduated(): static
     {
         return $this->state(fn (array $attributes) => [

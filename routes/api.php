@@ -30,6 +30,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/{registration}/status', [RegistrationController::class, 'updateStatus'])->middleware('permission:manage-registrations');
         Route::post('/{registration}/accept', [RegistrationController::class, 'accept'])->middleware('permission:manage-registrations');
         Route::post('/{registration}/reject', [RegistrationController::class, 'reject'])->middleware('permission:manage-registrations');
+        Route::patch('/{registration}/archive', [RegistrationController::class, 'archive'])->middleware('permission:manage-registrations');
+        Route::patch('/{registration}/unarchive', [RegistrationController::class, 'unarchive'])->middleware('permission:manage-registrations');
         Route::delete('/{registration}', [RegistrationController::class, 'destroy'])->middleware('permission:manage-registrations');
     });
 

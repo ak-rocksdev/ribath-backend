@@ -19,6 +19,12 @@ class RegistrationController extends Controller
         $query = Registration::with('period')
             ->orderBy('created_at', 'desc');
 
+        if (request()->boolean('archived_only')) {
+            $query->archived();
+        } elseif (! request()->boolean('include_archived')) {
+            $query->notArchived();
+        }
+
         if (request('status')) {
             $query->where('status', request('status'));
         }
@@ -104,6 +110,32 @@ class RegistrationController extends Controller
         );
 
         return $this->successResponse($result, 'Registration rejected');
+    }
+
+    public function archive(Registration $registration)
+    {
+        if ($registration->is_archived) {
+            return $this->errorResponse('Registration is already archived', code: 422);
+        }
+
+        if (! $registration->canBeArchived()) {
+            return $this->errorResponse('Only rejected or cancelled registrations can be archived', code: 422);
+        }
+
+        $result = $this->psbService->archiveRegistration($registration);
+
+        return $this->successResponse($result, 'Registration archived');
+    }
+
+    public function unarchive(Registration $registration)
+    {
+        if (! $registration->is_archived) {
+            return $this->errorResponse('Registration is not archived', code: 422);
+        }
+
+        $result = $this->psbService->unarchiveRegistration($registration);
+
+        return $this->successResponse($result, 'Registration unarchived');
     }
 
     public function destroy(Registration $registration)

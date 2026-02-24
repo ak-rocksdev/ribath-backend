@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -40,6 +41,11 @@ class Registration extends Model
         self::STATUS_CANCELLED,
     ];
 
+    public const ARCHIVABLE_STATUSES = [
+        self::STATUS_REJECTED,
+        self::STATUS_CANCELLED,
+    ];
+
     protected $fillable = [
         'registration_period_id',
         'registration_number',
@@ -62,6 +68,7 @@ class Registration extends Model
         'reviewed_at',
         'reviewed_by',
         'rejection_reason',
+        'is_archived',
     ];
 
     protected function casts(): array
@@ -72,7 +79,23 @@ class Registration extends Model
             'interviewed_at' => 'datetime',
             'visited_at' => 'datetime',
             'reviewed_at' => 'datetime',
+            'is_archived' => 'boolean',
         ];
+    }
+
+    public function canBeArchived(): bool
+    {
+        return in_array($this->status, self::ARCHIVABLE_STATUSES);
+    }
+
+    public function scopeNotArchived(Builder $query): Builder
+    {
+        return $query->where('is_archived', false);
+    }
+
+    public function scopeArchived(Builder $query): Builder
+    {
+        return $query->where('is_archived', true);
     }
 
     public function period(): BelongsTo

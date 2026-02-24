@@ -96,6 +96,16 @@ class PsbService
                     'email' => $guardianUser->email,
                     'temporary_password' => $temporaryPassword,
                 ];
+
+                if ($registration->guardian_phone) {
+                    $result['guardian_whatsapp_link'] = $this->generateGuardianWhatsAppLink(
+                        $registration->guardian_phone,
+                        $registration->guardian_name,
+                        $registration->full_name,
+                        $guardianUser->email,
+                        $temporaryPassword
+                    );
+                }
             }
 
             return $result;
@@ -114,9 +124,23 @@ class PsbService
         return $registration->fresh();
     }
 
+    public function archiveRegistration(Registration $registration): Registration
+    {
+        $registration->update(['is_archived' => true]);
+
+        return $registration->fresh();
+    }
+
+    public function unarchiveRegistration(Registration $registration): Registration
+    {
+        $registration->update(['is_archived' => false]);
+
+        return $registration->fresh();
+    }
+
     public function getRegistrationStats(?string $registrationPeriodId = null): array
     {
-        $query = Registration::query();
+        $query = Registration::query()->where('is_archived', false);
 
         if ($registrationPeriodId) {
             $query->where('registration_period_id', $registrationPeriodId);
@@ -135,5 +159,38 @@ class PsbService
         ")->first();
 
         return $stats->toArray();
+    }
+
+    private function formatPhoneNumberForWhatsApp(string $phone): string
+    {
+        $digitsOnly = preg_replace('/\D/', '', $phone);
+
+        if (str_starts_with($digitsOnly, '0')) {
+            $digitsOnly = '62'.substr($digitsOnly, 1);
+        }
+
+        return $digitsOnly;
+    }
+
+    private function generateGuardianWhatsAppLink(
+        string $phone,
+        string $guardianName,
+        string $studentName,
+        string $email,
+        string $temporaryPassword
+    ): string {
+        $formattedPhone = $this->formatPhoneNumberForWhatsApp($phone);
+
+        $appUrl = config('app.url');
+
+        $message = "Assalamu'alaikum {$guardianName},\n\n"
+            ."Anak Anda {$studentName} telah diterima di Ribath Masjid Riyadh Solo.\n\n"
+            ."Berikut akun Wali Santri Anda:\n"
+            ."Email: {$email}\n"
+            ."Password: {$temporaryPassword}\n\n"
+            ."Silakan login di {$appUrl} untuk memantau perkembangan anak Anda.\n\n"
+            .'Jazakumullahu khairan.';
+
+        return 'https://wa.me/'.$formattedPhone.'?text='.urlencode($message);
     }
 }

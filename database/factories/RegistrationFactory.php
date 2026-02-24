@@ -38,4 +38,12 @@ class RegistrationFactory extends Factory
             'guardian_name' => null,
         ]);
     }
+
+    public function archived(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'status' => Registration::STATUS_REJECTED,
+            'is_archived' => true,
+        ]);
+    }
 }

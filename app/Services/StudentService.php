@@ -35,6 +35,7 @@ class StudentService
     public function createStudent(array $data): Student
     {
         $student = Student::create($data);
+        $this->syncProfileCompletionTimestamp($student);
 
         return $student->load(['guardian', 'registration']);
     }
@@ -42,8 +43,10 @@ class StudentService
     public function updateStudent(Student $student, array $data): Student
     {
         $student->update($data);
+        $student = $student->fresh();
+        $this->syncProfileCompletionTimestamp($student);
 
-        return $student->fresh()->load(['guardian', 'registration']);
+        return $student->load(['guardian', 'registration']);
     }
 
     public function updateStudentStatus(Student $student, string $status): Student
@@ -51,5 +54,14 @@ class StudentService
         $student->update(['status' => $status]);
 
         return $student->fresh()->load(['guardian', 'registration']);
+    }
+
+    private function syncProfileCompletionTimestamp(Student $student): void
+    {
+        if ($student->isProfileComplete() && $student->profile_completed_at === null) {
+            $student->updateQuietly(['profile_completed_at' => now()]);
+        } elseif (! $student->isProfileComplete() && $student->profile_completed_at !== null) {
+            $student->updateQuietly(['profile_completed_at' => null]);
+        }
     }
 }
