@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\PersonalAccessToken;
 use Spatie\Permission\Models\Role;
 
 beforeEach(function () {
@@ -23,12 +24,19 @@ test('user can login with valid credentials', function () {
     $response->assertOk()
         ->assertJsonStructure([
             'success',
-            'data' => ['user' => ['id', 'name', 'email', 'roles'], 'token'],
+            'data' => [
+                'user' => ['id', 'name', 'email', 'roles'],
+                'token',
+                'session_timeout_minutes',
+                'token_expires_in_minutes',
+            ],
             'message',
         ])
         ->assertJsonPath('success', true)
         ->assertJsonPath('data.user.email', 'admin@test.com')
-        ->assertJsonPath('data.user.roles.0', 'super_admin');
+        ->assertJsonPath('data.user.roles.0', 'super_admin')
+        ->assertJsonPath('data.session_timeout_minutes', 60)
+        ->assertJsonPath('data.token_expires_in_minutes', 480);
 });
 
 test('login fails with invalid credentials', function () {
@@ -55,7 +63,9 @@ test('authenticated user can get profile', function () {
     $response->assertOk()
         ->assertJsonPath('success', true)
         ->assertJsonPath('data.email', 'admin@test.com')
-        ->assertJsonPath('data.roles.0', 'super_admin');
+        ->assertJsonPath('data.roles.0', 'super_admin')
+        ->assertJsonPath('data.session_timeout_minutes', 60)
+        ->assertJsonPath('data.token_expires_in_minutes', 480);
 });
 
 test('unauthenticated user cannot get profile', function () {
@@ -100,4 +110,42 @@ test('change password fails with wrong current password', function () {
 
     $response->assertUnprocessable()
         ->assertJsonValidationErrors(['current_password']);
+});
+
+test('expired token is rejected with 401', function () {
+    $token = $this->adminUser->createToken('test-token');
+
+    // Backdate the token beyond the configured expiration (480 min)
+    PersonalAccessToken::where('id', $token->accessToken->id)
+        ->update(['created_at' => now()->subMinutes(481)]);
+
+    $response = $this->withHeaders(['Authorization' => "Bearer {$token->plainTextToken}"])
+        ->getJson('/api/v1/auth/me');
+
+    $response->assertUnauthorized();
+});
+
+test('active token within expiration window is accepted', function () {
+    $token = $this->adminUser->createToken('test-token');
+
+    // Token created 100 min ago — well within the 480 min window
+    PersonalAccessToken::where('id', $token->accessToken->id)
+        ->update(['created_at' => now()->subMinutes(100)]);
+
+    $response = $this->withHeaders(['Authorization' => "Bearer {$token->plainTextToken}"])
+        ->getJson('/api/v1/auth/me');
+
+    $response->assertOk()
+        ->assertJsonPath('data.email', 'admin@test.com');
+});
+
+test('inactive user is rejected on login', function () {
+    $this->adminUser->update(['is_active' => false]);
+
+    $response = $this->postJson('/api/v1/auth/login', [
+        'email' => 'admin@test.com',
+        'password' => 'password123',
+    ]);
+
+    $response->assertUnauthorized();
 });

@@ -32,6 +32,8 @@ class AuthService
                 'permissions' => $user->getAllPermissions()->pluck('name'),
             ],
             'token' => $token,
+            'session_timeout_minutes' => config('auth.frontend_session_timeout'),
+            'token_expires_in_minutes' => config('sanctum.expiration'),
         ];
     }
 
@@ -50,6 +52,8 @@ class AuthService
             'is_active' => $user->is_active,
             'roles' => $user->getRoleNames(),
             'permissions' => $user->getAllPermissions()->pluck('name'),
+            'session_timeout_minutes' => config('auth.frontend_session_timeout'),
+            'token_expires_in_minutes' => config('sanctum.expiration'),
         ];
     }
 

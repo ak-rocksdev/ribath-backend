@@ -112,4 +112,17 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Frontend Session Timeout
+    |--------------------------------------------------------------------------
+    |
+    | The number of minutes of inactivity before the frontend automatically
+    | logs the user out. This value is sent to the SPA via the login and
+    | profile endpoints so both backend and frontend stay in sync.
+    |
+    */
+
+    'frontend_session_timeout' => (int) env('FRONTEND_SESSION_TIMEOUT', 60),
+
 ];
