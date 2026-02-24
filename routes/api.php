@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\StudentController;
+use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
@@ -61,6 +62,17 @@ Route::prefix('v1')->group(function () {
         Route::put('/{student}', [StudentController::class, 'update'])->middleware('permission:edit-students');
         Route::delete('/{student}', [StudentController::class, 'destroy'])->middleware('permission:delete-students');
         Route::patch('/{student}/status', [StudentController::class, 'updateStatus'])->middleware('permission:edit-students');
+    });
+
+    // Teacher Management routes
+    Route::prefix('teachers')->middleware('auth:sanctum')->group(function () {
+        Route::get('/', [TeacherController::class, 'index'])->middleware('permission:view-teachers');
+        Route::post('/', [TeacherController::class, 'store'])->middleware('permission:create-teachers');
+        Route::get('/{teacher}', [TeacherController::class, 'show'])->middleware('permission:view-teachers');
+        Route::put('/{teacher}', [TeacherController::class, 'update'])->middleware('permission:edit-teachers');
+        Route::delete('/{teacher}', [TeacherController::class, 'destroy'])->middleware('permission:delete-teachers');
+        Route::patch('/{teacher}/status', [TeacherController::class, 'updateStatus'])->middleware('permission:edit-teachers');
+        Route::post('/{teacher}/grant-access', [TeacherController::class, 'grantAccess'])->middleware('permission:edit-teachers');
     });
 
     // PSB Period Management routes

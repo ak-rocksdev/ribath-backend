@@ -50,6 +50,7 @@ class Student extends Model
     ];
 
     protected $fillable = [
+        'school_id',
         'registration_id',
         'guardian_user_id',
         'user_id',
@@ -108,6 +109,11 @@ class Student extends Model
     public function getIncompleteFieldsAttribute(): array
     {
         return $this->getIncompleteFields();
+    }
+
+    public function school(): BelongsTo
+    {
+        return $this->belongsTo(School::class);
     }
 
     public function registration(): BelongsTo

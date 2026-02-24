@@ -24,7 +24,11 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'view-students')->exists())->toBeTrue()
         ->and(Permission::where('name', 'create-students')->exists())->toBeTrue()
         ->and(Permission::where('name', 'edit-students')->exists())->toBeTrue()
-        ->and(Permission::where('name', 'delete-students')->exists())->toBeTrue();
+        ->and(Permission::where('name', 'delete-students')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-teachers')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'create-teachers')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'edit-teachers')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'delete-teachers')->exists())->toBeTrue();
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {
@@ -42,6 +46,10 @@ test('seeder assigns permissions to pengurus_pesantren', function () {
         ->and($pengurusPesantren->hasPermissionTo('create-students'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('edit-students'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-students'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-teachers'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('create-teachers'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('edit-teachers'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('delete-teachers'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse();
 });
 

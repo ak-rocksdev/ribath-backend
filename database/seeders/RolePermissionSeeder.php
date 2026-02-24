@@ -30,6 +30,10 @@ class RolePermissionSeeder extends Seeder
             'create-students',
             'edit-students',
             'delete-students',
+            'view-teachers',
+            'create-teachers',
+            'edit-teachers',
+            'delete-teachers',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -50,6 +54,10 @@ class RolePermissionSeeder extends Seeder
             'create-students',
             'edit-students',
             'delete-students',
+            'view-teachers',
+            'create-teachers',
+            'edit-teachers',
+            'delete-teachers',
         ]);
 
         $adminUser = User::firstOrCreate(

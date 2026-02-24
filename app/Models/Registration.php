@@ -47,6 +47,7 @@ class Registration extends Model
     ];
 
     protected $fillable = [
+        'school_id',
         'registration_period_id',
         'registration_number',
         'status',
@@ -96,6 +97,11 @@ class Registration extends Model
     public function scopeArchived(Builder $query): Builder
     {
         return $query->where('is_archived', true);
+    }
+
+    public function school(): BelongsTo
+    {
+        return $this->belongsTo(School::class);
     }
 
     public function period(): BelongsTo

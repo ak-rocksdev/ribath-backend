@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
+use App\Models\School;
 use App\Models\Student;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -30,11 +31,14 @@ class PsbService
             $status = Registration::STATUS_WAITLIST;
         }
 
+        $defaultSchool = School::where('is_active', true)->first();
+
         return Registration::create([
             ...$validatedData,
             'registration_period_id' => $activePeriod?->id,
             'registration_number' => $this->registrationNumberGenerator->generate(),
             'status' => $status,
+            'school_id' => $defaultSchool?->id,
         ]);
     }
 
@@ -52,6 +56,7 @@ class PsbService
                     'name' => $registration->guardian_name,
                     'email' => $guardianEmail,
                     'password' => Hash::make($temporaryPassword),
+                    'school_id' => $registration->school_id,
                 ]);
 
                 $guardianRole = Role::firstOrCreate(
@@ -63,6 +68,7 @@ class PsbService
             $entryDate = $registration->period?->entry_date ?? now()->toDateString();
 
             $student = Student::create([
+                'school_id' => $registration->school_id,
                 'registration_id' => $registration->id,
                 'guardian_user_id' => $guardianUser?->id,
                 'full_name' => $registration->full_name,

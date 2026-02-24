@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class RegistrationPeriod extends Model
@@ -12,6 +13,7 @@ class RegistrationPeriod extends Model
     use HasFactory, HasUuids;
 
     protected $fillable = [
+        'school_id',
         'name',
         'year',
         'wave',
@@ -36,6 +38,11 @@ class RegistrationPeriod extends Model
             'monthly_tuition_fee' => 'decimal:2',
             'is_active' => 'boolean',
         ];
+    }
+
+    public function school(): BelongsTo
+    {
+        return $this->belongsTo(School::class);
     }
 
     public function registrations(): HasMany
