@@ -4,10 +4,14 @@ use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\Student;
 use App\Models\User;
+use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
+use Database\Seeders\SchoolSeeder;
 
 beforeEach(function () {
     (new RolePermissionSeeder)->run();
+    (new SchoolSeeder)->run();
+    (new ClassLevelSeeder)->run();
     $this->admin = User::factory()->create();
     $this->admin->assignRole('super_admin');
 });
@@ -165,7 +169,9 @@ test('PSB accept creates student with profile_completed_at null (incomplete prof
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk();
 
@@ -173,6 +179,6 @@ test('PSB accept creates student with profile_completed_at null (incomplete prof
     expect($student)->not->toBeNull()
         ->and($student->profile_completed_at)->toBeNull()
         ->and($student->is_profile_complete)->toBeFalse()
-        ->and($student->incomplete_fields)->toContain('class_level')
+        ->and($student->class_level)->toBe('tamhidi')
         ->and($student->incomplete_fields)->toContain('address');
 });

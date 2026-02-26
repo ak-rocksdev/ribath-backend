@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Admin\ClassLevelController;
 use App\Http\Controllers\Api\Admin\DashboardController;
 use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\SchoolController;
@@ -70,6 +71,17 @@ Route::prefix('v1')->group(function () {
 
     // Schools route
     Route::get('/schools', [SchoolController::class, 'index'])->middleware('auth:sanctum');
+
+    // Class Levels routes
+    Route::get('/class-levels', [ClassLevelController::class, 'index'])->middleware('auth:sanctum');
+    Route::prefix('class-levels')->middleware(['auth:sanctum', 'permission:manage-class-levels'])->group(function () {
+        Route::get('/admin', [ClassLevelController::class, 'adminIndex']);
+        Route::post('/', [ClassLevelController::class, 'store']);
+        Route::put('/{classLevel}', [ClassLevelController::class, 'update']);
+        Route::delete('/{classLevel}', [ClassLevelController::class, 'destroy']);
+        Route::patch('/{classLevel}/status', [ClassLevelController::class, 'updateStatus']);
+        Route::patch('/reorder', [ClassLevelController::class, 'reorder']);
+    });
 
     // Dashboard routes
     Route::get('/dashboard/stats', [DashboardController::class, 'stats'])->middleware('auth:sanctum');

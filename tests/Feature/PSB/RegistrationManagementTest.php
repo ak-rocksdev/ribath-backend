@@ -3,7 +3,9 @@
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\User;
+use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
+use Database\Seeders\SchoolSeeder;
 use Spatie\Permission\Models\Role;
 
 function createAdminUser(): User
@@ -31,6 +33,12 @@ function createUserWithoutPermissions(): User
     $user = User::factory()->create();
 
     return $user;
+}
+
+function seedClassLevels(): void
+{
+    (new SchoolSeeder)->run();
+    (new ClassLevelSeeder)->run();
 }
 
 // -------------------------------------------------------
@@ -378,6 +386,7 @@ test('cannot update to invalid status via status endpoint', function () {
 
 test('accept creates student record with data from registration', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create();
     $registration = Registration::factory()->create([
         'registration_period_id' => $period->id,
@@ -389,7 +398,9 @@ test('accept creates student record with data from registration', function () {
     ]);
 
     $response = $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk()
         ->assertJsonPath('success', true)
@@ -401,12 +412,14 @@ test('accept creates student record with data from registration', function () {
         'birth_place' => $registration->birth_place,
         'gender' => $registration->gender,
         'program' => $registration->preferred_program,
+        'class_level' => 'tamhidi',
         'status' => 'active',
     ]);
 });
 
 test('accept creates guardian user when guardian_name is present', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create();
     $registration = Registration::factory()->create([
         'registration_period_id' => $period->id,
@@ -418,7 +431,9 @@ test('accept creates guardian user when guardian_name is present', function () {
     ]);
 
     $response = $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk()
         ->assertJsonPath('data.guardian_user.name', 'Bapak Umar')
@@ -442,6 +457,7 @@ test('accept creates guardian user when guardian_name is present', function () {
 
 test('accept does not create guardian user for self-registered student', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create();
     $registration = Registration::factory()->selfRegistered()->create([
         'registration_period_id' => $period->id,
@@ -451,7 +467,9 @@ test('accept does not create guardian user for self-registered student', functio
     $initialUserCount = User::count();
 
     $response = $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk();
 
@@ -465,6 +483,7 @@ test('accept does not create guardian user for self-registered student', functio
 
 test('accept updates registration status to accepted with reviewed_at and reviewed_by', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create();
     $registration = Registration::factory()->create([
         'registration_period_id' => $period->id,
@@ -474,7 +493,9 @@ test('accept updates registration status to accepted with reviewed_at and review
     ]);
 
     $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $registration->refresh();
     expect($registration->status)->toBe(Registration::STATUS_ACCEPTED)
@@ -484,6 +505,7 @@ test('accept updates registration status to accepted with reviewed_at and review
 
 test('accept increments period enrolled_count', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create(['enrolled_count' => 5]);
     $registration = Registration::factory()->create([
         'registration_period_id' => $period->id,
@@ -493,7 +515,9 @@ test('accept increments period enrolled_count', function () {
     ]);
 
     $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $period->refresh();
     expect($period->enrolled_count)->toBe(6);
@@ -501,6 +525,7 @@ test('accept increments period enrolled_count', function () {
 
 test('accept returns student data and guardian credentials in response', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create();
     $registration = Registration::factory()->create([
         'registration_period_id' => $period->id,
@@ -512,7 +537,9 @@ test('accept returns student data and guardian credentials in response', functio
     ]);
 
     $response = $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk()
         ->assertJsonStructure([
@@ -531,6 +558,7 @@ test('accept returns student data and guardian credentials in response', functio
 
 test('cannot accept already accepted registration', function () {
     $admin = createAdminUser();
+    seedClassLevels();
     $period = RegistrationPeriod::factory()->create();
     $registration = Registration::factory()->create([
         'registration_period_id' => $period->id,
@@ -538,11 +566,47 @@ test('cannot accept already accepted registration', function () {
     ]);
 
     $response = $this->actingAs($admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertStatus(422)
         ->assertJsonPath('success', false)
         ->assertJsonPath('message', 'Registration is already accepted');
+});
+
+test('accept requires class_level field', function () {
+    $admin = createAdminUser();
+    seedClassLevels();
+    $period = RegistrationPeriod::factory()->create();
+    $registration = Registration::factory()->create([
+        'registration_period_id' => $period->id,
+        'status' => Registration::STATUS_INTERVIEW,
+    ]);
+
+    $response = $this->actingAs($admin)
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", []);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['class_level']);
+});
+
+test('accept rejects invalid class_level value', function () {
+    $admin = createAdminUser();
+    seedClassLevels();
+    $period = RegistrationPeriod::factory()->create();
+    $registration = Registration::factory()->create([
+        'registration_period_id' => $period->id,
+        'status' => Registration::STATUS_INTERVIEW,
+    ]);
+
+    $response = $this->actingAs($admin)
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'nonexistent_class',
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['class_level']);
 });
 
 // -------------------------------------------------------

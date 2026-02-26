@@ -42,9 +42,9 @@ class PsbService
         ]);
     }
 
-    public function acceptRegistration(Registration $registration, User $adminUser): array
+    public function acceptRegistration(Registration $registration, User $adminUser, string $classLevelSlug): array
     {
-        return DB::transaction(function () use ($registration, $adminUser) {
+        return DB::transaction(function () use ($registration, $adminUser, $classLevelSlug) {
             $guardianUser = null;
             $temporaryPassword = null;
 
@@ -76,6 +76,7 @@ class PsbService
                 'birth_date' => $registration->birth_date,
                 'gender' => $registration->gender,
                 'program' => $registration->preferred_program,
+                'class_level' => $classLevelSlug,
                 'status' => 'active',
                 'entry_date' => $entryDate,
             ]);

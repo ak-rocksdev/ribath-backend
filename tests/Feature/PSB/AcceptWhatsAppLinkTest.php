@@ -3,10 +3,14 @@
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\User;
+use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
+use Database\Seeders\SchoolSeeder;
 
 beforeEach(function () {
     (new RolePermissionSeeder)->run();
+    (new SchoolSeeder)->run();
+    (new ClassLevelSeeder)->run();
     $this->admin = User::factory()->create();
     $this->admin->assignRole('super_admin');
 });
@@ -23,7 +27,9 @@ test('accept response includes guardian_whatsapp_link when guardian exists with 
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk()
         ->assertJsonStructure([
@@ -45,7 +51,9 @@ test('whatsapp link starts with https://wa.me/62', function () {
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $link = $response->json('data.guardian_whatsapp_link');
     expect($link)->toStartWith('https://wa.me/62');
@@ -62,7 +70,9 @@ test('phone 08123456789 formats to 628123456789 in whatsapp link', function () {
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $link = $response->json('data.guardian_whatsapp_link');
     expect($link)->toStartWith('https://wa.me/628123456789?text=');
@@ -81,7 +91,9 @@ test('whatsapp link contains student name and credentials in message', function 
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $link = $response->json('data.guardian_whatsapp_link');
     $decodedMessage = urldecode(parse_url($link, PHP_URL_QUERY));
@@ -100,7 +112,9 @@ test('self-registered student (no guardian) has no whatsapp link in response', f
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $response->assertOk();
 
@@ -119,7 +133,9 @@ test('phone already in 62 format is handled correctly in whatsapp link', functio
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $link = $response->json('data.guardian_whatsapp_link');
     expect($link)->toStartWith('https://wa.me/6281234567890?text=');
@@ -140,7 +156,9 @@ test('whatsapp link contains app URL from config', function () {
     ]);
 
     $response = $this->actingAs($this->admin)
-        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept");
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'tamhidi',
+        ]);
 
     $link = $response->json('data.guardian_whatsapp_link');
     $decodedMessage = urldecode(parse_url($link, PHP_URL_QUERY));

@@ -24,20 +24,6 @@ class Student extends Model
         self::STATUS_WITHDRAWN,
     ];
 
-    const CLASS_LEVELS = [
-        'tamhidi',
-        'ibtida_1',
-        'ibtida_2',
-        'tsanawiyah_1',
-        'tsanawiyah_2',
-        'tahfidz_1',
-        'tahfidz_2',
-        'tahfidz_3',
-        'takhassus_1',
-        'takhassus_2',
-        'takhassus_3',
-    ];
-
     const REQUIRED_PROFILE_FIELDS = [
         'full_name',
         'birth_date',

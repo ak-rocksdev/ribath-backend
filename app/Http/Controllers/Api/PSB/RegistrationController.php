@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\PSB;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\PSB\AcceptRegistrationRequest;
 use App\Http\Requests\PSB\RejectRegistrationRequest;
 use App\Http\Requests\PSB\UpdateRegistrationStatusRequest;
 use App\Models\Registration;
@@ -86,13 +87,17 @@ class RegistrationController extends Controller
         return $this->successResponse($registration->fresh(), 'Registration status updated');
     }
 
-    public function accept(Registration $registration)
+    public function accept(AcceptRegistrationRequest $request, Registration $registration)
     {
         if ($registration->status === Registration::STATUS_ACCEPTED) {
             return $this->errorResponse('Registration is already accepted', code: 422);
         }
 
-        $result = $this->psbService->acceptRegistration($registration, request()->user());
+        $result = $this->psbService->acceptRegistration(
+            $registration,
+            $request->user(),
+            $request->validated()['class_level']
+        );
 
         return $this->successResponse($result, 'Registration accepted successfully');
     }

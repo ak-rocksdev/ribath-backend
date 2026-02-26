@@ -5,6 +5,8 @@ use App\Models\User;
 use Spatie\Permission\Models\Role;
 
 beforeEach(function () {
+    $this->seed(\Database\Seeders\SchoolSeeder::class);
+    $this->seed(\Database\Seeders\ClassLevelSeeder::class);
     $this->seed(\Database\Seeders\RolePermissionSeeder::class);
 });
 

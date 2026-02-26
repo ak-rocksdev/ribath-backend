@@ -50,4 +50,9 @@ class School extends Model
     {
         return $this->hasMany(RegistrationPeriod::class);
     }
+
+    public function classLevels(): HasMany
+    {
+        return $this->hasMany(ClassLevel::class);
+    }
 }

@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests\Admin;
 
-use App\Models\Student;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -22,7 +21,7 @@ class UpdateStudentRequest extends FormRequest
             'gender' => ['sometimes', Rule::in(['L', 'P'])],
             'program' => ['sometimes', Rule::in(['tahfidz', 'regular'])],
             'entry_date' => ['sometimes', 'date'],
-            'class_level' => ['nullable', Rule::in(Student::CLASS_LEVELS)],
+            'class_level' => ['nullable', 'string', 'exists:class_levels,slug'],
             'address' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
             'guardian_user_id' => ['nullable', 'exists:users,id'],
