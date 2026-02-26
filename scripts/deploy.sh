@@ -54,12 +54,12 @@ echo "============================================="
 echo ""
 
 # --- Step 1: Clone release ---
-echo "[1/9] Cloning $BRANCH into $RELEASE_DIR..."
+echo "[1/10] Cloning $BRANCH into $RELEASE_DIR..."
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$RELEASE_DIR"
 echo "      Commit: $(cd "$RELEASE_DIR" && git log --oneline -1)"
 
 # --- Step 2: Link shared .env ---
-echo "[2/9] Linking shared environment file..."
+echo "[2/10] Linking shared environment file..."
 if [ -f "$SHARED_DIR/env/.env" ]; then
     ln -sfn "$SHARED_DIR/env/.env" "$RELEASE_DIR/.env"
     echo "      Linked .env"
@@ -71,19 +71,19 @@ else
 fi
 
 # --- Step 3: Link shared storage ---
-echo "[3/9] Linking shared storage directory..."
+echo "[3/10] Linking shared storage directory..."
 rm -rf "$RELEASE_DIR/storage"
 ln -sfn "$SHARED_DIR/storage" "$RELEASE_DIR/storage"
 echo "      Linked storage/"
 
 # --- Step 4: Install dependencies ---
-echo "[4/9] Installing Composer dependencies..."
+echo "[4/10] Installing Composer dependencies..."
 cd "$RELEASE_DIR"
 $COMPOSER_BIN install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 echo "      Dependencies installed"
 
 # --- Step 5: Run migrations ---
-echo "[5/9] Running database migrations..."
+echo "[5/10] Running database migrations..."
 $PHP_BIN artisan migrate --force
 echo "      Migrations complete"
 
@@ -94,7 +94,7 @@ if [ "$RUN_SEED" = true ]; then
 fi
 
 # --- Step 6: Cache config, routes, views ---
-echo "[6/9] Caching configuration..."
+echo "[6/10] Caching configuration..."
 $PHP_BIN artisan config:cache
 $PHP_BIN artisan route:cache
 $PHP_BIN artisan view:cache
@@ -102,12 +102,12 @@ $PHP_BIN artisan event:cache
 echo "      Config, routes, views, events cached"
 
 # --- Step 7: Storage link ---
-echo "[7/9] Creating storage link..."
+echo "[7/10] Creating storage link..."
 $PHP_BIN artisan storage:link --force 2>/dev/null || true
 echo "      Storage linked"
 
 # --- Step 8: Switch current symlink (atomic) ---
-echo "[8/9] Switching current symlink..."
+echo "[8/10] Switching current symlink..."
 if [ -L "$CURRENT_LINK" ]; then
     PREVIOUS=$(readlink -f "$CURRENT_LINK")
     echo "      Previous: $(basename "$PREVIOUS")"
@@ -123,8 +123,17 @@ if command -v systemctl &>/dev/null; then
     echo "      WARNING: Could not reload PHP-FPM (reload manually if needed)"
 fi
 
-# --- Step 9: Cleanup old releases ---
-echo "[9/9] Cleaning up old releases (keeping last $KEEP_RELEASES)..."
+# --- Step 9: Restart Supervisor workers ---
+echo "[9/10] Restarting Supervisor workers..."
+if command -v supervisorctl &>/dev/null; then
+    sudo supervisorctl restart ribath-reverb 2>/dev/null && echo "      Restarted ribath-reverb" || echo "      ribath-reverb not configured (skipping)"
+    sudo supervisorctl restart ribath-queue 2>/dev/null && echo "      Restarted ribath-queue" || echo "      ribath-queue not configured (skipping)"
+else
+    echo "      Supervisor not installed (skipping)"
+fi
+
+# --- Step 10: Cleanup old releases ---
+echo "[10/10] Cleaning up old releases (keeping last $KEEP_RELEASES)..."
 RELEASE_COUNT=$(ls -1d "$RELEASES_DIR"/*/ 2>/dev/null | wc -l)
 if [ "$RELEASE_COUNT" -gt "$KEEP_RELEASES" ]; then
     ls -1d "$RELEASES_DIR"/*/ | sort | head -n -"$KEEP_RELEASES" | while read -r old_release; do
