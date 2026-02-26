@@ -2,7 +2,7 @@
 # =============================================================================
 # Deploy script for Ribath Backend API (Capistrano-style)
 # =============================================================================
-# Usage:   bash /srv/www/ribath-backend/scripts/deploy.sh
+# Usage:   bash /srv/www/ribath-backend/scripts/deploy.sh [--seed]
 #
 # Structure:
 #   /srv/www/ribath-backend/
@@ -13,11 +13,10 @@
 #       ├── env/.env           # Production environment file
 #       └── storage/           # Persistent storage (logs, cache, sessions, app)
 #
-# First-time setup (run once before first deploy):
-#   mkdir -p /srv/www/ribath-backend/{releases,shared/env,shared/storage}
-#   mkdir -p /srv/www/ribath-backend/shared/storage/{app/public,framework/{cache/data,sessions,views},logs}
-#   cp .env.example /srv/www/ribath-backend/shared/env/.env
-#   # Then edit /srv/www/ribath-backend/shared/env/.env with production values
+# Options:
+#   --seed    Run db:seed after migration (for new permissions/class levels)
+#
+# First-time setup: run scripts/setup.sh instead (creates dirs, DB, .env, nginx)
 #
 # Nginx should point to:
 #   root /srv/www/ribath-backend/current/public;
@@ -35,6 +34,14 @@ BRANCH="main"
 KEEP_RELEASES=5
 PHP_BIN="php"        # Change to full path if needed (e.g., /usr/bin/php8.2)
 COMPOSER_BIN="composer"
+RUN_SEED=false
+
+# Parse arguments
+for arg in "$@"; do
+    case $arg in
+        --seed) RUN_SEED=true ;;
+    esac
+done
 
 # Timestamp for this release
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -79,6 +86,12 @@ echo "      Dependencies installed"
 echo "[5/9] Running database migrations..."
 $PHP_BIN artisan migrate --force
 echo "      Migrations complete"
+
+if [ "$RUN_SEED" = true ]; then
+    echo "      Running seeders..."
+    $PHP_BIN artisan db:seed --force
+    echo "      Seeders complete"
+fi
 
 # --- Step 6: Cache config, routes, views ---
 echo "[6/9] Caching configuration..."
