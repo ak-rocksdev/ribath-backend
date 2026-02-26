@@ -54,10 +54,13 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{user}/roles/{role}', [RoleController::class, 'removeRole'])->middleware('permission:manage-roles');
     });
 
-    // Role Management routes
+    // Role & Permission Management routes
     Route::prefix('roles')->middleware('auth:sanctum')->group(function () {
         Route::get('/', [RoleController::class, 'index'])->middleware('permission:manage-roles');
+        Route::put('/{role}/permissions', [RoleController::class, 'syncPermissions'])->middleware('permission:manage-roles');
     });
+
+    Route::get('/permissions', [RoleController::class, 'permissions'])->middleware(['auth:sanctum', 'permission:manage-roles']);
 
     // Student Management routes
     Route::prefix('students')->middleware('auth:sanctum')->group(function () {
