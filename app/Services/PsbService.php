@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\RegistrationCreated;
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\School;
@@ -33,13 +34,17 @@ class PsbService
 
         $defaultSchool = School::where('is_active', true)->first();
 
-        return Registration::create([
+        $registration = Registration::create([
             ...$validatedData,
             'registration_period_id' => $activePeriod?->id,
             'registration_number' => $this->registrationNumberGenerator->generate(),
             'status' => $status,
             'school_id' => $defaultSchool?->id,
         ]);
+
+        RegistrationCreated::dispatch($registration);
+
+        return $registration;
     }
 
     public function acceptRegistration(Registration $registration, User $adminUser, string $classLevelSlug): array
