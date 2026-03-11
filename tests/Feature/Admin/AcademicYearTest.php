@@ -232,8 +232,8 @@ test('create academic year fails with duplicate name for same school', function 
             'end_date' => '2026-06-30',
         ]);
 
-    // Should fail due to unique constraint on [school_id, name]
-    expect($response->status())->toBeGreaterThanOrEqual(400);
+    // Should fail due to unique validation rule on [school_id, name]
+    expect($response->status())->toBe(422);
 });
 
 // ── Update tests ───────────────────────────────────────────────────────

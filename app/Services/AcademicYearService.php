@@ -12,11 +12,20 @@ class AcademicYearService
 {
     public function listAll(): Collection
     {
-        $school = School::where('is_active', true)->firstOrFail();
+        $school = School::where('is_active', true)->first();
 
-        return AcademicYear::where('school_id', $school->id)
-            ->orderByDesc('name')
-            ->get();
+        if (! $school) {
+            throw new \RuntimeException('No active school found. Please configure an active school first.');
+        }
+
+        $query = AcademicYear::where('school_id', $school->id)
+            ->orderByDesc('name');
+
+        if (class_exists(\App\Models\TeachingSchedule::class)) {
+            $query->withCount('teachingSchedules');
+        }
+
+        return $query->get();
     }
 
     public function getActive(): ?AcademicYear

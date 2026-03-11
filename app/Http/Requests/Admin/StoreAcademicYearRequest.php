@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\School;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreAcademicYearRequest extends FormRequest
 {
@@ -14,7 +16,10 @@ class StoreAcademicYearRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:20', 'regex:/^\d{4}\/\d{4}$/'],
+            'name' => [
+                'required', 'string', 'max:20', 'regex:/^\d{4}\/\d{4}$/',
+                Rule::unique('academic_years')->where('school_id', School::where('is_active', true)->first()?->id),
+            ],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after:start_date'],
             'active_semester' => ['sometimes', 'integer', 'in:1,2'],
