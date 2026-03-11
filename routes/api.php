@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\SchoolController;
 use App\Http\Controllers\Api\Admin\StudentController;
 use App\Http\Controllers\Api\Admin\TeacherController;
+use App\Http\Controllers\Api\Admin\SubjectCategoryController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
@@ -121,6 +122,20 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-time-slots');
         Route::delete('/{timeSlot}', [TimeSlotController::class, 'destroy'])
             ->middleware('permission:manage-time-slots');
+    });
+
+    // Subject Categories routes
+    Route::prefix('subject-categories')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [SubjectCategoryController::class, 'index'])
+            ->middleware('permission:view-subject-categories');
+        Route::post('/', [SubjectCategoryController::class, 'store'])
+            ->middleware('permission:manage-subject-categories');
+        Route::get('/{subjectCategory}', [SubjectCategoryController::class, 'show'])
+            ->middleware('permission:view-subject-categories');
+        Route::put('/{subjectCategory}', [SubjectCategoryController::class, 'update'])
+            ->middleware('permission:manage-subject-categories');
+        Route::delete('/{subjectCategory}', [SubjectCategoryController::class, 'destroy'])
+            ->middleware('permission:manage-subject-categories');
     });
 
     // Dashboard routes

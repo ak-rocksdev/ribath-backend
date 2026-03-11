@@ -79,4 +79,9 @@ class School extends Model
     {
         return $this->hasMany(TimeSlot::class);
     }
+
+    public function subjectCategories(): HasMany
+    {
+        return $this->hasMany(SubjectCategory::class);
+    }
 }
