@@ -48,6 +48,7 @@ class Student extends Model
         'status',
         'entry_date',
         'class_level',
+        'class_level_id',
         'address',
         'photo_url',
         'notes',
@@ -115,5 +116,10 @@ class Student extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function classLevel(): BelongsTo
+    {
+        return $this->belongsTo(ClassLevel::class);
     }
 }
