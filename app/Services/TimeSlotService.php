@@ -12,11 +12,7 @@ class TimeSlotService
 {
     public function listActive(): Collection
     {
-        $school = School::where('is_active', true)->first();
-
-        if (! $school) {
-            throw new \RuntimeException('No active school found. Please configure an active school first.');
-        }
+        $school = School::activeOrFail();
 
         return TimeSlot::where('school_id', $school->id)
             ->where('is_active', true)
@@ -26,11 +22,7 @@ class TimeSlotService
 
     public function listForAdmin(): Collection
     {
-        $school = School::where('is_active', true)->first();
-
-        if (! $school) {
-            throw new \RuntimeException('No active school found. Please configure an active school first.');
-        }
+        $school = School::activeOrFail();
 
         $query = TimeSlot::where('school_id', $school->id)
             ->orderBy('sort_order');
@@ -44,11 +36,7 @@ class TimeSlotService
 
     public function createTimeSlot(array $data): TimeSlot
     {
-        $school = School::where('is_active', true)->first();
-
-        if (! $school) {
-            throw new \RuntimeException('No active school found. Please run: php artisan db:seed --class=SchoolSeeder');
-        }
+        $school = School::activeOrFail();
 
         $data['school_id'] = $school->id;
 
@@ -77,9 +65,13 @@ class TimeSlotService
 
     public function reorder(array $orderedIds): void
     {
-        DB::transaction(function () use ($orderedIds) {
+        $school = School::activeOrFail();
+
+        DB::transaction(function () use ($orderedIds, $school) {
             foreach ($orderedIds as $index => $id) {
-                TimeSlot::where('id', $id)->update(['sort_order' => $index + 1]);
+                TimeSlot::where('id', $id)
+                    ->where('school_id', $school->id)
+                    ->update(['sort_order' => $index + 1]);
             }
         });
     }

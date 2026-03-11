@@ -18,7 +18,7 @@ class StoreTimeSlotRequest extends FormRequest
         return [
             'code' => [
                 'required', 'string', 'max:30', 'regex:/^[a-z0-9_:\-]+$/',
-                Rule::unique('time_slots')->where('school_id', School::where('is_active', true)->first()?->id),
+                Rule::unique('time_slots')->where('school_id', School::activeOrFail()->id),
             ],
             'label' => ['required', 'string', 'max:50'],
             'type' => ['required', 'string', 'in:prayer_based,fixed_clock'],

@@ -1,6 +1,11 @@
 <?php
 
 use App\Models\RegistrationPeriod;
+use Database\Seeders\SchoolSeeder;
+
+beforeEach(function () {
+    (new SchoolSeeder)->run();
+});
 
 test('active period endpoint returns active period when one exists', function () {
     $activePeriod = RegistrationPeriod::factory()->create([

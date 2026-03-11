@@ -26,6 +26,20 @@ class School extends Model
         ];
     }
 
+    /**
+     * Get the active school or throw a RuntimeException.
+     */
+    public static function activeOrFail(): self
+    {
+        $school = static::where('is_active', true)->first();
+
+        if (! $school) {
+            throw new \RuntimeException('No active school found. Please configure an active school first.');
+        }
+
+        return $school;
+    }
+
     public function teachers(): HasMany
     {
         return $this->hasMany(Teacher::class);

@@ -19,7 +19,7 @@ class UpdateTimeSlotRequest extends FormRequest
             'code' => [
                 'sometimes', 'string', 'max:30', 'regex:/^[a-z0-9_:\-]+$/',
                 Rule::unique('time_slots')
-                    ->where('school_id', School::where('is_active', true)->first()?->id)
+                    ->where('school_id', School::activeOrFail()->id)
                     ->ignore($this->route('timeSlot')?->id),
             ],
             'label' => ['sometimes', 'string', 'max:50'],

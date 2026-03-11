@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ClassLevel;
 use App\Models\School;
 use App\Models\Student;
+use Illuminate\Support\Facades\DB;
 
 class ClassLevelService
 {
@@ -34,16 +35,12 @@ class ClassLevelService
 
     public function createClassLevel(array $data): ClassLevel
     {
-        $defaultSchool = School::where('is_active', true)->first();
-
-        if (! $defaultSchool) {
-            throw new \RuntimeException('No active school found. Please run: php artisan db:seed --class=SchoolSeeder');
-        }
+        $school = School::activeOrFail();
 
         $maxSortOrder = ClassLevel::max('sort_order') ?? 0;
 
         return ClassLevel::create([
-            'school_id' => $defaultSchool->id,
+            'school_id' => $school->id,
             'slug' => $data['slug'],
             'label' => $data['label'],
             'category' => $data['category'],
@@ -83,8 +80,14 @@ class ClassLevelService
 
     public function reorderClassLevels(array $orderedIds): void
     {
-        foreach ($orderedIds as $index => $id) {
-            ClassLevel::where('id', $id)->update(['sort_order' => $index + 1]);
-        }
+        $school = School::activeOrFail();
+
+        DB::transaction(function () use ($orderedIds, $school) {
+            foreach ($orderedIds as $index => $id) {
+                ClassLevel::where('id', $id)
+                    ->where('school_id', $school->id)
+                    ->update(['sort_order' => $index + 1]);
+            }
+        });
     }
 }

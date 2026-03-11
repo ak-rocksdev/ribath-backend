@@ -32,14 +32,14 @@ class PsbService
             $status = Registration::STATUS_WAITLIST;
         }
 
-        $defaultSchool = School::where('is_active', true)->first();
+        $school = School::activeOrFail();
 
         $registration = Registration::create([
             ...$validatedData,
             'registration_period_id' => $activePeriod?->id,
             'registration_number' => $this->registrationNumberGenerator->generate(),
             'status' => $status,
-            'school_id' => $defaultSchool?->id,
+            'school_id' => $school->id,
         ]);
 
         RegistrationCreated::dispatch($registration);

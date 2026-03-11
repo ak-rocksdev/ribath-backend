@@ -36,13 +36,9 @@ class RegistrationPeriodService
 
     public function createPeriod(array $validatedData): RegistrationPeriod
     {
-        $defaultSchool = School::where('is_active', true)->first();
+        $school = School::activeOrFail();
 
-        if (! $defaultSchool) {
-            throw new \RuntimeException('No active school found. Please run: php artisan db:seed --class=SchoolSeeder');
-        }
-
-        $validatedData['school_id'] = $defaultSchool->id;
+        $validatedData['school_id'] = $school->id;
 
         return RegistrationPeriod::create($validatedData);
     }

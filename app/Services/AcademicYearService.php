@@ -12,11 +12,7 @@ class AcademicYearService
 {
     public function listAll(): Collection
     {
-        $school = School::where('is_active', true)->first();
-
-        if (! $school) {
-            throw new \RuntimeException('No active school found. Please configure an active school first.');
-        }
+        $school = School::activeOrFail();
 
         $query = AcademicYear::where('school_id', $school->id)
             ->orderByDesc('name');
@@ -43,13 +39,9 @@ class AcademicYearService
 
     public function createAcademicYear(array $data): AcademicYear
     {
-        $defaultSchool = School::where('is_active', true)->first();
+        $school = School::activeOrFail();
 
-        if (! $defaultSchool) {
-            throw new \RuntimeException('No active school found. Please run: php artisan db:seed --class=SchoolSeeder');
-        }
-
-        $data['school_id'] = $defaultSchool->id;
+        $data['school_id'] = $school->id;
 
         return AcademicYear::create($data);
     }

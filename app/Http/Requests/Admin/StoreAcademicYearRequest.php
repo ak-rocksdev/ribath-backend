@@ -18,7 +18,7 @@ class StoreAcademicYearRequest extends FormRequest
         return [
             'name' => [
                 'required', 'string', 'max:20', 'regex:/^\d{4}\/\d{4}$/',
-                Rule::unique('academic_years')->where('school_id', School::where('is_active', true)->first()?->id),
+                Rule::unique('academic_years')->where('school_id', School::activeOrFail()->id),
             ],
             'start_date' => ['required', 'date'],
             'end_date' => ['required', 'date', 'after:start_date'],

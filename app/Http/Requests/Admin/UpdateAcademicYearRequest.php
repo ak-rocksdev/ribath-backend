@@ -19,7 +19,7 @@ class UpdateAcademicYearRequest extends FormRequest
             'name' => [
                 'sometimes', 'string', 'max:20', 'regex:/^\d{4}\/\d{4}$/',
                 Rule::unique('academic_years')
-                    ->where('school_id', School::where('is_active', true)->first()?->id)
+                    ->where('school_id', School::activeOrFail()->id)
                     ->ignore($this->route('academicYear')?->id),
             ],
             'start_date' => ['sometimes', 'date'],
