@@ -35,6 +35,22 @@ class RolePermissionSeeder extends Seeder
             'edit-teachers',
             'delete-teachers',
             'manage-class-levels',
+
+            // Academic Year
+            'view-academic-years',
+            'manage-academic-years',
+
+            // Time Slots
+            'manage-time-slots',
+
+            // Subject Categories & Books
+            'view-subject-books',
+            'manage-subject-books',
+            'manage-subject-categories',
+
+            // Teaching Schedule
+            'view-schedules',
+            'manage-schedules',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -60,6 +76,14 @@ class RolePermissionSeeder extends Seeder
             'edit-teachers',
             'delete-teachers',
             'manage-class-levels',
+            'view-academic-years',
+            'manage-academic-years',
+            'manage-time-slots',
+            'view-subject-books',
+            'manage-subject-books',
+            'manage-subject-categories',
+            'view-schedules',
+            'manage-schedules',
         ]);
 
         $adminUser = User::firstOrCreate(
