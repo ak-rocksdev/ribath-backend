@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Admin\AcademicYearController;
 use App\Http\Controllers\Api\Admin\ClassLevelController;
 use App\Http\Controllers\Api\Admin\DashboardController;
 use App\Http\Controllers\Api\Admin\NotificationController;
@@ -85,6 +86,24 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{classLevel}', [ClassLevelController::class, 'destroy']);
         Route::patch('/{classLevel}/status', [ClassLevelController::class, 'updateStatus']);
         Route::patch('/reorder', [ClassLevelController::class, 'reorder']);
+    });
+
+    // Academic Years routes
+    Route::prefix('academic-years')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [AcademicYearController::class, 'index'])
+            ->middleware('permission:view-academic-years');
+        Route::post('/', [AcademicYearController::class, 'store'])
+            ->middleware('permission:manage-academic-years');
+        Route::get('/{academicYear}', [AcademicYearController::class, 'show'])
+            ->middleware('permission:view-academic-years');
+        Route::put('/{academicYear}', [AcademicYearController::class, 'update'])
+            ->middleware('permission:manage-academic-years');
+        Route::delete('/{academicYear}', [AcademicYearController::class, 'destroy'])
+            ->middleware('permission:manage-academic-years');
+        Route::patch('/{academicYear}/activate', [AcademicYearController::class, 'activate'])
+            ->middleware('permission:manage-academic-years');
+        Route::patch('/{academicYear}/semester', [AcademicYearController::class, 'switchSemester'])
+            ->middleware('permission:manage-academic-years');
     });
 
     // Dashboard routes
