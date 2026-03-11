@@ -12,7 +12,11 @@ class AcademicYearService
 {
     public function listAll(): Collection
     {
-        return AcademicYear::orderByDesc('name')->get();
+        $school = School::where('is_active', true)->firstOrFail();
+
+        return AcademicYear::where('school_id', $school->id)
+            ->orderByDesc('name')
+            ->get();
     }
 
     public function getActive(): ?AcademicYear
