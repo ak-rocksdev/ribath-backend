@@ -41,11 +41,13 @@ class RolePermissionSeeder extends Seeder
             'manage-academic-years',
 
             // Time Slots
+            'view-time-slots',
             'manage-time-slots',
 
             // Subject Categories & Books
             'view-subject-books',
             'manage-subject-books',
+            'view-subject-categories',
             'manage-subject-categories',
 
             // Teaching Schedule
@@ -78,9 +80,11 @@ class RolePermissionSeeder extends Seeder
             'manage-class-levels',
             'view-academic-years',
             'manage-academic-years',
+            'view-time-slots',
             'manage-time-slots',
             'view-subject-books',
             'manage-subject-books',
+            'view-subject-categories',
             'manage-subject-categories',
             'view-schedules',
             'manage-schedules',

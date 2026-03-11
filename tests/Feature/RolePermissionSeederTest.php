@@ -28,7 +28,19 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'view-teachers')->exists())->toBeTrue()
         ->and(Permission::where('name', 'create-teachers')->exists())->toBeTrue()
         ->and(Permission::where('name', 'edit-teachers')->exists())->toBeTrue()
-        ->and(Permission::where('name', 'delete-teachers')->exists())->toBeTrue();
+        ->and(Permission::where('name', 'delete-teachers')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-class-levels')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-academic-years')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-academic-years')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-time-slots')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-time-slots')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-subject-books')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-subject-books')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-subject-categories')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-subject-categories')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-schedules')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-schedules')->exists())->toBeTrue()
+        ->and(Permission::count())->toBe(29);
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {
@@ -50,6 +62,17 @@ test('seeder assigns permissions to pengurus_pesantren', function () {
         ->and($pengurusPesantren->hasPermissionTo('create-teachers'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('edit-teachers'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-teachers'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-class-levels'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-academic-years'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-academic-years'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-time-slots'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-time-slots'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-subject-books'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-subject-books'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-subject-categories'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-subject-categories'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-schedules'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-schedules'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse();
 });
 
