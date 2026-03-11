@@ -36,14 +36,7 @@ class TeachingScheduleController extends Controller
 
     public function show(TeachingSchedule $teachingSchedule): JsonResponse
     {
-        $teachingSchedule->load([
-            'subjectBook:id,title,subject_category_id,sessions_per_week',
-            'subjectBook.subjectCategory:id,name,color',
-            'teacher:id,full_name,code',
-            'timeSlot:id,code,label,type,start_time,end_time,sort_order',
-            'classLevel:id,slug,label,category',
-            'academicYear:id,name',
-        ]);
+        $teachingSchedule->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
 
         return $this->successResponse($teachingSchedule, 'Teaching schedule retrieved');
     }

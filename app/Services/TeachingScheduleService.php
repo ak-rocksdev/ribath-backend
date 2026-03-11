@@ -14,14 +14,7 @@ class TeachingScheduleService
         $school = School::activeOrFail();
 
         $query = TeachingSchedule::where('school_id', $school->id)
-            ->with([
-                'subjectBook:id,title,subject_category_id,sessions_per_week',
-                'subjectBook.subjectCategory:id,name,color',
-                'teacher:id,full_name,code',
-                'timeSlot:id,code,label,type,start_time,end_time,sort_order',
-                'classLevel:id,slug,label,category',
-                'academicYear:id,name',
-            ]);
+            ->with(TeachingSchedule::EAGER_LOAD_RELATIONS);
 
         if (! empty($filters['academic_year_id'])) {
             $query->where('academic_year_id', $filters['academic_year_id']);
@@ -54,6 +47,8 @@ class TeachingScheduleService
 
         $data['school_id'] = $school->id;
 
+        $this->validateNoClassSlotConflict($data);
+
         $this->validateNoTeacherConflict(
             teacherId: $data['teacher_id'],
             dayOfWeek: $data['day_of_week'],
@@ -64,21 +59,17 @@ class TeachingScheduleService
 
         $schedule = TeachingSchedule::create($data);
 
-        return $schedule->load([
-            'subjectBook:id,title,subject_category_id,sessions_per_week',
-            'subjectBook.subjectCategory:id,name,color',
-            'teacher:id,full_name,code',
-            'timeSlot:id,code,label,type,start_time,end_time,sort_order',
-            'classLevel:id,slug,label,category',
-            'academicYear:id,name',
-        ]);
+        return $schedule->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
     }
 
     public function updateSchedule(TeachingSchedule $teachingSchedule, array $data): TeachingSchedule
     {
         $mergedData = array_merge($teachingSchedule->only([
-            'teacher_id', 'day_of_week', 'time_slot_id', 'academic_year_id', 'semester',
+            'school_id', 'teacher_id', 'day_of_week', 'time_slot_id',
+            'academic_year_id', 'semester', 'class_level_id',
         ]), $data);
+
+        $this->validateNoClassSlotConflict($mergedData, $teachingSchedule->id);
 
         $this->validateNoTeacherConflict(
             teacherId: $mergedData['teacher_id'],
@@ -91,19 +82,12 @@ class TeachingScheduleService
 
         $teachingSchedule->update($data);
 
-        return $teachingSchedule->fresh()->load([
-            'subjectBook:id,title,subject_category_id,sessions_per_week',
-            'subjectBook.subjectCategory:id,name,color',
-            'teacher:id,full_name,code',
-            'timeSlot:id,code,label,type,start_time,end_time,sort_order',
-            'classLevel:id,slug,label,category',
-            'academicYear:id,name',
-        ]);
+        return $teachingSchedule->fresh()->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
     }
 
     public function deleteSchedule(TeachingSchedule $teachingSchedule): void
     {
-        $teachingSchedule->delete();
+        $teachingSchedule->update(['is_active' => false]);
     }
 
     public function findTeacherConflict(
@@ -126,6 +110,27 @@ class TeachingScheduleService
         }
 
         return $query->with('classLevel:id,label')->first();
+    }
+
+    private function validateNoClassSlotConflict(array $data, ?string $excludeScheduleId = null): void
+    {
+        $query = TeachingSchedule::where('school_id', $data['school_id'])
+            ->where('academic_year_id', $data['academic_year_id'])
+            ->where('semester', $data['semester'])
+            ->where('day_of_week', $data['day_of_week'])
+            ->where('time_slot_id', $data['time_slot_id'])
+            ->where('class_level_id', $data['class_level_id'])
+            ->where('is_active', true);
+
+        if ($excludeScheduleId) {
+            $query->where('id', '!=', $excludeScheduleId);
+        }
+
+        if ($query->exists()) {
+            throw ValidationException::withMessages([
+                'class_level_id' => 'This class already has a schedule at the same time slot.',
+            ]);
+        }
     }
 
     private function validateNoTeacherConflict(

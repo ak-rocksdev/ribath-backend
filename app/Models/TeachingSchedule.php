@@ -16,6 +16,15 @@ class TeachingSchedule extends Model
         'friday', 'saturday', 'sunday',
     ];
 
+    const EAGER_LOAD_RELATIONS = [
+        'subjectBook:id,title,subject_category_id,sessions_per_week',
+        'subjectBook.subjectCategory:id,name,color',
+        'teacher:id,full_name,code',
+        'timeSlot:id,code,label,type,start_time,end_time,sort_order',
+        'classLevel:id,slug,label,category',
+        'academicYear:id,name',
+    ];
+
     protected $fillable = [
         'school_id',
         'academic_year_id',

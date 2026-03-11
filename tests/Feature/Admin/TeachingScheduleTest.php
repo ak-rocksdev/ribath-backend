@@ -904,9 +904,9 @@ test('no teacher conflict when existing schedule is inactive', function () {
     $response->assertCreated();
 });
 
-// ── Class slot uniqueness (DB constraint) test ───────────────────────
+// ── Class slot uniqueness test ────────────────────────────────────────
 
-test('DB unique constraint prevents double-booking a class at the same time slot', function () {
+test('application-layer validation prevents double-booking a class at the same time slot', function () {
     $testData = createScheduleTestData();
     [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
 
@@ -932,8 +932,11 @@ test('DB unique constraint prevents double-booking a class at the same time slot
     $response = $this->actingAs($user)
         ->postJson('/api/v1/teaching-schedules', $payload);
 
-    // DB unique constraint triggers a 500 server error
-    $response->assertServerError();
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['class_level_id']);
+
+    $errorMessage = $response->json('errors.class_level_id.0');
+    expect($errorMessage)->toContain('already has a schedule');
 });
 
 // ── Update tests ─────────────────────────────────────────────────────
@@ -1085,7 +1088,7 @@ test('can change teacher on existing schedule', function () {
 
 // ── Delete tests ─────────────────────────────────────────────────────
 
-test('can delete a teaching schedule', function () {
+test('can delete a teaching schedule (soft deactivation)', function () {
     $testData = createScheduleTestData();
     [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
 
@@ -1096,6 +1099,7 @@ test('can delete a teaching schedule', function () {
         'class_level_id' => $classLevel->id,
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
+        'is_active' => true,
     ]);
 
     $response = $this->actingAs($user)
@@ -1104,10 +1108,13 @@ test('can delete a teaching schedule', function () {
     $response->assertOk()
         ->assertJsonPath('success', true);
 
-    $this->assertDatabaseMissing('teaching_schedules', ['id' => $schedule->id]);
+    $this->assertDatabaseHas('teaching_schedules', [
+        'id' => $schedule->id,
+        'is_active' => false,
+    ]);
 });
 
-test('delete is a hard delete', function () {
+test('delete sets is_active to false instead of removing the record', function () {
     $testData = createScheduleTestData();
     [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
 
@@ -1118,6 +1125,7 @@ test('delete is a hard delete', function () {
         'class_level_id' => $classLevel->id,
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
+        'is_active' => true,
     ]);
 
     $scheduleId = $schedule->id;
@@ -1125,12 +1133,13 @@ test('delete is a hard delete', function () {
     $this->actingAs($user)
         ->deleteJson("/api/v1/teaching-schedules/{$scheduleId}");
 
-    // Verify the record is completely gone from the database (hard deleted)
-    $this->assertDatabaseMissing('teaching_schedules', ['id' => $scheduleId]);
-    expect(TeachingSchedule::find($scheduleId))->toBeNull();
-
-    // Verify the model does not use SoftDeletes
-    expect(in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive(TeachingSchedule::class)))->toBeFalse();
+    // Verify the record still exists in the database but is deactivated
+    $this->assertDatabaseHas('teaching_schedules', [
+        'id' => $scheduleId,
+        'is_active' => false,
+    ]);
+    expect(TeachingSchedule::find($scheduleId))->not->toBeNull();
+    expect(TeachingSchedule::find($scheduleId)->is_active)->toBeFalse();
 });
 
 // ── Cross-entity deletion protection tests ───────────────────────────
