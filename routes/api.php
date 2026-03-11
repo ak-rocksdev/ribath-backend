@@ -131,5 +131,6 @@ Route::prefix('v1')->group(function () {
 // PSB Public routes (no auth required)
 Route::prefix('v1/public/psb')->group(function () {
     Route::get('/active-period', [PublicPsbController::class, 'activePeriod']);
+    Route::get('/active-periods', [PublicPsbController::class, 'activePeriods']);
     Route::post('/register', [PublicPsbController::class, 'register']);
 });

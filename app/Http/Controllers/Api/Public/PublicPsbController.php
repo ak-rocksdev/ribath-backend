@@ -4,21 +4,20 @@ namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\PSB\QuickRegistrationRequest;
-use App\Models\RegistrationPeriod;
 use App\Services\PsbService;
+use App\Services\RegistrationPeriodService;
+use Illuminate\Http\JsonResponse;
 
 class PublicPsbController extends Controller
 {
     public function __construct(
-        private PsbService $psbService
+        private PsbService $psbService,
+        private RegistrationPeriodService $registrationPeriodService,
     ) {}
 
-    public function activePeriod()
+    public function activePeriod(): JsonResponse
     {
-        $activePeriod = RegistrationPeriod::where('is_active', true)
-            ->where('registration_open', '<=', now())
-            ->where('registration_close', '>=', now())
-            ->first();
+        $activePeriod = $this->registrationPeriodService->findCurrentlyOpenPeriod();
 
         if (! $activePeriod) {
             return $this->errorResponse('No active registration period found', null, 404);
@@ -27,7 +26,14 @@ class PublicPsbController extends Controller
         return $this->successResponse($activePeriod, 'Active registration period retrieved');
     }
 
-    public function register(QuickRegistrationRequest $request)
+    public function activePeriods(): JsonResponse
+    {
+        $periods = $this->registrationPeriodService->findActivePeriodsForLanding();
+
+        return $this->successResponse($periods, 'Active registration periods retrieved');
+    }
+
+    public function register(QuickRegistrationRequest $request): JsonResponse
     {
         $registration = $this->psbService->register($request->validated());
 

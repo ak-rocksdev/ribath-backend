@@ -2,8 +2,13 @@
 
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
+use App\Models\School;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+
+beforeEach(function () {
+    School::factory()->create(['is_active' => true]);
+});
 
 function createAuthenticatedUser(string $role = 'super_admin'): User
 {
