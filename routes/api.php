@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\Admin\StudentController;
 use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\SubjectBookController;
 use App\Http\Controllers\Api\Admin\SubjectCategoryController;
+use App\Http\Controllers\Api\Admin\TeachingScheduleController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
@@ -153,6 +154,20 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-subject-books');
         Route::delete('/{subjectBook}', [SubjectBookController::class, 'destroy'])
             ->middleware('permission:manage-subject-books');
+    });
+
+    // Teaching Schedules routes
+    Route::prefix('teaching-schedules')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [TeachingScheduleController::class, 'index'])
+            ->middleware('permission:view-schedules');
+        Route::post('/', [TeachingScheduleController::class, 'store'])
+            ->middleware('permission:manage-schedules');
+        Route::get('/{teachingSchedule}', [TeachingScheduleController::class, 'show'])
+            ->middleware('permission:view-schedules');
+        Route::put('/{teachingSchedule}', [TeachingScheduleController::class, 'update'])
+            ->middleware('permission:manage-schedules');
+        Route::delete('/{teachingSchedule}', [TeachingScheduleController::class, 'destroy'])
+            ->middleware('permission:manage-schedules');
     });
 
     // Dashboard routes
