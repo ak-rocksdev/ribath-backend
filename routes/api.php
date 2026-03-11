@@ -94,6 +94,8 @@ Route::prefix('v1')->group(function () {
 
     // Academic Years routes
     Route::prefix('academic-years')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/active', [AcademicYearController::class, 'active'])
+            ->middleware('permission:view-academic-years');
         Route::get('/', [AcademicYearController::class, 'index'])
             ->middleware('permission:view-academic-years');
         Route::post('/', [AcademicYearController::class, 'store'])

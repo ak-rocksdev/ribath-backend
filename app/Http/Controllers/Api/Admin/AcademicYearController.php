@@ -61,6 +61,17 @@ class AcademicYearController extends Controller
         return $this->successResponse($activatedAcademicYear, 'Academic year activated');
     }
 
+    public function active(): JsonResponse
+    {
+        $activeYear = $this->academicYearService->getActive();
+
+        if (! $activeYear) {
+            return $this->errorResponse('No active academic year found', code: 404);
+        }
+
+        return $this->successResponse($activeYear, 'Active academic year retrieved');
+    }
+
     public function switchSemester(Request $request, AcademicYear $academicYear): JsonResponse
     {
         $request->validate([

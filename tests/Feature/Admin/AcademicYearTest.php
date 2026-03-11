@@ -86,6 +86,43 @@ test('academic year response has correct structure', function () {
         ]);
 });
 
+// ── Active endpoint tests ──────────────────────────────────────────────
+
+test('can get active academic year', function () {
+    [$user, $school] = createSchoolAndUser();
+
+    AcademicYear::factory()->create([
+        'school_id' => $school->id,
+        'is_active' => false,
+    ]);
+    $active = AcademicYear::factory()->create([
+        'school_id' => $school->id,
+        'is_active' => true,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/academic-years/active');
+
+    $response->assertOk()
+        ->assertJsonPath('success', true)
+        ->assertJsonPath('data.id', $active->id);
+});
+
+test('active endpoint returns 404 when no active academic year', function () {
+    [$user, $school] = createSchoolAndUser();
+
+    AcademicYear::factory()->create([
+        'school_id' => $school->id,
+        'is_active' => false,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/academic-years/active');
+
+    $response->assertNotFound()
+        ->assertJsonPath('success', false);
+});
+
 // ── Show tests ─────────────────────────────────────────────────────────
 
 test('can show a single academic year', function () {
