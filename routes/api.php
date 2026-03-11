@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\SchoolController;
 use App\Http\Controllers\Api\Admin\StudentController;
 use App\Http\Controllers\Api\Admin\TeacherController;
+use App\Http\Controllers\Api\Admin\SubjectBookController;
 use App\Http\Controllers\Api\Admin\SubjectCategoryController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
@@ -136,6 +137,22 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-subject-categories');
         Route::delete('/{subjectCategory}', [SubjectCategoryController::class, 'destroy'])
             ->middleware('permission:manage-subject-categories');
+    });
+
+    // Subject Books routes
+    Route::prefix('subject-books')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/active', [SubjectBookController::class, 'activeList'])
+            ->middleware('permission:view-subject-books');
+        Route::get('/', [SubjectBookController::class, 'index'])
+            ->middleware('permission:view-subject-books');
+        Route::post('/', [SubjectBookController::class, 'store'])
+            ->middleware('permission:manage-subject-books');
+        Route::get('/{subjectBook}', [SubjectBookController::class, 'show'])
+            ->middleware('permission:view-subject-books');
+        Route::put('/{subjectBook}', [SubjectBookController::class, 'update'])
+            ->middleware('permission:manage-subject-books');
+        Route::delete('/{subjectBook}', [SubjectBookController::class, 'destroy'])
+            ->middleware('permission:manage-subject-books');
     });
 
     // Dashboard routes

@@ -84,4 +84,9 @@ class School extends Model
     {
         return $this->hasMany(SubjectCategory::class);
     }
+
+    public function subjectBooks(): HasMany
+    {
+        return $this->hasMany(SubjectBook::class);
+    }
 }
