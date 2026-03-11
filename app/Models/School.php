@@ -60,4 +60,9 @@ class School extends Model
     {
         return $this->hasMany(AcademicYear::class);
     }
+
+    public function timeSlots(): HasMany
+    {
+        return $this->hasMany(TimeSlot::class);
+    }
 }

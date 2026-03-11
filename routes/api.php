@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\SchoolController;
 use App\Http\Controllers\Api\Admin\StudentController;
 use App\Http\Controllers\Api\Admin\TeacherController;
+use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
@@ -104,6 +105,22 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-academic-years');
         Route::patch('/{academicYear}/semester', [AcademicYearController::class, 'switchSemester'])
             ->middleware('permission:manage-academic-years');
+    });
+
+    // Time Slots routes
+    Route::prefix('time-slots')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [TimeSlotController::class, 'index'])
+            ->middleware('permission:view-time-slots');
+        Route::post('/', [TimeSlotController::class, 'store'])
+            ->middleware('permission:manage-time-slots');
+        Route::patch('/reorder', [TimeSlotController::class, 'reorder'])
+            ->middleware('permission:manage-time-slots');
+        Route::get('/{timeSlot}', [TimeSlotController::class, 'show'])
+            ->middleware('permission:view-time-slots');
+        Route::put('/{timeSlot}', [TimeSlotController::class, 'update'])
+            ->middleware('permission:manage-time-slots');
+        Route::delete('/{timeSlot}', [TimeSlotController::class, 'destroy'])
+            ->middleware('permission:manage-time-slots');
     });
 
     // Dashboard routes
