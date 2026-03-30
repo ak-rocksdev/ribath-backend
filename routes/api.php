@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
+use App\Http\Controllers\Api\Public\StudentCompletionController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -170,6 +171,10 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-schedules');
         Route::delete('/{teachingSchedule}', [TeachingScheduleController::class, 'destroy'])
             ->middleware('permission:manage-schedules');
+        Route::post('/clone-semester', [TeachingScheduleController::class, 'cloneSemester'])
+            ->middleware('permission:manage-schedules');
+        Route::post('/replace-teacher', [TeachingScheduleController::class, 'replaceTeacher'])
+            ->middleware('permission:manage-schedules');
     });
 
     // Dashboard routes
@@ -218,4 +223,16 @@ Route::prefix('v1/public/psb')->group(function () {
     Route::get('/active-period', [PublicPsbController::class, 'activePeriod']);
     Route::get('/active-periods', [PublicPsbController::class, 'activePeriods']);
     Route::post('/register', [PublicPsbController::class, 'register']);
+});
+
+// Student Completion (public, token-based, rate-limited)
+Route::prefix('v1/public/student-completion/{registrationId}')->group(function () {
+    Route::get('/', [StudentCompletionController::class, 'show'])
+        ->middleware('throttle:30,1');
+    Route::put('/', [StudentCompletionController::class, 'update'])
+        ->middleware('throttle:10,1');
+    Route::post('/documents', [StudentCompletionController::class, 'uploadDocument'])
+        ->middleware('throttle:10,1');
+    Route::delete('/documents/{documentType}', [StudentCompletionController::class, 'deleteDocument'])
+        ->middleware('throttle:10,1');
 });
