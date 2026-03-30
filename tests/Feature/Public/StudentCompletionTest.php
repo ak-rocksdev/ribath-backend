@@ -272,6 +272,20 @@ test('upload rejects file over 5MB', function () {
     $response->assertUnprocessable();
 });
 
+test('upload document returns 403 when completed', function () {
+    Storage::fake('public');
+    $this->student->update(['profile_completion_status' => 'completed']);
+
+    $file = UploadedFile::fake()->image('foto.jpg');
+
+    $response = $this->postJson(
+        "/api/v1/public/student-completion/{$this->registration->id}/documents",
+        ['document_type' => 'foto', 'file' => $file],
+    );
+
+    $response->assertForbidden();
+});
+
 // --- Document delete tests ---
 
 test('delete document succeeds', function () {

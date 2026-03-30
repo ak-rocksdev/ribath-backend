@@ -17,7 +17,7 @@ class StudentDocumentUploadRequest extends FormRequest
     {
         return [
             'document_type' => ['required', 'string', Rule::in(StudentDocument::ALLOWED_TYPES)],
-            'file' => ['required', 'file', 'max:5120', 'mimes:jpg,jpeg,png,pdf'],
+            'file' => ['required', 'file', 'max:5120', 'mimes:jpg,jpeg,png,pdf', 'mimetypes:image/jpeg,image/png,application/pdf'],
         ];
     }
 
