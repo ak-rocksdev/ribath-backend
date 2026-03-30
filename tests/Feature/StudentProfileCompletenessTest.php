@@ -182,3 +182,27 @@ test('PSB accept creates student with profile_completed_at null (incomplete prof
         ->and($student->class_level)->toBe('tamhidi')
         ->and($student->incomplete_fields)->toContain('address');
 });
+
+// -------------------------------------------------------
+// profile_completion_status_label
+// -------------------------------------------------------
+
+test('profile_completion_status_label returns correct labels', function () {
+    $incomplete = Student::factory()->create(['profile_completion_status' => 'incomplete']);
+    $draft = Student::factory()->create(['profile_completion_status' => 'draft']);
+    $completed = Student::factory()->create(['profile_completion_status' => 'completed']);
+
+    expect($incomplete->profile_completion_status_label)->toBe('Belum Lengkap')
+        ->and($draft->profile_completion_status_label)->toBe('Draft')
+        ->and($completed->profile_completion_status_label)->toBe('Lengkap');
+});
+
+test('show endpoint includes profile_completion_status_label', function () {
+    $student = Student::factory()->create();
+
+    $response = $this->actingAs($this->admin)
+        ->getJson("/api/v1/students/{$student->id}");
+
+    $response->assertOk()
+        ->assertJsonStructure(['data' => ['profile_completion_status_label']]);
+});

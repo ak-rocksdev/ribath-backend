@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Student extends Model
@@ -41,23 +43,39 @@ class Student extends Model
         'guardian_user_id',
         'user_id',
         'full_name',
+        'nik',
+        'email',
+        'phone',
         'birth_place',
         'birth_date',
         'gender',
+        'child_order',
+        'siblings_count',
         'program',
         'status',
+        'profile_completion_status',
         'entry_date',
         'class_level',
         'class_level_id',
         'address',
         'photo_url',
         'notes',
+        'motivation',
+        'family_income_range',
         'profile_completed_at',
+        'agreed_to_rules_at',
+        'agreed_to_commitment_at',
+        'data_verified_at',
+    ];
+
+    protected $attributes = [
+        'profile_completion_status' => 'incomplete',
     ];
 
     protected $appends = [
         'is_profile_complete',
         'incomplete_fields',
+        'profile_completion_status_label',
     ];
 
     protected function casts(): array
@@ -65,7 +83,12 @@ class Student extends Model
         return [
             'birth_date' => 'date',
             'entry_date' => 'date',
+            'child_order' => 'integer',
+            'siblings_count' => 'integer',
             'profile_completed_at' => 'datetime',
+            'agreed_to_rules_at' => 'datetime',
+            'agreed_to_commitment_at' => 'datetime',
+            'data_verified_at' => 'datetime',
         ];
     }
 
@@ -98,6 +121,15 @@ class Student extends Model
         return $this->getIncompleteFields();
     }
 
+    public function getProfileCompletionStatusLabelAttribute(): string
+    {
+        return match ($this->profile_completion_status) {
+            'completed' => 'Lengkap',
+            'draft' => 'Draft',
+            default => 'Belum Lengkap',
+        };
+    }
+
     public function school(): BelongsTo
     {
         return $this->belongsTo(School::class);
@@ -121,5 +153,35 @@ class Student extends Model
     public function classLevel(): BelongsTo
     {
         return $this->belongsTo(ClassLevel::class);
+    }
+
+    public function parents(): HasMany
+    {
+        return $this->hasMany(StudentParent::class);
+    }
+
+    public function health(): HasOne
+    {
+        return $this->hasOne(StudentHealth::class);
+    }
+
+    public function educationHistory(): HasOne
+    {
+        return $this->hasOne(StudentEducationHistory::class);
+    }
+
+    public function religiousProfile(): HasOne
+    {
+        return $this->hasOne(StudentReligiousProfile::class);
+    }
+
+    public function additionalInfo(): HasOne
+    {
+        return $this->hasOne(StudentAdditionalInfo::class);
+    }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(StudentDocument::class);
     }
 }

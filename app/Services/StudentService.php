@@ -58,10 +58,26 @@ class StudentService
 
     private function syncProfileCompletionTimestamp(Student $student): void
     {
+        $needsUpdate = false;
+        $updates = [];
+
         if ($student->isProfileComplete() && $student->profile_completed_at === null) {
-            $student->updateQuietly(['profile_completed_at' => now()]);
+            $updates['profile_completed_at'] = now();
+            $needsUpdate = true;
         } elseif (! $student->isProfileComplete() && $student->profile_completed_at !== null) {
-            $student->updateQuietly(['profile_completed_at' => null]);
+            $updates['profile_completed_at'] = null;
+            $needsUpdate = true;
+        }
+
+        // Auto-set profile_completion_status to 'completed' when admin fills all fields
+        // (only if it's still 'incomplete' — don't override 'draft' or 'completed' from student completion flow)
+        if ($student->isProfileComplete() && $student->profile_completion_status === 'incomplete') {
+            $updates['profile_completion_status'] = 'completed';
+            $needsUpdate = true;
+        }
+
+        if ($needsUpdate) {
+            $student->updateQuietly($updates);
         }
     }
 }

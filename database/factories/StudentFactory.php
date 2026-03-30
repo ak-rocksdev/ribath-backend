@@ -38,6 +38,7 @@ class StudentFactory extends Factory
             'class_level' => $this->randomClassLevelSlug(),
             'address' => $this->faker->address(),
             'notes' => $this->faker->optional()->sentence(),
+            'profile_completion_status' => 'incomplete',
         ];
     }
 
@@ -52,6 +53,7 @@ class StudentFactory extends Factory
             'entry_date' => $this->faker->date(),
             'class_level' => $this->randomClassLevelSlug(),
             'address' => $this->faker->address(),
+            'profile_completion_status' => 'completed',
             'profile_completed_at' => now(),
         ]);
     }
@@ -61,6 +63,7 @@ class StudentFactory extends Factory
         return $this->state(fn (array $attributes) => [
             'class_level' => null,
             'address' => null,
+            'profile_completion_status' => 'incomplete',
             'profile_completed_at' => null,
         ]);
     }
