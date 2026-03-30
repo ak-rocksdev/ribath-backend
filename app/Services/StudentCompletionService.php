@@ -101,39 +101,24 @@ class StudentCompletionService
                 }
             }
 
-            // Upsert health
+            // Upsert HasOne relationships (relationship already scopes to student_id)
             if (isset($data['health'])) {
-                $student->health()->updateOrCreate(
-                    ['student_id' => $student->id],
-                    $data['health'],
-                );
+                $student->health()->updateOrCreate([], $data['health']);
             }
 
-            // Upsert education history
             if (isset($data['education_history'])) {
-                $student->educationHistory()->updateOrCreate(
-                    ['student_id' => $student->id],
-                    $data['education_history'],
-                );
+                $student->educationHistory()->updateOrCreate([], $data['education_history']);
             }
 
-            // Upsert religious profile
             if (isset($data['religious_profile'])) {
-                $student->religiousProfile()->updateOrCreate(
-                    ['student_id' => $student->id],
-                    $data['religious_profile'],
-                );
+                $student->religiousProfile()->updateOrCreate([], $data['religious_profile']);
             }
 
-            // Upsert additional info
             if (isset($data['additional_info'])) {
-                $student->additionalInfo()->updateOrCreate(
-                    ['student_id' => $student->id],
-                    $data['additional_info'],
-                );
+                $student->additionalInfo()->updateOrCreate([], $data['additional_info']);
             }
 
-            return $student->fresh();
+            return $student;
         });
     }
 
