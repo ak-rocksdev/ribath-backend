@@ -54,9 +54,8 @@ test('student with multiple null fields reports all missing fields', function ()
         ->and($student->incomplete_fields)->toContain('birth_place');
 });
 
-test('photo_url and notes are not required for profile completeness', function () {
+test('notes is not required for profile completeness', function () {
     $student = Student::factory()->create([
-        'photo_url' => null,
         'notes' => null,
     ]);
 

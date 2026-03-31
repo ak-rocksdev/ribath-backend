@@ -77,6 +77,8 @@ Route::prefix('v1')->group(function () {
         Route::put('/{student}', [StudentController::class, 'update'])->middleware('permission:edit-students');
         Route::delete('/{student}', [StudentController::class, 'destroy'])->middleware('permission:delete-students');
         Route::patch('/{student}/status', [StudentController::class, 'updateStatus'])->middleware('permission:edit-students');
+        Route::post('/{student}/documents', [StudentController::class, 'uploadDocument'])->middleware('permission:edit-students');
+        Route::delete('/{student}/documents/{documentType}', [StudentController::class, 'deleteDocument'])->middleware('permission:edit-students');
     });
 
     // Schools route

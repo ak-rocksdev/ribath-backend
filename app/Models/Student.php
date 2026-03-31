@@ -58,7 +58,7 @@ class Student extends Model
         'class_level',
         'class_level_id',
         'address',
-        'photo_url',
+
         'notes',
         'motivation',
         'family_income_range',

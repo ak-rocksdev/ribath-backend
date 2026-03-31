@@ -211,6 +211,43 @@ test('show student with relations', function () {
     expect($response->json('data.guardian'))->not->toBeNull();
 });
 
+test('show student includes all profile relationships', function () {
+    $admin = createStudentAdmin();
+    $student = Student::factory()->create();
+
+    $student->parents()->create(['relation' => 'father', 'name' => 'Ahmad', 'phone' => '08111']);
+    $student->parents()->create(['relation' => 'mother', 'name' => 'Fatimah', 'phone' => '08222']);
+    $student->health()->create(['blood_type' => 'O', 'allergies' => 'Kacang']);
+    $student->educationHistory()->create(['last_school_name' => 'SD 1', 'last_education_level' => 'elementary']);
+    $student->religiousProfile()->create(['quran_reading_ability' => 'fluent', 'memorized_juz' => 5]);
+    $student->additionalInfo()->create(['hobbies_talents' => 'Membaca']);
+    $student->documents()->create([
+        'document_type' => 'foto',
+        'file_path' => 'student-documents/test/foto.jpg',
+        'original_filename' => 'foto.jpg',
+        'file_size' => 1000,
+    ]);
+
+    $response = $this->actingAs($admin)
+        ->getJson("/api/v1/students/{$student->id}");
+
+    $response->assertOk()
+        ->assertJsonStructure(['data' => [
+            'parents',
+            'health',
+            'education_history',
+            'religious_profile',
+            'additional_info',
+            'documents',
+        ]])
+        ->assertJsonPath('data.parents.0.relation', 'father')
+        ->assertJsonPath('data.health.blood_type', 'O')
+        ->assertJsonPath('data.education_history.last_school_name', 'SD 1')
+        ->assertJsonPath('data.religious_profile.memorized_juz', 5)
+        ->assertJsonPath('data.additional_info.hobbies_talents', 'Membaca')
+        ->assertJsonPath('data.documents.0.document_type', 'foto');
+});
+
 // Update Student
 test('update student', function () {
     $admin = createStudentAdmin();
@@ -226,6 +263,77 @@ test('update student', function () {
         ->assertJsonPath('data.full_name', 'Updated Student Name')
         ->assertJsonPath('data.class_level', 'ibtida_1')
         ->assertJsonPath('data.address', 'New Address');
+});
+
+test('update student with nested relations', function () {
+    $admin = createStudentAdmin();
+    $student = Student::factory()->create();
+
+    $response = $this->actingAs($admin)
+        ->putJson("/api/v1/students/{$student->id}", [
+            'nik' => '1234567890123456',
+            'parents' => [
+                'father' => ['name' => 'Ahmad', 'phone' => '08111111111', 'occupation' => 'Guru'],
+                'mother' => ['name' => 'Fatimah', 'phone' => '08222222222'],
+            ],
+            'health' => ['blood_type' => 'AB', 'allergies' => 'Debu'],
+            'education_history' => ['last_school_name' => 'SD 2', 'last_education_level' => 'elementary'],
+            'religious_profile' => ['quran_reading_ability' => 'fluent', 'memorized_juz' => 10],
+            'additional_info' => ['hobbies_talents' => 'Kaligrafi'],
+        ]);
+
+    $response->assertOk()
+        ->assertJsonPath('data.nik', '1234567890123456')
+        ->assertJsonPath('data.health.blood_type', 'AB')
+        ->assertJsonPath('data.education_history.last_school_name', 'SD 2')
+        ->assertJsonPath('data.religious_profile.memorized_juz', 10)
+        ->assertJsonPath('data.additional_info.hobbies_talents', 'Kaligrafi');
+
+    $this->assertDatabaseHas('student_parents', [
+        'student_id' => $student->id,
+        'relation' => 'father',
+        'name' => 'Ahmad',
+        'occupation' => 'Guru',
+    ]);
+    $this->assertDatabaseHas('student_parents', [
+        'student_id' => $student->id,
+        'relation' => 'mother',
+        'name' => 'Fatimah',
+    ]);
+});
+
+test('update nested relations upserts existing data', function () {
+    $admin = createStudentAdmin();
+    $student = Student::factory()->create();
+
+    // Create initial data
+    $student->parents()->create(['relation' => 'father', 'name' => 'Old Name', 'phone' => '08111']);
+    $student->health()->create(['blood_type' => 'A']);
+
+    // Update with new data
+    $response = $this->actingAs($admin)
+        ->putJson("/api/v1/students/{$student->id}", [
+            'parents' => [
+                'father' => ['name' => 'New Name', 'phone' => '08999'],
+            ],
+            'health' => ['blood_type' => 'B', 'allergies' => 'Kacang'],
+        ]);
+
+    $response->assertOk();
+
+    // Should update existing, not create duplicates
+    expect($student->parents()->where('relation', 'father')->count())->toBe(1);
+    $this->assertDatabaseHas('student_parents', [
+        'student_id' => $student->id,
+        'relation' => 'father',
+        'name' => 'New Name',
+        'phone' => '08999',
+    ]);
+    $this->assertDatabaseHas('student_health', [
+        'student_id' => $student->id,
+        'blood_type' => 'B',
+        'allergies' => 'Kacang',
+    ]);
 });
 
 // Delete Student
