@@ -146,7 +146,7 @@ test('complete fails without required fields', function () {
 test('complete fails without foto document', function () {
     $response = $this->putJson("/api/v1/public/student-completion/{$this->registration->id}", [
         'status' => 'completed',
-        'student' => ['nik' => '1234567890123456', 'address' => 'Jl. Test No 1'],
+        'student' => ['nik' => '1234567890123456', 'gender' => 'L', 'address' => 'Jl. Test No 1'],
         'parents' => [
             'father' => ['name' => 'Ahmad', 'phone' => '08111111111'],
             'mother' => ['name' => 'Fatimah', 'phone' => '08222222222'],
@@ -173,7 +173,7 @@ test('complete succeeds with all required fields and foto', function () {
 
     $response = $this->putJson("/api/v1/public/student-completion/{$this->registration->id}", [
         'status' => 'completed',
-        'student' => ['nik' => '1234567890123456', 'address' => 'Jl. Test No 1'],
+        'student' => ['nik' => '1234567890123456', 'gender' => 'L', 'address' => 'Jl. Test No 1'],
         'parents' => [
             'father' => ['name' => 'Ahmad', 'phone' => '08111111111'],
             'mother' => ['name' => 'Fatimah', 'phone' => '08222222222'],

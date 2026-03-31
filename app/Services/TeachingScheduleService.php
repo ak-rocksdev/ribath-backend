@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\School;
 use App\Models\TeachingSchedule;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class TeachingScheduleService
@@ -88,6 +89,164 @@ class TeachingScheduleService
     public function deleteSchedule(TeachingSchedule $teachingSchedule): void
     {
         $teachingSchedule->update(['is_active' => false]);
+    }
+
+    /**
+     * Clone all active schedules from one semester to another.
+     * Skips entries that would create conflicts in the target semester.
+     *
+     * @return array{created: int, skipped: int, skipped_details: array}
+     */
+    public function cloneSemesterSchedules(array $data): array
+    {
+        $school = School::activeOrFail();
+
+        // Prevent cloning to the same period
+        if ($data['source_academic_year_id'] === $data['target_academic_year_id']
+            && (int) $data['source_semester'] === (int) $data['target_semester']) {
+            throw ValidationException::withMessages([
+                'target_semester' => 'Target semester must be different from source semester.',
+            ]);
+        }
+
+        $excludeIds = $data['exclude_schedule_ids'] ?? [];
+
+        $sourceSchedules = TeachingSchedule::where('school_id', $school->id)
+            ->where('academic_year_id', $data['source_academic_year_id'])
+            ->where('semester', (int) $data['source_semester'])
+            ->where('is_active', true)
+            ->when(count($excludeIds) > 0, fn ($q) => $q->whereNotIn('id', $excludeIds))
+            ->get();
+
+        if ($sourceSchedules->isEmpty()) {
+            throw ValidationException::withMessages([
+                'source_semester' => 'No active schedules found in the source semester.',
+            ]);
+        }
+
+        $created = 0;
+        $skipped = 0;
+        $skippedDetails = [];
+
+        DB::transaction(function () use ($sourceSchedules, $data, $school, &$created, &$skipped, &$skippedDetails) {
+            foreach ($sourceSchedules as $source) {
+                // Check for class-slot conflict in target
+                $classConflict = TeachingSchedule::where('school_id', $school->id)
+                    ->where('academic_year_id', $data['target_academic_year_id'])
+                    ->where('semester', (int) $data['target_semester'])
+                    ->where('day_of_week', $source->day_of_week)
+                    ->where('time_slot_id', $source->time_slot_id)
+                    ->where('class_level_id', $source->class_level_id)
+                    ->where('is_active', true)
+                    ->exists();
+
+                // Check for teacher conflict in target
+                $teacherConflict = TeachingSchedule::where('teacher_id', $source->teacher_id)
+                    ->where('day_of_week', $source->day_of_week)
+                    ->where('time_slot_id', $source->time_slot_id)
+                    ->where('academic_year_id', $data['target_academic_year_id'])
+                    ->where('semester', (int) $data['target_semester'])
+                    ->where('is_active', true)
+                    ->exists();
+
+                if ($classConflict || $teacherConflict) {
+                    $skipped++;
+                    $skippedDetails[] = [
+                        'source_id' => $source->id,
+                        'reason' => $classConflict ? 'class_slot_conflict' : 'teacher_conflict',
+                    ];
+
+                    continue;
+                }
+
+                TeachingSchedule::create([
+                    'school_id' => $school->id,
+                    'academic_year_id' => $data['target_academic_year_id'],
+                    'semester' => (int) $data['target_semester'],
+                    'day_of_week' => $source->day_of_week,
+                    'time_slot_id' => $source->time_slot_id,
+                    'class_level_id' => $source->class_level_id,
+                    'subject_book_id' => $source->subject_book_id,
+                    'teacher_id' => $source->teacher_id,
+                    'is_active' => true,
+                ]);
+
+                $created++;
+            }
+        });
+
+        return [
+            'created' => $created,
+            'skipped' => $skipped,
+            'skipped_details' => $skippedDetails,
+            'source_total' => $sourceSchedules->count(),
+        ];
+    }
+
+    /**
+     * Replace one teacher with another across schedules.
+     * Validates that the replacement teacher has no conflicts.
+     *
+     * @return array{updated: int, conflicts: array}
+     */
+    public function replaceTeacher(array $data): array
+    {
+        $school = School::activeOrFail();
+
+        $query = TeachingSchedule::where('school_id', $school->id)
+            ->where('teacher_id', $data['source_teacher_id'])
+            ->where('is_active', true);
+
+        if (! empty($data['academic_year_id'])) {
+            $query->where('academic_year_id', $data['academic_year_id']);
+        }
+
+        if (! empty($data['semester'])) {
+            $query->where('semester', (int) $data['semester']);
+        }
+
+        $schedules = $query->get();
+
+        if ($schedules->isEmpty()) {
+            throw ValidationException::withMessages([
+                'source_teacher_id' => 'No active schedules found for this teacher.',
+            ]);
+        }
+
+        $updated = 0;
+        $conflicts = [];
+
+        DB::transaction(function () use ($schedules, $data, &$updated, &$conflicts) {
+            foreach ($schedules as $schedule) {
+                $conflict = $this->findTeacherConflict(
+                    teacherId: $data['target_teacher_id'],
+                    dayOfWeek: $schedule->day_of_week,
+                    timeSlotId: $schedule->time_slot_id,
+                    academicYearId: $schedule->academic_year_id,
+                    semester: $schedule->semester,
+                );
+
+                if ($conflict) {
+                    $conflicts[] = [
+                        'schedule_id' => $schedule->id,
+                        'day_of_week' => $schedule->day_of_week,
+                        'time_slot_id' => $schedule->time_slot_id,
+                        'conflicting_class' => $conflict->classLevel->label ?? null,
+                    ];
+
+                    continue;
+                }
+
+                $schedule->update(['teacher_id' => $data['target_teacher_id']]);
+                $updated++;
+            }
+        });
+
+        return [
+            'updated' => $updated,
+            'conflicts' => $conflicts,
+            'total' => $schedules->count(),
+        ];
     }
 
     public function findTeacherConflict(

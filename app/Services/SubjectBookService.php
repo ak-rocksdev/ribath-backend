@@ -18,6 +18,10 @@ class SubjectBookService
         $query = SubjectBook::where('school_id', $school->id)
             ->with('subjectCategory:id,name,color');
 
+        if (class_exists(\App\Models\TeachingSchedule::class)) {
+            $query->withCount('teachingSchedules');
+        }
+
         if (! empty($filters['subject_category_id'])) {
             $query->where('subject_category_id', $filters['subject_category_id']);
         }
@@ -39,11 +43,15 @@ class SubjectBookService
     {
         $school = School::activeOrFail();
 
-        return SubjectBook::where('school_id', $school->id)
+        $query = SubjectBook::where('school_id', $school->id)
             ->where('is_active', true)
-            ->with('subjectCategory:id,name,color')
-            ->orderBy('title')
-            ->get();
+            ->with('subjectCategory:id,name,color');
+
+        if (class_exists(\App\Models\TeachingSchedule::class)) {
+            $query->withCount('teachingSchedules');
+        }
+
+        return $query->orderBy('title')->get();
     }
 
     public function createBook(array $data): SubjectBook

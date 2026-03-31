@@ -26,6 +26,7 @@ class StudentCompletionRequest extends FormRequest
             'student.nik' => $requiredOrNullable(['string', 'size:16']),
             'student.email' => ['nullable', 'email', 'max:255'],
             'student.phone' => ['nullable', 'string', 'max:20'],
+            'student.gender' => $requiredOrNullable(['string', 'in:L,P']),
             'student.address' => $requiredOrNullable(['string', 'max:500']),
             'student.child_order' => ['nullable', 'integer', 'min:1'],
             'student.siblings_count' => ['nullable', 'integer', 'min:0'],

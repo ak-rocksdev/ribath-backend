@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\CloneSemesterSchedulesRequest;
+use App\Http\Requests\Admin\ReplaceTeacherSchedulesRequest;
 use App\Http\Requests\Admin\StoreTeachingScheduleRequest;
 use App\Http\Requests\Admin\UpdateTeachingScheduleRequest;
 use App\Models\TeachingSchedule;
@@ -56,5 +58,19 @@ class TeachingScheduleController extends Controller
         $this->teachingScheduleService->deleteSchedule($teachingSchedule);
 
         return $this->successResponse(null, 'Teaching schedule deleted');
+    }
+
+    public function cloneSemester(CloneSemesterSchedulesRequest $request): JsonResponse
+    {
+        $result = $this->teachingScheduleService->cloneSemesterSchedules($request->validated());
+
+        return $this->successResponse($result, 'Semester schedules cloned', 201);
+    }
+
+    public function replaceTeacher(ReplaceTeacherSchedulesRequest $request): JsonResponse
+    {
+        $result = $this->teachingScheduleService->replaceTeacher($request->validated());
+
+        return $this->successResponse($result, 'Teacher replaced in schedules');
     }
 }
