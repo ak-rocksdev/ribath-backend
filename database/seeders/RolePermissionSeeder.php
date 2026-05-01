@@ -53,6 +53,9 @@ class RolePermissionSeeder extends Seeder
             // Teaching Schedule
             'view-schedules',
             'manage-schedules',
+
+            // School Profile
+            'manage-school-profile',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -88,6 +91,7 @@ class RolePermissionSeeder extends Seeder
             'manage-subject-categories',
             'view-schedules',
             'manage-schedules',
+            'manage-school-profile',
         ]);
 
         $adminUser = User::firstOrCreate(
