@@ -27,6 +27,10 @@ class TeachingScheduleService
         'friday' => 4, 'saturday' => 5, 'sunday' => 6,
     ];
 
+    /** Per-process cache for the default logo so we don't re-read the PNG on every export. */
+    private static ?string $cachedDefaultLogoDataUri = null;
+    private static bool $defaultLogoLoaded = false;
+
     public function listSchedules(array $filters): Collection
     {
         $school = School::activeOrFail();
@@ -398,6 +402,7 @@ class TeachingScheduleService
                 'kelas' => $sortedSchedules->pluck('class_level_id')->unique()->count(),
             ],
             'logo_data_uri' => $this->resolveDefaultLogoDataUri(),
+            'day_labels'    => self::DAY_LABELS,
             'generated_at'  => Carbon::now('Asia/Jakarta'),
         ];
     }
@@ -418,16 +423,20 @@ class TeachingScheduleService
     /**
      * Read the default school logo from disk and return a base64 data URI.
      * Returns null if the file is missing so the Blade can render without a logo.
+     * Memoised at the PHP-process level — the file is fixed at build time and
+     * never changes between requests served by the same FPM worker.
      */
     private function resolveDefaultLogoDataUri(): ?string
     {
-        $path = public_path('images/default-school-logo.png');
-
-        if (! file_exists($path)) {
-            return null;
+        if (! self::$defaultLogoLoaded) {
+            $path = public_path('images/default-school-logo.png');
+            self::$cachedDefaultLogoDataUri = file_exists($path)
+                ? 'data:image/png;base64,' . base64_encode(file_get_contents($path))
+                : null;
+            self::$defaultLogoLoaded = true;
         }
 
-        return 'data:image/png;base64,' . base64_encode(file_get_contents($path));
+        return self::$cachedDefaultLogoDataUri;
     }
 
     private function compareSchedules(TeachingSchedule $a, TeachingSchedule $b): int

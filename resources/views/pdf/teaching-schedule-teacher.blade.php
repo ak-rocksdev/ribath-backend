@@ -6,6 +6,7 @@
     /** @var array $schedules_by_day */
     /** @var array $time_slots */
     /** @var array $totals */
+    /** @var array<string, string> $day_labels */
     /** @var ?string $logo_data_uri */
     /** @var \Carbon\Carbon $generated_at */
     /** @var string $orientation */
@@ -13,13 +14,7 @@
     $isLandscape = ($orientation ?? 'landscape') === 'landscape';
     $generatedLabel = $generated_at->locale('id')->isoFormat('dddd, D MMMM Y [pukul] HH.mm');
 
-    $dayLabels = [
-        'monday' => 'Senin', 'tuesday' => 'Selasa', 'wednesday' => 'Rabu',
-        'thursday' => 'Kamis', 'friday' => 'Jumat', 'saturday' => 'Sabtu',
-        'sunday' => 'Ahad',
-    ];
-
-    // Build a quick lookup [day][time_slot_id] => schedule for the landscape grid
+    // [day][time_slot_id] => schedule lookup for the landscape grid
     $gridLookup = [];
     foreach ($schedules_by_day as $group) {
         foreach ($group['items'] as $item) {
@@ -273,7 +268,7 @@
             <thead>
                 <tr>
                     <th>Waktu</th>
-                    @foreach ($dayLabels as $dayKey => $dayLabel)
+                    @foreach ($day_labels as $dayKey => $dayLabel)
                         <th>{{ $dayLabel }}</th>
                     @endforeach
                 </tr>
@@ -282,7 +277,7 @@
                 @foreach ($time_slots as $slot)
                     <tr>
                         <th>{{ $slot['label'] }}</th>
-                        @foreach ($dayLabels as $dayKey => $_dayLabel)
+                        @foreach ($day_labels as $dayKey => $_dayLabel)
                             @php $cellSchedule = $gridLookup[$dayKey][$slot['id']] ?? null; @endphp
                             <td>
                                 @if ($cellSchedule)
