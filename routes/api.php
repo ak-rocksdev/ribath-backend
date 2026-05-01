@@ -82,8 +82,18 @@ Route::prefix('v1')->group(function () {
         Route::delete('/{student}/documents/{documentType}', [StudentController::class, 'deleteDocument'])->middleware('permission:edit-students');
     });
 
-    // Schools route
-    Route::get('/schools', [SchoolController::class, 'index'])->middleware('auth:sanctum');
+    // Schools routes
+    Route::prefix('schools')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [SchoolController::class, 'index']);
+        Route::get('/{school}', [SchoolController::class, 'show'])
+            ->middleware('permission:manage-school-profile');
+        Route::put('/{school}', [SchoolController::class, 'update'])
+            ->middleware('permission:manage-school-profile');
+        Route::post('/{school}/logo', [SchoolController::class, 'uploadLogo'])
+            ->middleware('permission:manage-school-profile');
+        Route::delete('/{school}/logo', [SchoolController::class, 'deleteLogo'])
+            ->middleware('permission:manage-school-profile');
+    });
 
     // Class Levels routes
     Route::get('/class-levels', [ClassLevelController::class, 'index'])->middleware('auth:sanctum');
