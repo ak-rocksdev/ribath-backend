@@ -15,6 +15,7 @@
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.10.1",
         "spatie/browsershot": "^5.3",
+        "spatie/image": "^3.9",
         "spatie/laravel-pdf": "^2.8",
         "spatie/laravel-permission": "^6.0"
     },
