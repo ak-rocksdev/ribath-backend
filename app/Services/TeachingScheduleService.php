@@ -3,13 +3,30 @@
 namespace App\Services;
 
 use App\Models\School;
+use App\Models\Teacher;
 use App\Models\TeachingSchedule;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class TeachingScheduleService
 {
+    private const DAY_LABELS = [
+        'monday'    => 'Senin',
+        'tuesday'   => 'Selasa',
+        'wednesday' => 'Rabu',
+        'thursday'  => 'Kamis',
+        'friday'    => 'Jumat',
+        'saturday'  => 'Sabtu',
+        'sunday'    => 'Ahad',
+    ];
+
+    private const DAY_ORDER = [
+        'monday' => 0, 'tuesday' => 1, 'wednesday' => 2, 'thursday' => 3,
+        'friday' => 4, 'saturday' => 5, 'sunday' => 6,
+    ];
+
     public function listSchedules(array $filters): Collection
     {
         $school = School::activeOrFail();
@@ -314,5 +331,134 @@ class TeachingScheduleService
                 'teacher_id' => "This teacher is already assigned to {$conflict->classLevel->label} at the same time slot.",
             ]);
         }
+    }
+
+    /**
+     * Build an export-ready view model for a teacher's weekly schedule.
+     * Used by the PDF export endpoint and any future report view.
+     *
+     * @return array{
+     *   school: array{name: ?string, address: ?string, phone: ?string, email: ?string},
+     *   teacher: array{full_name: string, code: string},
+     *   academic_year: array{name: ?string},
+     *   semester: int,
+     *   schedules_sorted: array<int, TeachingSchedule>,
+     *   schedules_by_day: array<int, array{day: string, label: string, items: array<int, TeachingSchedule>}>,
+     *   time_slots: array<int, array{id: string, label: string, sort_order: int}>,
+     *   totals: array{sesi: int, kitab: int, kelas: int},
+     *   generated_at: Carbon
+     * }
+     */
+    public function buildTeacherExportViewModel(
+        Teacher $teacher,
+        string $academicYearId,
+        int $semester,
+    ): array {
+        $teacher->loadMissing('school');
+
+        $schedules = TeachingSchedule::query()
+            ->where('teacher_id', $teacher->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->where('is_active', true)
+            ->with(TeachingSchedule::EAGER_LOAD_RELATIONS)
+            ->get();
+
+        $sortedSchedules = $schedules
+            ->sort(fn ($a, $b) => $this->compareSchedules($a, $b))
+            ->values();
+
+        $schedulesByDay = $this->groupSchedulesByDay($sortedSchedules);
+        $timeSlots = $this->extractOrderedTimeSlots($sortedSchedules);
+
+        $academicYearName = $sortedSchedules->first()?->academicYear?->name;
+
+        return [
+            'school' => [
+                'name'    => $teacher->school?->name,
+                'address' => $teacher->school?->address,
+                'phone'   => $teacher->school?->phone,
+                'email'   => $teacher->school?->email,
+            ],
+            'teacher' => [
+                'full_name' => $teacher->full_name,
+                'code'      => $teacher->code,
+            ],
+            'academic_year' => [
+                'name' => $academicYearName,
+            ],
+            'semester'         => $semester,
+            'schedules_sorted' => $sortedSchedules->all(),
+            'schedules_by_day' => $schedulesByDay,
+            'time_slots'       => $timeSlots,
+            'totals'           => [
+                'sesi'  => $sortedSchedules->count(),
+                'kitab' => $sortedSchedules->pluck('subject_book_id')->unique()->count(),
+                'kelas' => $sortedSchedules->pluck('class_level_id')->unique()->count(),
+            ],
+            'generated_at' => Carbon::now('Asia/Jakarta'),
+        ];
+    }
+
+    private function compareSchedules(TeachingSchedule $a, TeachingSchedule $b): int
+    {
+        $dayDiff = (self::DAY_ORDER[$a->day_of_week] ?? PHP_INT_MAX)
+            - (self::DAY_ORDER[$b->day_of_week] ?? PHP_INT_MAX);
+
+        if ($dayDiff !== 0) {
+            return $dayDiff;
+        }
+
+        return ($a->timeSlot?->sort_order ?? PHP_INT_MAX)
+            <=> ($b->timeSlot?->sort_order ?? PHP_INT_MAX);
+    }
+
+    /**
+     * @param  Collection<int, TeachingSchedule>  $sorted
+     * @return array<int, array{day: string, label: string, items: array<int, TeachingSchedule>}>
+     */
+    private function groupSchedulesByDay(Collection $sorted): array
+    {
+        $byDay = $sorted->groupBy('day_of_week');
+
+        $groups = [];
+        foreach (array_keys(self::DAY_ORDER) as $day) {
+            if (! $byDay->has($day)) {
+                continue;
+            }
+
+            $groups[] = [
+                'day'   => $day,
+                'label' => self::DAY_LABELS[$day],
+                'items' => $byDay->get($day)->all(),
+            ];
+        }
+
+        return $groups;
+    }
+
+    /**
+     * @param  Collection<int, TeachingSchedule>  $sorted
+     * @return array<int, array{id: string, label: string, sort_order: int}>
+     */
+    private function extractOrderedTimeSlots(Collection $sorted): array
+    {
+        $seen = [];
+        foreach ($sorted as $schedule) {
+            $slotId = $schedule->time_slot_id;
+            if (isset($seen[$slotId])) {
+                continue;
+            }
+            $seen[$slotId] = [
+                'id'         => $slotId,
+                'label'      => $schedule->timeSlot?->label ?? $slotId,
+                'sort_order' => $schedule->timeSlot?->sort_order ?? PHP_INT_MAX,
+            ];
+        }
+
+        $slots = array_values($seen);
+        usort($slots, fn ($a, $b) => $a['sort_order'] <=> $b['sort_order']);
+
+        return $slots;
     }
 }
