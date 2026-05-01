@@ -41,7 +41,8 @@ class TeachingScheduleExportController extends Controller
                 // Pass PUPPETEER_CACHE_DIR through to the Node child process. PHP-FPM
                 // workers don't share ak_rocks's HOME, so puppeteer needs an explicit
                 // shared cache path or it tries to download Chromium per request.
-                if ($cacheDir = env('PUPPETEER_CACHE_DIR')) {
+                // Read via config() (not env()) so it survives `php artisan config:cache`.
+                if ($cacheDir = config('services.browsershot.puppeteer_cache_dir')) {
                     $browsershot->setEnvironmentOptions(['PUPPETEER_CACHE_DIR' => $cacheDir]);
                 }
             });

@@ -35,4 +35,12 @@ return [
         ],
     ],
 
+    'browsershot' => [
+        // Path to puppeteer's Chromium cache. Must be readable by the PHP-FPM user
+        // and also writable by the deploy user during npm ci. On the production VPS
+        // this is set to a Capistrano shared/ subpath so it persists across releases
+        // and is accessible to both ak_rocks (deploy) and www-data (runtime).
+        'puppeteer_cache_dir' => env('PUPPETEER_CACHE_DIR'),
+    ],
+
 ];
