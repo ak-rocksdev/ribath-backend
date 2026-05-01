@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\SubjectBookController;
 use App\Http\Controllers\Api\Admin\SubjectCategoryController;
 use App\Http\Controllers\Api\Admin\TeachingScheduleController;
+use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
@@ -163,6 +164,8 @@ Route::prefix('v1')->group(function () {
 
     // Teaching Schedules routes
     Route::prefix('teaching-schedules')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/export/teacher/{teacher}', [TeachingScheduleExportController::class, 'teacher'])
+            ->middleware('permission:view-schedules');
         Route::get('/', [TeachingScheduleController::class, 'index'])
             ->middleware('permission:view-schedules');
         Route::post('/', [TeachingScheduleController::class, 'store'])
