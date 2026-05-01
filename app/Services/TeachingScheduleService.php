@@ -357,6 +357,7 @@ class TeachingScheduleService
         $teacher->loadMissing('school');
 
         $schedules = TeachingSchedule::query()
+            ->where('school_id', $teacher->school_id)
             ->where('teacher_id', $teacher->id)
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
@@ -396,8 +397,37 @@ class TeachingScheduleService
                 'kitab' => $sortedSchedules->pluck('subject_book_id')->unique()->count(),
                 'kelas' => $sortedSchedules->pluck('class_level_id')->unique()->count(),
             ],
-            'generated_at' => Carbon::now('Asia/Jakarta'),
+            'logo_data_uri' => $this->resolveDefaultLogoDataUri(),
+            'generated_at'  => Carbon::now('Asia/Jakarta'),
         ];
+    }
+
+    /**
+     * Build the canonical filename for an exported teacher schedule PDF.
+     * Example: Jadwal-AKH-Sem1-1447-1448.pdf
+     */
+    public function buildTeacherExportFilename(array $viewModel): string
+    {
+        $code = $viewModel['teacher']['code'] ?? 'Ustadz';
+        $semester = $viewModel['semester'] ?? 1;
+        $year = str_replace('/', '-', $viewModel['academic_year']['name'] ?? 'TA');
+
+        return "Jadwal-{$code}-Sem{$semester}-{$year}.pdf";
+    }
+
+    /**
+     * Read the default school logo from disk and return a base64 data URI.
+     * Returns null if the file is missing so the Blade can render without a logo.
+     */
+    private function resolveDefaultLogoDataUri(): ?string
+    {
+        $path = public_path('images/default-school-logo.png');
+
+        if (! file_exists($path)) {
+            return null;
+        }
+
+        return 'data:image/png;base64,' . base64_encode(file_get_contents($path));
     }
 
     private function compareSchedules(TeachingSchedule $a, TeachingSchedule $b): int

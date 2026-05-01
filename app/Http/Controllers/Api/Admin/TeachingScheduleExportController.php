@@ -38,15 +38,8 @@ class TeachingScheduleExportController extends Controller
             $pdf->landscape();
         }
 
-        return $pdf->inline($this->buildFilename($viewModel));
-    }
-
-    private function buildFilename(array $viewModel): string
-    {
-        $teacherCode = $viewModel['teacher']['code'];
-        $semester = $viewModel['semester'];
-        $year = str_replace('/', '-', $viewModel['academic_year']['name'] ?? 'TA');
-
-        return "Jadwal-{$teacherCode}-Sem{$semester}-{$year}.pdf";
+        return $pdf->inline(
+            $this->teachingScheduleService->buildTeacherExportFilename($viewModel),
+        );
     }
 }

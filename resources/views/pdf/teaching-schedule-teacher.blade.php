@@ -6,14 +6,11 @@
     /** @var array $schedules_by_day */
     /** @var array $time_slots */
     /** @var array $totals */
+    /** @var ?string $logo_data_uri */
     /** @var \Carbon\Carbon $generated_at */
     /** @var string $orientation */
 
     $isLandscape = ($orientation ?? 'landscape') === 'landscape';
-    $logoPath = public_path('images/default-school-logo.png');
-    $logoDataUri = file_exists($logoPath)
-        ? 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath))
-        : null;
     $generatedLabel = $generated_at->locale('id')->isoFormat('dddd, D MMMM Y [pukul] HH.mm');
 
     $dayLabels = [
@@ -245,8 +242,8 @@
 <body>
     <div class="header">
         <div class="header__logo">
-            @if ($logoDataUri)
-                <img src="{{ $logoDataUri }}" alt="Logo {{ $school['name'] ?? 'Pesantren' }}">
+            @if (! empty($logo_data_uri))
+                <img src="{{ $logo_data_uri }}" alt="Logo {{ $school['name'] ?? 'Pesantren' }}">
             @endif
         </div>
         <div class="header__info">

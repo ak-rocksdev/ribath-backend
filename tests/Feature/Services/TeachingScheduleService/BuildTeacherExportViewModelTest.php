@@ -126,6 +126,52 @@ test('excludes inactive schedules and other teachers', function () {
     expect($vm['totals']['sesi'])->toBe(1);
 });
 
+test('isolates schedules by school (multi-tenant)', function () {
+    // A schedule recorded against a DIFFERENT school but the same teacher_id should never leak
+    $otherSchool = School::factory()->create(['is_active' => true]);
+    $otherSchoolYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    $otherSchoolSlot = TimeSlot::factory()->create(['school_id' => $otherSchool->id]);
+    $otherSchoolBook = SubjectBook::factory()->create(['school_id' => $otherSchool->id]);
+    $otherSchoolClass = ClassLevel::factory()->create(['school_id' => $otherSchool->id]);
+
+    // Same teacher, same year_id, semester=1, but a different school's row
+    TeachingSchedule::factory()->create([
+        'school_id'        => $otherSchool->id,
+        'academic_year_id' => $otherSchoolYear->id,
+        'semester'         => 1,
+        'day_of_week'      => 'monday',
+        'time_slot_id'     => $otherSchoolSlot->id,
+        'subject_book_id'  => $otherSchoolBook->id,
+        'class_level_id'   => $otherSchoolClass->id,
+        'teacher_id'       => $this->teacher->id,
+        'is_active'        => true,
+    ]);
+
+    // One legitimate schedule for this teacher's school
+    makeScheduleFor($this->teacher, $this->school, $this->year, 1, 'tuesday', $this->slotEarly);
+
+    $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
+
+    expect($vm['totals']['sesi'])->toBe(1)
+        ->and($vm['schedules_sorted'][0]->day_of_week)->toBe('tuesday');
+});
+
+test('builds the canonical filename', function () {
+    $vm = [
+        'teacher'       => ['code' => 'AKH'],
+        'semester'      => 1,
+        'academic_year' => ['name' => '1447/1448'],
+    ];
+
+    expect($this->service->buildTeacherExportFilename($vm))
+        ->toBe('Jadwal-AKH-Sem1-1447-1448.pdf');
+});
+
+test('filename falls back gracefully when fields are missing', function () {
+    expect($this->service->buildTeacherExportFilename([]))
+        ->toBe('Jadwal-Ustadz-Sem1-TA.pdf');
+});
+
 test('returns empty structures when teacher has no schedules', function () {
     $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
 
