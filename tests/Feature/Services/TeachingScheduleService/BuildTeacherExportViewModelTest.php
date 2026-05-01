@@ -201,3 +201,39 @@ test('includes school info from teachers school', function () {
         'email'   => 'test@example.com',
     ]);
 });
+
+test('logo_data_uri falls back to default when school has no uploaded logo', function () {
+    $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
+
+    // Default logo lives at public/images/default-school-logo.png; the resolver returns
+    // a base64 data URI when the file exists. We just assert it's a data URI string.
+    expect($vm['logo_data_uri'])->toBeString();
+    expect($vm['logo_data_uri'])->toStartWith('data:image/');
+});
+
+test('logo_data_uri uses the schools uploaded logo when present', function () {
+    \Illuminate\Support\Facades\Storage::fake('public');
+
+    // 1×1 transparent PNG
+    $pngBytes = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+    \Illuminate\Support\Facades\Storage::disk('public')->put('school-logos/test-logo.png', $pngBytes);
+
+    $this->school->update(['logo_path' => 'school-logos/test-logo.png']);
+
+    $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
+
+    expect($vm['logo_data_uri'])->toStartWith('data:image/png;base64,');
+    expect(base64_decode(substr($vm['logo_data_uri'], strlen('data:image/png;base64,'))))->toEqual($pngBytes);
+});
+
+test('logo_data_uri falls back to default when logo_path is set but file is missing', function () {
+    \Illuminate\Support\Facades\Storage::fake('public');
+
+    $this->school->update(['logo_path' => 'school-logos/missing-file.png']);
+
+    $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
+
+    // Should still return something (the default), not null or an error
+    expect($vm['logo_data_uri'])->toBeString();
+    expect($vm['logo_data_uri'])->toStartWith('data:image/');
+});

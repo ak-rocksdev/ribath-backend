@@ -404,7 +404,7 @@ class TeachingScheduleService
                 'kitab' => $sortedSchedules->pluck('subject_book_id')->unique()->count(),
                 'kelas' => $sortedSchedules->pluck('class_level_id')->unique()->count(),
             ],
-            'logo_data_uri' => $this->resolveDefaultLogoDataUri(),
+            'logo_data_uri' => $this->resolveSchoolLogoDataUri($teacher->school),
             'day_labels'    => self::DAY_LABELS,
             'generated_at'  => Carbon::now('Asia/Jakarta'),
         ];
@@ -440,6 +440,29 @@ class TeachingScheduleService
         }
 
         return self::$cachedDefaultLogoDataUri;
+    }
+
+    /**
+     * Resolve the logo data URI to embed in the PDF for the given school.
+     * Prefers the school's uploaded logo (schools.logo_path) when present;
+     * falls back to the bundled default logo when the school has none or the
+     * file is missing on disk.
+     */
+    private function resolveSchoolLogoDataUri(?School $school): ?string
+    {
+        if (! $school?->logo_path) {
+            return $this->resolveDefaultLogoDataUri();
+        }
+
+        $absolutePath = \Illuminate\Support\Facades\Storage::disk('public')->path($school->logo_path);
+
+        if (! file_exists($absolutePath)) {
+            return $this->resolveDefaultLogoDataUri();
+        }
+
+        $mime = mime_content_type($absolutePath) ?: 'image/png';
+
+        return 'data:'.$mime.';base64,'.base64_encode(file_get_contents($absolutePath));
     }
 
     private function compareSchedules(TeachingSchedule $a, TeachingSchedule $b): int
