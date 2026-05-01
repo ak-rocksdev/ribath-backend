@@ -31,10 +31,15 @@ class TeachingScheduleExportController extends Controller
         // Tell puppeteer's resolver where to find its bundled Chromium cache. Has to be
         // set on the PHP process env (not on Browsershot's launch-options env, which only
         // affects the child Chrome process) because puppeteer reads it from process.env
-        // when *resolving the binary path* before launch. PHP-FPM runs as www-data whose
-        // HOME=/var/www, so without this puppeteer looks in /var/www/.cache/puppeteer/.
+        // when *resolving the binary path* before launch.
+        //
+        // PHP-FPM commonly has variables_order="GPCS" (no E), so $_ENV is empty and Symfony
+        // Process's getDefaultEnv() ends up not propagating putenv() values to the child
+        // Node subprocess reliably. Setting all three guarantees the env reaches puppeteer.
         if ($cacheDir = config('services.browsershot.puppeteer_cache_dir')) {
             putenv("PUPPETEER_CACHE_DIR={$cacheDir}");
+            $_ENV['PUPPETEER_CACHE_DIR'] = $cacheDir;
+            $_SERVER['PUPPETEER_CACHE_DIR'] = $cacheDir;
         }
 
         $pdf = Pdf::view('pdf.teaching-schedule-teacher', [
