@@ -40,7 +40,7 @@ test('list permissions returns all seeded permissions', function () {
         ->assertJsonPath('success', true);
 
     $permissions = $response->json('data');
-    expect(count($permissions))->toBe(29);
+    expect(count($permissions))->toBe(30);
 
     $permissionNames = collect($permissions)->pluck('name')->toArray();
     expect($permissionNames)->toContain('view-users')
