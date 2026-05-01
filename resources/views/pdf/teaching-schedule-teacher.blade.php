@@ -333,7 +333,6 @@
 
     <div class="footer">
         <span>Diekspor pada {{ $generatedLabel }} WIB</span>
-        <span>Halaman 1</span>
     </div>
 </body>
 </html>

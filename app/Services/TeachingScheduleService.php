@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AcademicYear;
 use App\Models\School;
 use App\Models\Teacher;
 use App\Models\TeachingSchedule;
@@ -376,7 +377,9 @@ class TeachingScheduleService
         $schedulesByDay = $this->groupSchedulesByDay($sortedSchedules);
         $timeSlots = $this->extractOrderedTimeSlots($sortedSchedules);
 
-        $academicYearName = $sortedSchedules->first()?->academicYear?->name;
+        // Always resolve from a real lookup so the name is correct even when the teacher has no schedules
+        $academicYearName = $sortedSchedules->first()?->academicYear?->name
+            ?? AcademicYear::find($academicYearId)?->name;
 
         return [
             'school' => [

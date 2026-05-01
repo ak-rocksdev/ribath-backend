@@ -119,7 +119,7 @@ test('successful portrait export returns inline PDF', function () {
     expect($response->headers->get('Content-Type'))->toContain('application/pdf');
 });
 
-test('teacher with zero schedules returns 200 with empty-state PDF', function () {
+test('teacher with zero schedules returns 200 with empty-state PDF and correct filename', function () {
     $user = makeAuthorizedUser();
     // No schedule seeded — empty state path
 
@@ -128,4 +128,6 @@ test('teacher with zero schedules returns 200 with empty-state PDF', function ()
 
     $response->assertOk();
     expect($response->headers->get('Content-Type'))->toContain('application/pdf');
+    // Filename must still resolve the academic year even when no schedules exist for the teacher
+    expect($response->headers->get('Content-Disposition'))->toContain('Jadwal-AKH-Sem1-1447-1448.pdf');
 });
