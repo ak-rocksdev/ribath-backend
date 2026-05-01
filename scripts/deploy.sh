@@ -83,11 +83,15 @@ $COMPOSER_BIN install --no-dev --optimize-autoloader --no-interaction --prefer-d
 echo "      Dependencies installed"
 
 # --- Step 4b: Install Node dependencies (puppeteer / Browsershot Chromium) ---
+# Chromium is downloaded once into a shared, world-readable cache so PHP-FPM (www-data)
+# can use the same binary as deploy-time installs. Source of truth: shared/env/.env.
 if [ -f "$RELEASE_DIR/package.json" ]; then
     echo "[4b/11] Installing Node dependencies..."
     cd "$RELEASE_DIR"
+    export PUPPETEER_CACHE_DIR="${PUPPETEER_CACHE_DIR:-$SHARED_DIR/puppeteer-cache}"
+    mkdir -p "$PUPPETEER_CACHE_DIR"
     npm ci --omit=dev --no-audit --no-fund
-    echo "      Node deps installed"
+    echo "      Node deps installed (cache: $PUPPETEER_CACHE_DIR)"
 fi
 
 # --- Step 5: Run migrations ---
