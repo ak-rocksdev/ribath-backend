@@ -28,24 +28,23 @@ class TeachingScheduleExportController extends Controller
             semester: (int) $request->validated('semester'),
         );
 
+        // Tell puppeteer's resolver where to find its bundled Chromium cache. Has to be
+        // set on the PHP process env (not on Browsershot's launch-options env, which only
+        // affects the child Chrome process) because puppeteer reads it from process.env
+        // when *resolving the binary path* before launch. PHP-FPM runs as www-data whose
+        // HOME=/var/www, so without this puppeteer looks in /var/www/.cache/puppeteer/.
+        if ($cacheDir = config('services.browsershot.puppeteer_cache_dir')) {
+            putenv("PUPPETEER_CACHE_DIR={$cacheDir}");
+        }
+
         $pdf = Pdf::view('pdf.teaching-schedule-teacher', [
                 ...$viewModel,
                 'orientation' => $orientation,
             ])
             ->format(Format::A4)
-            ->withBrowsershot(function ($browsershot) {
-                // --no-sandbox required on Ubuntu 23.10+ where AppArmor disables unprivileged
-                // user namespaces. Safe because we only render trusted Blade templates.
-                $browsershot->noSandbox();
-
-                // Pass PUPPETEER_CACHE_DIR through to the Node child process. PHP-FPM
-                // workers don't share ak_rocks's HOME, so puppeteer needs an explicit
-                // shared cache path or it tries to download Chromium per request.
-                // Read via config() (not env()) so it survives `php artisan config:cache`.
-                if ($cacheDir = config('services.browsershot.puppeteer_cache_dir')) {
-                    $browsershot->setEnvironmentOptions(['PUPPETEER_CACHE_DIR' => $cacheDir]);
-                }
-            });
+            // --no-sandbox required on Ubuntu 23.10+ where AppArmor disables unprivileged
+            // user namespaces. Safe because we only render trusted Blade templates.
+            ->withBrowsershot(fn ($browsershot) => $browsershot->noSandbox());
 
         if ($orientation === 'landscape') {
             $pdf->landscape();
