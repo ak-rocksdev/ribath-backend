@@ -10,8 +10,10 @@
     /** @var string $orientation */
 
     $isLandscape = ($orientation ?? 'landscape') === 'landscape';
-    $logoPath = public_path('images/default-school-logo.svg');
-    $logoSvg = file_exists($logoPath) ? file_get_contents($logoPath) : '';
+    $logoPath = public_path('images/default-school-logo.png');
+    $logoDataUri = file_exists($logoPath)
+        ? 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath))
+        : null;
     $generatedLabel = $generated_at->locale('id')->isoFormat('dddd, D MMMM Y [pukul] HH.mm');
 
     $dayLabels = [
@@ -67,8 +69,12 @@
             width: 56px;
             height: 56px;
             flex: 0 0 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        .header__logo svg { width: 100%; height: 100%; }
+        .header__logo img,
+        .header__logo svg { max-width: 100%; max-height: 100%; object-fit: contain; }
 
         .header__info { flex: 1; }
         .header__school-name {
@@ -238,7 +244,11 @@
 </head>
 <body>
     <div class="header">
-        <div class="header__logo">{!! $logoSvg !!}</div>
+        <div class="header__logo">
+            @if ($logoDataUri)
+                <img src="{{ $logoDataUri }}" alt="Logo {{ $school['name'] ?? 'Pesantren' }}">
+            @endif
+        </div>
         <div class="header__info">
             <div class="header__school-name">{{ $school['name'] ?? 'Pesantren' }}</div>
             <div class="header__school-meta">
