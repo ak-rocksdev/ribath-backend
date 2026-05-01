@@ -6,9 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ExportTeacherSchedulePdfRequest;
 use App\Models\Teacher;
 use App\Services\TeachingScheduleService;
-use Illuminate\Http\Response;
 use Spatie\LaravelPdf\Enums\Format;
 use Spatie\LaravelPdf\Facades\Pdf;
+use Spatie\LaravelPdf\PdfBuilder;
 
 class TeachingScheduleExportController extends Controller
 {
@@ -19,7 +19,7 @@ class TeachingScheduleExportController extends Controller
     public function teacher(
         ExportTeacherSchedulePdfRequest $request,
         Teacher $teacher,
-    ): Response {
+    ): PdfBuilder {
         $orientation = $request->orientation();
 
         $viewModel = $this->teachingScheduleService->buildTeacherExportViewModel(
@@ -32,14 +32,13 @@ class TeachingScheduleExportController extends Controller
                 ...$viewModel,
                 'orientation' => $orientation,
             ])
-            ->format(Format::A4)
-            ->name($this->buildFilename($viewModel));
+            ->format(Format::A4);
 
         if ($orientation === 'landscape') {
             $pdf->landscape();
         }
 
-        return $pdf->inline();
+        return $pdf->inline($this->buildFilename($viewModel));
     }
 
     private function buildFilename(array $viewModel): string
