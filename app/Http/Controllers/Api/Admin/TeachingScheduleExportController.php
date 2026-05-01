@@ -32,7 +32,10 @@ class TeachingScheduleExportController extends Controller
                 ...$viewModel,
                 'orientation' => $orientation,
             ])
-            ->format(Format::A4);
+            ->format(Format::A4)
+            // Required on Ubuntu 23.10+ where AppArmor disables unprivileged user namespaces.
+            // Safe here because we only render our own trusted Blade templates with vetted data.
+            ->withBrowsershot(fn ($browsershot) => $browsershot->noSandbox());
 
         if ($orientation === 'landscape') {
             $pdf->landscape();
