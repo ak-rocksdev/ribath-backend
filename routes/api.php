@@ -236,6 +236,9 @@ Route::prefix('v1')->group(function () {
 
     Route::prefix('cash-book-categories')->middleware('auth:sanctum')->group(function () {
         Route::get('/', [CashBookCategoryController::class, 'index'])->middleware('permission:view-cashbook');
+        Route::post('/', [CashBookCategoryController::class, 'store'])->middleware('permission:manage-cashbook');
+        Route::patch('/{category}', [CashBookCategoryController::class, 'update'])->middleware('permission:manage-cashbook');
+        Route::delete('/{category}', [CashBookCategoryController::class, 'destroy'])->middleware('permission:manage-cashbook');
     });
 
     Route::prefix('cash-book-activity-logs')->middleware(['auth:sanctum', 'permission:view-cashbook'])->group(function () {

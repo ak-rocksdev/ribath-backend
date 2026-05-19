@@ -28,4 +28,43 @@ class CashBookCategoryService
 
         return $query->get();
     }
+
+    public function createCategory(array $data): CashBookCategory
+    {
+        $school = School::activeOrFail();
+
+        return CashBookCategory::create([
+            'school_id' => $school->id,
+            'name' => $data['name'],
+            'is_system' => false,
+            'is_active' => true,
+        ]);
+    }
+
+    public function updateCategory(CashBookCategory $category, array $data): CashBookCategory
+    {
+        $attributes = [];
+
+        if (array_key_exists('name', $data)) {
+            $attributes['name'] = $data['name'];
+        }
+
+        if (array_key_exists('is_active', $data)) {
+            $attributes['is_active'] = (bool) $data['is_active'];
+        }
+
+        if (! empty($attributes)) {
+            $category->fill($attributes);
+            if ($category->isDirty()) {
+                $category->save();
+            }
+        }
+
+        return $category->fresh();
+    }
+
+    public function deleteCategory(CashBookCategory $category): void
+    {
+        $category->delete();
+    }
 }
