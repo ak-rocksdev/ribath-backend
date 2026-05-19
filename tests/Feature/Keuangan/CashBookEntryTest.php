@@ -416,6 +416,118 @@ test('cross-school entry returns 404 not 403', function () {
         ->assertNotFound();
 });
 
+// ─── Filters (US2) ──────────────────────────────────────────────────
+
+test('list filters by date range inclusive', function () {
+    $user = makeCashBookManager();
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->create(['transaction_date' => '2026-04-01', 'created_by' => $user->id]);
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->create(['transaction_date' => '2026-04-15', 'created_by' => $user->id]);
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->create(['transaction_date' => '2026-05-19', 'created_by' => $user->id]);
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/cash-book-entries?start_date=2026-04-01&end_date=2026-04-30')
+        ->assertOk()
+        ->assertJsonPath('meta.total', 2);
+});
+
+test('list filters by type', function () {
+    $user = makeCashBookManager();
+    CashBookEntry::factory()
+        ->count(3)
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->in()
+        ->create(['created_by' => $user->id]);
+    CashBookEntry::factory()
+        ->count(2)
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->out()
+        ->create(['created_by' => $user->id]);
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/cash-book-entries?type=out')
+        ->assertOk()
+        ->assertJsonPath('meta.total', 2);
+});
+
+test('list filters by category_id', function () {
+    $user = makeCashBookManager();
+    $otherCategory = CashBookCategory::factory()->for($this->school, 'school')->create();
+
+    CashBookEntry::factory()
+        ->count(2)
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->create(['created_by' => $user->id]);
+    CashBookEntry::factory()
+        ->count(4)
+        ->for($this->school, 'school')
+        ->for($otherCategory, 'category')
+        ->create(['created_by' => $user->id]);
+
+    $this->actingAs($user)
+        ->getJson("/api/v1/cash-book-entries?category_id={$otherCategory->id}")
+        ->assertOk()
+        ->assertJsonPath('meta.total', 4);
+});
+
+test('list pagination honors per_page', function () {
+    $user = makeCashBookManager();
+    CashBookEntry::factory()
+        ->count(15)
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->create(['created_by' => $user->id]);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/cash-book-entries?per_page=5')
+        ->assertOk();
+
+    expect($response->json('meta.per_page'))->toBe(5);
+    expect($response->json('meta.last_page'))->toBe(3);
+    expect(count($response->json('data')))->toBe(5);
+});
+
+test('summary range filter computes correct total_in_range and total_out_range', function () {
+    $user = makeCashBookManager();
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->in()
+        ->create(['transaction_date' => '2026-04-10', 'amount' => 100_000, 'created_by' => $user->id]);
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->out()
+        ->create(['transaction_date' => '2026-04-20', 'amount' => 40_000, 'created_by' => $user->id]);
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->in()
+        ->create(['transaction_date' => '2026-05-10', 'amount' => 999_999, 'created_by' => $user->id]);
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/cash-book-entries/summary?start_date=2026-04-01&end_date=2026-04-30')
+        ->assertOk()
+        ->assertJsonPath('data.total_in_range', 100_000)
+        ->assertJsonPath('data.total_out_range', 40_000)
+        ->assertJsonPath('data.net_in_range', 60_000)
+        // saldo_total_now is all-time and ignores the range filter
+        ->assertJsonPath('data.saldo_total_now', 1_059_999);
+});
+
+// ─── Multi-Tenant ───────────────────────────────────────────────────
+
 test('list excludes entries from other schools', function () {
     $user = makeCashBookManager();
     CashBookEntry::factory()
