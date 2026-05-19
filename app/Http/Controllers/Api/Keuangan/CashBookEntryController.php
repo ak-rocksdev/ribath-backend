@@ -6,15 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Keuangan\StoreCashBookEntryRequest;
 use App\Http\Requests\Keuangan\UpdateCashBookEntryRequest;
 use App\Models\CashBookEntry;
-use App\Models\School;
 use App\Services\Keuangan\CashBookEntryService;
 use App\Services\Keuangan\CashBookProofStorageService;
+use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CashBookEntryController extends Controller
 {
+    use EnsuresActiveSchoolTenancy;
+
     public function __construct(
         private CashBookEntryService $entryService,
         private CashBookProofStorageService $proofStorage,
@@ -89,13 +91,4 @@ class CashBookEntryController extends Controller
         return $this->proofStorage->streamResponse($entry->proof_file_path, $entry->proof_file_mime);
     }
 
-    /**
-     * Hide cross-tenant entries as 404 so attackers cannot probe for existence by id.
-     */
-    private function ensureBelongsToActiveSchool(CashBookEntry $entry): void
-    {
-        $school = School::activeOrFail();
-
-        abort_unless($entry->school_id === $school->id, 404);
-    }
 }

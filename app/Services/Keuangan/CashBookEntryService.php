@@ -6,7 +6,7 @@ use App\Models\CashBookEntry;
 use App\Models\School;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\DB as DBFacade;
 
 class CashBookEntryService
 {
@@ -48,42 +48,45 @@ class CashBookEntryService
     public function summaryEntries(array $filters): array
     {
         $school = School::activeOrFail();
+        $bindings = ['school_id' => $school->id];
 
-        $base = CashBookEntry::query()->where('school_id', $school->id);
-
-        $saldoTotalNow = (int) $base->clone()
-            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'in' THEN amount ELSE 0 END), 0)
-                        - COALESCE(SUM(CASE WHEN type = 'out' THEN amount ELSE 0 END), 0) as saldo")
-            ->value('saldo');
-
-        $rangeQuery = $base->clone();
-
+        // Build dynamic range clause inline to keep saldo_total_now (all-time) and
+        // total_*_range (filtered) in a single round-trip.
+        $rangeClauses = ['1=1'];
         if (! empty($filters['start_date'])) {
-            $rangeQuery->whereDate('transaction_date', '>=', $filters['start_date']);
+            $rangeClauses[] = 'transaction_date >= :start_date';
+            $bindings['start_date'] = $filters['start_date'];
         }
-
         if (! empty($filters['end_date'])) {
-            $rangeQuery->whereDate('transaction_date', '<=', $filters['end_date']);
+            $rangeClauses[] = 'transaction_date <= :end_date';
+            $bindings['end_date'] = $filters['end_date'];
         }
-
         if (! empty($filters['type'])) {
-            $rangeQuery->where('type', $filters['type']);
+            $rangeClauses[] = 'type = :type';
+            $bindings['type'] = $filters['type'];
         }
-
         if (! empty($filters['category_id'])) {
-            $rangeQuery->where('category_id', $filters['category_id']);
+            $rangeClauses[] = 'category_id = :category_id';
+            $bindings['category_id'] = $filters['category_id'];
         }
+        $rangeWhere = implode(' AND ', $rangeClauses);
 
-        $rangeAggregate = $rangeQuery
-            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'in' THEN amount ELSE 0 END), 0) as total_in,
-                         COALESCE(SUM(CASE WHEN type = 'out' THEN amount ELSE 0 END), 0) as total_out")
-            ->first();
+        $row = DBFacade::selectOne(
+            "SELECT
+                COALESCE(SUM(CASE WHEN type = 'in' THEN amount ELSE 0 END), 0)
+                  - COALESCE(SUM(CASE WHEN type = 'out' THEN amount ELSE 0 END), 0) AS saldo_total_now,
+                COALESCE(SUM(CASE WHEN type = 'in' AND ({$rangeWhere}) THEN amount ELSE 0 END), 0) AS total_in,
+                COALESCE(SUM(CASE WHEN type = 'out' AND ({$rangeWhere}) THEN amount ELSE 0 END), 0) AS total_out
+             FROM cash_book_entries
+             WHERE school_id = :school_id AND deleted_at IS NULL",
+            $bindings
+        );
 
-        $totalIn = (int) ($rangeAggregate->total_in ?? 0);
-        $totalOut = (int) ($rangeAggregate->total_out ?? 0);
+        $totalIn = (int) ($row->total_in ?? 0);
+        $totalOut = (int) ($row->total_out ?? 0);
 
         return [
-            'saldo_total_now' => $saldoTotalNow,
+            'saldo_total_now' => (int) ($row->saldo_total_now ?? 0),
             'total_in_range' => $totalIn,
             'total_out_range' => $totalOut,
             'net_in_range' => $totalIn - $totalOut,
@@ -98,7 +101,7 @@ class CashBookEntryService
     {
         $school = School::activeOrFail();
 
-        $entry = DB::transaction(function () use ($data, $proof, $userId, $school) {
+        $entry = DBFacade::transaction(function () use ($data, $proof, $userId, $school) {
             $entry = CashBookEntry::create([
                 'school_id' => $school->id,
                 'transaction_date' => $data['transaction_date'],
@@ -134,7 +137,7 @@ class CashBookEntryService
         $school = School::activeOrFail();
         $oldProofPath = null;
 
-        DB::transaction(function () use ($entry, $data, $proof, $removeProof, $userId, $school, &$oldProofPath) {
+        DBFacade::transaction(function () use ($entry, $data, $proof, $removeProof, $userId, $school, &$oldProofPath) {
             $newValues = [];
 
             foreach (['transaction_date', 'type', 'category_id', 'description', 'counterparty', 'amount'] as $field) {

@@ -6,20 +6,22 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Keuangan\StoreCashBookCategoryRequest;
 use App\Http\Requests\Keuangan\UpdateCashBookCategoryRequest;
 use App\Models\CashBookCategory;
-use App\Models\School;
 use App\Services\Keuangan\CashBookCategoryService;
+use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class CashBookCategoryController extends Controller
 {
+    use EnsuresActiveSchoolTenancy;
+
     public function __construct(
         private CashBookCategoryService $categoryService
     ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->only(['is_active']);
+        $filters = $request->only(['is_active', 'with_entries_count']);
         $categories = $this->categoryService->listCategories($filters);
 
         return $this->successResponse($categories, 'Cash book categories retrieved');
@@ -83,13 +85,4 @@ class CashBookCategoryController extends Controller
         return $this->successResponse(null, 'Cash book category deleted');
     }
 
-    /**
-     * Hide cross-tenant categories as 404 so attackers cannot probe for existence by id.
-     */
-    private function ensureBelongsToActiveSchool(CashBookCategory $category): void
-    {
-        $school = School::activeOrFail();
-
-        abort_unless($category->school_id === $school->id, 404);
-    }
 }

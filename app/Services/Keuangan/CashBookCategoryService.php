@@ -14,9 +14,18 @@ class CashBookCategoryService
 
         $query = CashBookCategory::query()
             ->where('school_id', $school->id)
-            ->withCount('entries')
             ->orderBy('is_system', 'desc')
             ->orderBy('name');
+
+        // Only join the entries-count subquery when the caller asks for it. The
+        // form dropdown doesn't need it and skipping the join saves a scan on
+        // cash_book_entries every time the modal opens.
+        $withCount = array_key_exists('with_entries_count', $filters)
+            && in_array($filters['with_entries_count'], ['true', '1', 1, true], true);
+
+        if ($withCount) {
+            $query->withCount('entries');
+        }
 
         // Default to active-only unless caller explicitly opts in to include inactive.
         $includeInactive = array_key_exists('is_active', $filters)

@@ -231,7 +231,23 @@ test('viewer cannot create/update/delete categories', function () {
 
 // ─── Original list tests below ──────────────────────────────────────
 
-test('list includes entries_count for each category', function () {
+test('list includes entries_count when with_entries_count=true', function () {
+    $user = makeCashBookUser();
+    $category = CashBookCategory::factory()->for($this->school, 'school')->create();
+
+    CashBookEntry::factory()
+        ->count(3)
+        ->for($this->school, 'school')
+        ->for($category, 'category')
+        ->create(['created_by' => $user->id]);
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/cash-book-categories?with_entries_count=true')
+        ->assertOk()
+        ->assertJsonPath('data.0.entries_count', 3);
+});
+
+test('list omits entries_count by default to save a query', function () {
     $user = makeCashBookUser();
     $category = CashBookCategory::factory()->for($this->school, 'school')->create();
 
@@ -244,5 +260,5 @@ test('list includes entries_count for each category', function () {
     $this->actingAs($user)
         ->getJson('/api/v1/cash-book-categories')
         ->assertOk()
-        ->assertJsonPath('data.0.entries_count', 3);
+        ->assertJsonMissingPath('data.0.entries_count');
 });
