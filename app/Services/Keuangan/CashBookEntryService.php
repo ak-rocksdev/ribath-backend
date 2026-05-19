@@ -135,28 +135,36 @@ class CashBookEntryService
         $oldProofPath = null;
 
         DB::transaction(function () use ($entry, $data, $proof, $removeProof, $userId, $school, &$oldProofPath) {
-            $attributes = [];
+            $newValues = [];
 
             foreach (['transaction_date', 'type', 'category_id', 'description', 'counterparty', 'amount'] as $field) {
                 if (array_key_exists($field, $data)) {
-                    $attributes[$field] = $data[$field];
+                    $newValues[$field] = $data[$field];
                 }
             }
 
             if ($proof !== null) {
-                $oldProofPath = $entry->proof_file_path;
                 $stored = $this->proofStorage->store($proof, $school->id, $entry->id);
-                $attributes['proof_file_path'] = $stored['path'];
-                $attributes['proof_file_mime'] = $stored['mime'];
+                $newValues['proof_file_path'] = $stored['path'];
+                $newValues['proof_file_mime'] = $stored['mime'];
             } elseif ($removeProof) {
-                $oldProofPath = $entry->proof_file_path;
-                $attributes['proof_file_path'] = null;
-                $attributes['proof_file_mime'] = null;
+                $newValues['proof_file_path'] = null;
+                $newValues['proof_file_mime'] = null;
             }
 
-            if (! empty($attributes)) {
-                $attributes['updated_by'] = $userId;
-                $entry->update($attributes);
+            if (empty($newValues)) {
+                return;
+            }
+
+            // Fill in-memory, then check isDirty() to skip no-op saves. Without
+            // this gate, a PATCH that submits already-current values would bump
+            // updated_by + updated_at without any audit log diff to explain why.
+            $entry->fill($newValues);
+
+            if ($entry->isDirty()) {
+                $oldProofPath = $entry->getOriginal('proof_file_path');
+                $entry->updated_by = $userId;
+                $entry->save();
             }
         });
 

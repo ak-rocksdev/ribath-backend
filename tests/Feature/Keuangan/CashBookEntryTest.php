@@ -175,6 +175,35 @@ test('create rejects inactive category', function () {
 
 // ─── Update ──────────────────────────────────────────────────────────
 
+test('update skips save and audit log when submitted values match current', function () {
+    $user = makeCashBookManager();
+    $entry = CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->create([
+            'amount' => 100_000,
+            'description' => 'same value',
+            'created_by' => $user->id,
+            'updated_by' => null,
+        ]);
+
+    $originalUpdatedBy = $entry->updated_by;
+    $originalUpdatedAt = $entry->updated_at->toDateTimeString();
+    $logsBefore = CashBookActivityLog::where('action', 'updated')->count();
+
+    $this->actingAs($user)
+        ->patchJson("/api/v1/cash-book-entries/{$entry->id}", [
+            'amount' => 100_000,
+            'description' => 'same value',
+        ])
+        ->assertOk();
+
+    $entry->refresh();
+    expect($entry->updated_by)->toBe($originalUpdatedBy);
+    expect($entry->updated_at->toDateTimeString())->toBe($originalUpdatedAt);
+    expect(CashBookActivityLog::where('action', 'updated')->count())->toBe($logsBefore);
+});
+
 test('update changes amount and writes audit log with diff', function () {
     $user = makeCashBookManager();
     $entry = CashBookEntry::factory()
@@ -281,6 +310,28 @@ test('list returns paginated entries scoped to active school', function () {
     $response->assertOk()
         ->assertJsonCount(3, 'data')
         ->assertJsonPath('meta.total', 3);
+});
+
+test('summary excludes entries from other schools (SC-006 multi-tenant)', function () {
+    $user = makeCashBookManager();
+    CashBookEntry::factory()
+        ->for($this->school, 'school')
+        ->for($this->category, 'category')
+        ->in()
+        ->create(['amount' => 1_000_000, 'created_by' => $user->id]);
+
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    $otherCategory = CashBookCategory::factory()->for($otherSchool, 'school')->create();
+    CashBookEntry::factory()
+        ->for($otherSchool, 'school')
+        ->for($otherCategory, 'category')
+        ->in()
+        ->create(['amount' => 999_999_999, 'created_by' => $user->id]);
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/cash-book-entries/summary')
+        ->assertOk()
+        ->assertJsonPath('data.saldo_total_now', 1_000_000);
 });
 
 test('summary returns correct saldo_total_now', function () {

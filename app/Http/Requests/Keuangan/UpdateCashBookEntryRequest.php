@@ -19,7 +19,9 @@ class UpdateCashBookEntryRequest extends FormRequest
         $school = School::activeOrFail();
 
         return [
-            'transaction_date' => ['sometimes', 'required', 'date', 'before_or_equal:today'],
+            // Compare against Asia/Jakarta date explicitly because config('app.timezone')
+            // is UTC, which mis-rejects same-day WIB submissions during 00:00–07:00.
+            'transaction_date' => ['sometimes', 'required', 'date', 'before_or_equal:'.now('Asia/Jakarta')->toDateString()],
             'type' => ['sometimes', 'required', 'string', Rule::in(CashBookEntry::TYPES)],
             'category_id' => [
                 'sometimes',
