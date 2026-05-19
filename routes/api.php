@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
+use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
@@ -215,6 +216,11 @@ Route::prefix('v1')->group(function () {
         Route::patch('/{notification}/read', [NotificationController::class, 'markAsRead']);
         Route::delete('/{notification}', [NotificationController::class, 'destroy']);
         Route::post('/bulk-delete', [NotificationController::class, 'bulkDelete']);
+    });
+
+    // Cash Book (Buku Kas) routes — Foundational endpoint only at this phase
+    Route::prefix('cash-book-activity-logs')->middleware(['auth:sanctum', 'permission:view-cashbook'])->group(function () {
+        Route::get('/', [CashBookActivityLogController::class, 'index']);
     });
 
     // PSB Period Management routes
