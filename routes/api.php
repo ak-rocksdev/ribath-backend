@@ -18,6 +18,8 @@ use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
+use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
+use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
@@ -243,6 +245,21 @@ Route::prefix('v1')->group(function () {
 
     Route::prefix('cash-book-activity-logs')->middleware(['auth:sanctum', 'permission:view-cashbook'])->group(function () {
         Route::get('/', [CashBookActivityLogController::class, 'index']);
+    });
+
+    // Fee Management — US1 Master Data (fee_types + fee_schedules)
+    Route::prefix('fee-types')->middleware(['auth:sanctum', 'permission:manage-fee-types'])->group(function () {
+        Route::get('/', [FeeTypeController::class, 'index']);
+        Route::post('/', [FeeTypeController::class, 'store']);
+        Route::patch('/{feeType}', [FeeTypeController::class, 'update']);
+        Route::delete('/{feeType}', [FeeTypeController::class, 'destroy']);
+    });
+
+    Route::prefix('fee-schedules')->middleware(['auth:sanctum', 'permission:manage-fee-schedules'])->group(function () {
+        Route::get('/', [FeeScheduleController::class, 'index']);
+        Route::post('/', [FeeScheduleController::class, 'store']);
+        Route::patch('/{feeSchedule}', [FeeScheduleController::class, 'update']);
+        Route::delete('/{feeSchedule}', [FeeScheduleController::class, 'destroy']);
     });
 
     // PSB Period Management routes
