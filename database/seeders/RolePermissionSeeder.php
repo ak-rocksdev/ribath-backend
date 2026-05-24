@@ -56,6 +56,10 @@ class RolePermissionSeeder extends Seeder
 
             // School Profile
             'manage-school-profile',
+
+            // Cash Book (Buku Kas)
+            'view-cashbook',
+            'manage-cashbook',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -92,6 +96,8 @@ class RolePermissionSeeder extends Seeder
             'view-schedules',
             'manage-schedules',
             'manage-school-profile',
+            'view-cashbook',
+            'manage-cashbook',
         ]);
 
         $adminUser = User::firstOrCreate(

@@ -41,7 +41,9 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'view-schedules')->exists())->toBeTrue()
         ->and(Permission::where('name', 'manage-schedules')->exists())->toBeTrue()
         ->and(Permission::where('name', 'manage-school-profile')->exists())->toBeTrue()
-        ->and(Permission::count())->toBe(30);
+        ->and(Permission::where('name', 'view-cashbook')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-cashbook')->exists())->toBeTrue()
+        ->and(Permission::count())->toBe(32);
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {

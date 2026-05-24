@@ -15,6 +15,9 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Auth\AuthController;
+use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
+use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
+use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
@@ -215,6 +218,31 @@ Route::prefix('v1')->group(function () {
         Route::patch('/{notification}/read', [NotificationController::class, 'markAsRead']);
         Route::delete('/{notification}', [NotificationController::class, 'destroy']);
         Route::post('/bulk-delete', [NotificationController::class, 'bulkDelete']);
+    });
+
+    // Cash Book (Buku Kas) routes
+    Route::prefix('cash-book-entries')->middleware('auth:sanctum')->group(function () {
+        // Specific routes BEFORE {entry} binding
+        Route::get('/summary', [CashBookEntryController::class, 'summary'])->middleware('permission:view-cashbook');
+        Route::get('/', [CashBookEntryController::class, 'index'])->middleware('permission:view-cashbook');
+        Route::post('/', [CashBookEntryController::class, 'store'])->middleware('permission:manage-cashbook');
+
+        Route::get('/{entry}', [CashBookEntryController::class, 'show'])->middleware('permission:view-cashbook');
+        Route::get('/{entry}/proof', [CashBookEntryController::class, 'streamProof'])->middleware('permission:view-cashbook');
+        // POST is supported with _method=PATCH so multipart uploads work from browsers.
+        Route::match(['patch', 'post'], '/{entry}', [CashBookEntryController::class, 'update'])->middleware('permission:manage-cashbook');
+        Route::delete('/{entry}', [CashBookEntryController::class, 'destroy'])->middleware('permission:manage-cashbook');
+    });
+
+    Route::prefix('cash-book-categories')->middleware('auth:sanctum')->group(function () {
+        Route::get('/', [CashBookCategoryController::class, 'index'])->middleware('permission:view-cashbook');
+        Route::post('/', [CashBookCategoryController::class, 'store'])->middleware('permission:manage-cashbook');
+        Route::patch('/{category}', [CashBookCategoryController::class, 'update'])->middleware('permission:manage-cashbook');
+        Route::delete('/{category}', [CashBookCategoryController::class, 'destroy'])->middleware('permission:manage-cashbook');
+    });
+
+    Route::prefix('cash-book-activity-logs')->middleware(['auth:sanctum', 'permission:view-cashbook'])->group(function () {
+        Route::get('/', [CashBookActivityLogController::class, 'index']);
     });
 
     // PSB Period Management routes
