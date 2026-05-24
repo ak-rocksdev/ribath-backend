@@ -135,6 +135,14 @@ php artisan migrate
 # Rollback last migration
 php artisan migrate:rollback
 
+# ⚠️ DESTRUCTIVE DB COMMANDS — BLOCKED BY DEFAULT
+# `migrate:fresh`, `migrate:refresh`, `migrate:reset`, `db:wipe` are blocked
+# via DB::prohibitDestructiveCommands() in AppServiceProvider::boot(). To
+# reset the local DB SAFELY, use the interactive wrapper:
+php artisan db:reset-local --seed
+# Or override (after explicit user OK):  DB_ALLOW_DESTRUCTIVE=true php artisan migrate:fresh --force
+# Tests are exempt (RefreshDatabase trait + SQLite in-memory).
+
 # Create model with migration, factory, seeder, controller, form request, policy
 php artisan make:model ModelName -mfscr --policy
 
