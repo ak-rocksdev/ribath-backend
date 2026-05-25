@@ -35,7 +35,6 @@ class StoreFeeScheduleRequest extends FormRequest
                     ->where(fn ($q) => $q->where('academic_year_id', $this->input('academic_year_id'))),
             ],
             'amount' => ['required', 'integer', 'min:0', 'max:999999999999'],
-            'cadence_override' => ['nullable', 'string', Rule::in(FeeType::CADENCES)],
         ];
     }
 
@@ -50,7 +49,6 @@ class StoreFeeScheduleRequest extends FormRequest
             'amount.required' => 'Nominal tarif wajib diisi.',
             'amount.integer' => 'Nominal tarif harus berupa angka bulat.',
             'amount.min' => 'Nominal tarif tidak boleh negatif.',
-            'cadence_override.in' => 'Cadence tidak valid.',
         ];
     }
 }

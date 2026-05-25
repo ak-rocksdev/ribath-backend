@@ -102,8 +102,7 @@ test('manager can create schedule for AY × fee_type combination', function () {
             'amount' => 500000,
         ])
         ->assertCreated()
-        ->assertJsonPath('data.amount', 500000)
-        ->assertJsonPath('data.cadence_override', null);
+        ->assertJsonPath('data.amount', 500000);
 
     expect(FeeSchedule::where('academic_year_id', $this->academicYear->id)
         ->where('fee_type_id', $this->feeType->id)
@@ -174,19 +173,6 @@ test('create rejects academic_year_id from another school', function () {
         ])
         ->assertStatus(422)
         ->assertJsonValidationErrors(['academic_year_id']);
-});
-
-test('create accepts cadence_override', function () {
-    $this->actingAs(makeFeeScheduleManager())
-        ->postJson('/api/v1/fee-schedules', [
-            'academic_year_id' => $this->academicYear->id,
-            'fee_type_id' => $this->feeType->id,
-            'amount' => 5000000,
-            'cadence_override' => 'yearly',
-        ])
-        ->assertCreated()
-        ->assertJsonPath('data.cadence_override', 'yearly')
-        ->assertJsonPath('data.effective_cadence', 'yearly');
 });
 
 // ─── Update ──────────────────────────────────────────────────────────

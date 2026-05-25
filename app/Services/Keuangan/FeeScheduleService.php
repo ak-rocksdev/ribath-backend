@@ -48,7 +48,6 @@ class FeeScheduleService
             'academic_year_id' => $data['academic_year_id'],
             'fee_type_id' => $data['fee_type_id'],
             'amount' => (int) $data['amount'],
-            'cadence_override' => $data['cadence_override'] ?? null,
         ]);
 
         return $schedule->fresh()->load(FeeSchedule::EAGER_LOAD_RELATIONS);
@@ -58,10 +57,8 @@ class FeeScheduleService
     {
         $attributes = [];
 
-        foreach (['amount', 'cadence_override'] as $field) {
-            if (array_key_exists($field, $data)) {
-                $attributes[$field] = $field === 'amount' ? (int) $data[$field] : $data[$field];
-            }
+        if (array_key_exists('amount', $data)) {
+            $attributes['amount'] = (int) $data['amount'];
         }
 
         // (academic_year_id, fee_type_id) intentionally immutable to preserve

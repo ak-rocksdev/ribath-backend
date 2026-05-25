@@ -21,7 +21,6 @@ class FeeScheduleFactory extends Factory
             'academic_year_id' => AcademicYear::factory(),
             'fee_type_id' => FeeType::factory(),
             'amount' => $this->faker->numberBetween(100_000, 2_000_000),
-            'cadence_override' => null,
         ];
     }
 
@@ -44,10 +43,5 @@ class FeeScheduleFactory extends Factory
             'academic_year_id' => $year->id,
             'school_id' => $year->school_id,
         ]);
-    }
-
-    public function withCadenceOverride(string $cadence): static
-    {
-        return $this->state(fn () => ['cadence_override' => $cadence]);
     }
 }
