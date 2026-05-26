@@ -201,12 +201,12 @@ test('create academic year requires permission', function () {
     $response->assertForbidden();
 });
 
-test('create academic year fails with invalid name format', function () {
+test('create academic year fails when name exceeds 20 characters', function () {
     [$user] = createSchoolAndUser();
 
     $response = $this->actingAs($user)
         ->postJson('/api/v1/academic-years', [
-            'name' => '2025-2026',
+            'name' => str_repeat('a', 21),
             'start_date' => '2025-07-01',
             'end_date' => '2026-06-30',
         ]);

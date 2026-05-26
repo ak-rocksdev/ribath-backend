@@ -5,7 +5,6 @@ use App\Models\CashBookCategory;
 use App\Models\FeeSchedule;
 use App\Models\FeeType;
 use App\Models\RegistrationPeriod;
-use App\Models\RegistrationPeriodFeeOverride;
 use App\Models\School;
 use Database\Seeders\SchoolSeeder;
 
@@ -247,10 +246,10 @@ test('register endpoint links to active period if one exists', function () {
 });
 
 // ──────────────────────────────────────────────────────
-// Public Biaya Endpoint (R3 — override-aware resolver)
+// Public Biaya Endpoint
 // ──────────────────────────────────────────────────────
 
-test('public biaya endpoint returns override-applied amounts for a period', function () {
+test('public biaya endpoint returns fee_schedules for the period AY', function () {
     $school = School::where('is_active', true)->firstOrFail();
     $ay = AcademicYear::factory()->create(['school_id' => $school->id]);
     $period = RegistrationPeriod::factory()->forSchool($school)->forAcademicYear($ay)->create();
@@ -261,11 +260,8 @@ test('public biaya endpoint returns override-applied amounts for a period', func
         ->withCadence(FeeType::CADENCE_ONCE_AT_ENROLLMENT)
         ->create(['cash_book_category_id' => $category->id, 'label' => 'Pendaftaran']);
 
-    // Default tarif AY = 500_000, override gelombang ini = 200_000 (promo).
     FeeSchedule::factory()->forSchool($school)->forAcademicYear($ay)->forFeeType($pendaftaranFeeType)
         ->create(['amount' => 500000]);
-    RegistrationPeriodFeeOverride::factory()->forPeriod($period)->forFeeType($pendaftaranFeeType)
-        ->create(['amount' => 200000, 'reason' => 'promo']);
 
     $response = $this->getJson("/api/v1/public/psb/periods/{$period->id}/biaya")
         ->assertOk()
@@ -273,9 +269,8 @@ test('public biaya endpoint returns override-applied amounts for a period', func
 
     $items = $response->json('data');
     expect($items)->toHaveCount(1)
-        ->and($items[0]['amount'])->toBe(200000)        // override won, not 500000
-        ->and($items[0]['is_overridden'])->toBeTrue()
-        ->and($items[0]['override_reason'])->toBe('promo');
+        ->and($items[0]['amount'])->toBe(500000)
+        ->and($items[0]['fee_type_label'])->toBe('Pendaftaran');
 });
 
 test('public biaya endpoint 404s for cross-tenant period (no enumeration leak)', function () {

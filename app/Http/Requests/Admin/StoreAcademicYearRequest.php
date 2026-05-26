@@ -17,7 +17,7 @@ class StoreAcademicYearRequest extends FormRequest
     {
         return [
             'name' => [
-                'required', 'string', 'max:20', 'regex:/^\d{4}\/\d{4}$/',
+                'required', 'string', 'max:20',
                 Rule::unique('academic_years')->where('school_id', School::activeOrFail()->id),
             ],
             'start_date' => ['required', 'date'],
@@ -30,8 +30,13 @@ class StoreAcademicYearRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'name.regex' => 'Name must be in format YYYY/YYYY (e.g., 2025/2026).',
-            'end_date.after' => 'End date must be after start date.',
+            'name.required' => 'Nama tahun ajaran wajib diisi.',
+            'name.max' => 'Nama tahun ajaran maksimal 20 karakter.',
+            'name.unique' => 'Nama tahun ajaran sudah dipakai di pesantren ini.',
+            'start_date.required' => 'Tanggal mulai wajib diisi.',
+            'end_date.required' => 'Tanggal selesai wajib diisi.',
+            'end_date.after' => 'Tanggal selesai harus setelah tanggal mulai.',
+            'active_semester.in' => 'Semester aktif harus 1 atau 2.',
         ];
     }
 }

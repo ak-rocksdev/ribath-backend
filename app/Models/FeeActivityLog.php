@@ -11,9 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * Audit log for fee management actions. Stored in `fee_activity_logs`.
  *
  * `subject_type` is a string enum (NOT a polymorphic FQCN) — valid values
- * are the SUBJECT_* constants below: fee_type, fee_schedule, assignment,
- * exception, bill, payment, period_override. Migration comment predates
- * the period_override addition (R3); this class is the source of truth.
+ * are the SUBJECT_* constants below.
  */
 class FeeActivityLog extends Model
 {
@@ -31,8 +29,6 @@ class FeeActivityLog extends Model
 
     const SUBJECT_PAYMENT = 'payment';
 
-    const SUBJECT_PERIOD_OVERRIDE = 'period_override';
-
     const SUBJECTS = [
         self::SUBJECT_FEE_TYPE,
         self::SUBJECT_FEE_SCHEDULE,
@@ -40,7 +36,6 @@ class FeeActivityLog extends Model
         self::SUBJECT_EXCEPTION,
         self::SUBJECT_BILL,
         self::SUBJECT_PAYMENT,
-        self::SUBJECT_PERIOD_OVERRIDE,
     ];
 
     const ACTION_CREATED = 'created';

@@ -50,9 +50,4 @@ class RegistrationPeriod extends Model
     {
         return $this->hasMany(Registration::class, 'registration_period_id');
     }
-
-    public function feeOverrides(): HasMany
-    {
-        return $this->hasMany(RegistrationPeriodFeeOverride::class, 'registration_period_id');
-    }
 }

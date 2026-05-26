@@ -17,7 +17,7 @@ class UpdateAcademicYearRequest extends FormRequest
     {
         return [
             'name' => [
-                'sometimes', 'string', 'max:20', 'regex:/^\d{4}\/\d{4}$/',
+                'sometimes', 'string', 'max:20',
                 Rule::unique('academic_years')
                     ->where('school_id', School::activeOrFail()->id)
                     ->ignore($this->route('academicYear')?->id),
@@ -26,7 +26,7 @@ class UpdateAcademicYearRequest extends FormRequest
             'end_date' => ['sometimes', 'date', function ($attribute, $value, $fail) {
                 $startDate = $this->input('start_date', $this->route('academicYear')?->start_date?->toDateString());
                 if ($startDate && $value <= $startDate) {
-                    $fail('The end date must be after the start date.');
+                    $fail('Tanggal selesai harus setelah tanggal mulai.');
                 }
             }],
             'active_semester' => ['sometimes', 'integer', 'in:1,2'],
@@ -37,7 +37,9 @@ class UpdateAcademicYearRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'name.regex' => 'Name must be in format YYYY/YYYY (e.g., 2025/2026).',
+            'name.max' => 'Nama tahun ajaran maksimal 20 karakter.',
+            'name.unique' => 'Nama tahun ajaran sudah dipakai di pesantren ini.',
+            'active_semester.in' => 'Semester aktif harus 1 atau 2.',
         ];
     }
 }

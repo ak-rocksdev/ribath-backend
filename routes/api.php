@@ -22,7 +22,6 @@ use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
 use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
-use App\Http\Controllers\Api\PSB\RegistrationPeriodFeeOverrideController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
 use App\Http\Controllers\Api\Public\StudentCompletionController;
 use Illuminate\Support\Facades\Route;
@@ -274,17 +273,6 @@ Route::prefix('v1')->group(function () {
         Route::put('/{registrationPeriod}', [RegistrationPeriodController::class, 'update'])
             ->middleware('permission:manage-registration-periods');
         Route::delete('/{registrationPeriod}', [RegistrationPeriodController::class, 'destroy'])
-            ->middleware('permission:manage-registration-periods');
-
-        // Per-period biaya pendaftaran override (Opsi A++):
-        // hanya berlaku untuk fee_type cadence once_at_enrollment.
-        Route::get('/{registrationPeriod}/fee-overrides', [RegistrationPeriodFeeOverrideController::class, 'index'])
-            ->middleware('permission:view-registration-periods');
-        Route::post('/{registrationPeriod}/fee-overrides', [RegistrationPeriodFeeOverrideController::class, 'store'])
-            ->middleware('permission:manage-registration-periods');
-        Route::patch('/{registrationPeriod}/fee-overrides/{override}', [RegistrationPeriodFeeOverrideController::class, 'update'])
-            ->middleware('permission:manage-registration-periods');
-        Route::delete('/{registrationPeriod}/fee-overrides/{override}', [RegistrationPeriodFeeOverrideController::class, 'destroy'])
             ->middleware('permission:manage-registration-periods');
     });
 
