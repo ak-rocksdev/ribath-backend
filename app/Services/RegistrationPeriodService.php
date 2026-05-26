@@ -12,7 +12,9 @@ class RegistrationPeriodService
     public function listPeriods(int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
         return RegistrationPeriod::with('academicYear')
-            ->withCount('registrations')
+            // fee_overrides_count powers the admin table badge in one query
+            // instead of one fetch per row — kills the N+1 flagged in review.
+            ->withCount(['registrations', 'feeOverrides as fee_overrides_count'])
             ->orderByDesc('entry_date')
             ->orderByDesc('wave')
             ->paginate($perPage);

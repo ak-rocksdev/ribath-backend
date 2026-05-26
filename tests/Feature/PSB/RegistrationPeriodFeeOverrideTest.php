@@ -3,6 +3,7 @@
 use App\Models\AcademicYear;
 use App\Models\CashBookCategory;
 use App\Models\FeeActivityLog;
+use App\Models\FeeSchedule;
 use App\Models\FeeType;
 use App\Models\RegistrationPeriod;
 use App\Models\RegistrationPeriodFeeOverride;
@@ -31,6 +32,15 @@ beforeEach(function () {
             'cash_book_category_id' => $this->cashBookCategory->id,
             'label' => 'Pendaftaran',
         ]);
+
+    // Default fee_schedule wajib ada sebelum override boleh dibuat — guard
+    // baru di service (R3 review fix BE#8). Tests yang sengaja test missing
+    // schedule akan delete row ini sebelum POST.
+    FeeSchedule::factory()
+        ->forSchool($this->school)
+        ->forAcademicYear($this->academicYear)
+        ->forFeeType($this->pendaftaranFeeType)
+        ->create(['amount' => 500000]);
 });
 
 function makePeriodOverrideManager(): User
@@ -171,6 +181,26 @@ test('create rejects duplicate override for same (period × fee_type)', function
         ->assertJsonValidationErrors(['fee_type_id']);
 });
 
+test('create rejects fee_type that has no schedule for period AY (silent-loss guard)', function () {
+    // fee_type valid (school + cadence OK), tapi belum di-set tarif untuk AY periode.
+    $otherFeeType = FeeType::factory()
+        ->forSchool($this->school)
+        ->withCadence(FeeType::CADENCE_ONCE_AT_ENROLLMENT)
+        ->create([
+            'cash_book_category_id' => $this->cashBookCategory->id,
+            'label' => 'Uang Pangkal',
+        ]);
+    // No FeeSchedule for ($this->academicYear, $otherFeeType) deliberately.
+
+    $this->actingAs(makePeriodOverrideManager())
+        ->postJson("/api/v1/psb/periods/{$this->period->id}/fee-overrides", [
+            'fee_type_id' => $otherFeeType->id,
+            'amount' => 200000,
+            'reason' => 'test',
+        ])
+        ->assertStatus(422);
+});
+
 test('create rejects fee_type from another school', function () {
     $otherSchool = School::factory()->create();
     $otherCategory = CashBookCategory::factory()->for($otherSchool, 'school')->create();
@@ -270,6 +300,20 @@ test('create writes audit log with subject_type=period_override', function () {
     expect($log)->not->toBeNull()
         ->and($log->actor_kind)->toBe(FeeActivityLog::ACTOR_USER)
         ->and($log->actor_id)->toBe($user->id);
+});
+
+test('update rejects empty reason (audit trail guard)', function () {
+    $override = RegistrationPeriodFeeOverride::factory()
+        ->forPeriod($this->period)
+        ->forFeeType($this->pendaftaranFeeType)
+        ->create();
+
+    $this->actingAs(makePeriodOverrideManager())
+        ->patchJson("/api/v1/psb/periods/{$this->period->id}/fee-overrides/{$override->id}", [
+            'reason' => '',
+        ])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['reason']);
 });
 
 test('update writes audit log with before/after diff in changes', function () {

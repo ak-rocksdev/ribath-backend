@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\PSB\QuickRegistrationRequest;
 use App\Models\RegistrationPeriod;
+use App\Models\School;
 use App\Services\PsbPeriodBiayaResolver;
 use App\Services\PsbService;
 use App\Services\RegistrationPeriodService;
@@ -46,9 +47,16 @@ class PublicPsbController extends Controller
     /**
      * Public endpoint: effective biaya untuk satu periode PSB.
      * Wali calon bisa lihat tanpa login. Override-aware via the resolver.
+     *
+     * Public ≠ cross-tenant: route model binding alone resolves any periode
+     * regardless of school. We explicitly 404 cross-tenant IDs so an actor
+     * cannot enumerate other pesantren's fee structures by guessing UUIDs.
      */
     public function periodBiaya(RegistrationPeriod $registrationPeriod): JsonResponse
     {
+        $school = School::activeOrFail();
+        abort_unless($registrationPeriod->school_id === $school->id, 404);
+
         $biaya = $this->biayaResolver->resolveForPeriod($registrationPeriod);
 
         return $this->successResponse($biaya, 'Period biaya retrieved');

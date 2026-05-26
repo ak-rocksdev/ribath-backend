@@ -7,6 +7,14 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * Audit log for fee management actions. Stored in `fee_activity_logs`.
+ *
+ * `subject_type` is a string enum (NOT a polymorphic FQCN) — valid values
+ * are the SUBJECT_* constants below: fee_type, fee_schedule, assignment,
+ * exception, bill, payment, period_override. Migration comment predates
+ * the period_override addition (R3); this class is the source of truth.
+ */
 class FeeActivityLog extends Model
 {
     use HasFactory, HasUuids;

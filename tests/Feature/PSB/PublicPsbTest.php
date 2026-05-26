@@ -1,6 +1,12 @@
 <?php
 
+use App\Models\AcademicYear;
+use App\Models\CashBookCategory;
+use App\Models\FeeSchedule;
+use App\Models\FeeType;
 use App\Models\RegistrationPeriod;
+use App\Models\RegistrationPeriodFeeOverride;
+use App\Models\School;
 use Database\Seeders\SchoolSeeder;
 
 beforeEach(function () {
@@ -238,6 +244,47 @@ test('register endpoint links to active period if one exists', function () {
         'full_name' => 'Test Student',
         'registration_period_id' => $activePeriod->id,
     ]);
+});
+
+// ──────────────────────────────────────────────────────
+// Public Biaya Endpoint (R3 — override-aware resolver)
+// ──────────────────────────────────────────────────────
+
+test('public biaya endpoint returns override-applied amounts for a period', function () {
+    $school = School::where('is_active', true)->firstOrFail();
+    $ay = AcademicYear::factory()->create(['school_id' => $school->id]);
+    $period = RegistrationPeriod::factory()->forSchool($school)->forAcademicYear($ay)->create();
+
+    $category = CashBookCategory::factory()->for($school, 'school')->create();
+    $pendaftaranFeeType = FeeType::factory()
+        ->forSchool($school)
+        ->withCadence(FeeType::CADENCE_ONCE_AT_ENROLLMENT)
+        ->create(['cash_book_category_id' => $category->id, 'label' => 'Pendaftaran']);
+
+    // Default tarif AY = 500_000, override gelombang ini = 200_000 (promo).
+    FeeSchedule::factory()->forSchool($school)->forAcademicYear($ay)->forFeeType($pendaftaranFeeType)
+        ->create(['amount' => 500000]);
+    RegistrationPeriodFeeOverride::factory()->forPeriod($period)->forFeeType($pendaftaranFeeType)
+        ->create(['amount' => 200000, 'reason' => 'promo']);
+
+    $response = $this->getJson("/api/v1/public/psb/periods/{$period->id}/biaya")
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $items = $response->json('data');
+    expect($items)->toHaveCount(1)
+        ->and($items[0]['amount'])->toBe(200000)        // override won, not 500000
+        ->and($items[0]['is_overridden'])->toBeTrue()
+        ->and($items[0]['override_reason'])->toBe('promo');
+});
+
+test('public biaya endpoint 404s for cross-tenant period (no enumeration leak)', function () {
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    $otherAy = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    $otherPeriod = RegistrationPeriod::factory()->forSchool($otherSchool)->forAcademicYear($otherAy)->create();
+
+    $this->getJson("/api/v1/public/psb/periods/{$otherPeriod->id}/biaya")
+        ->assertNotFound();
 });
 
 test('register endpoint assigns waitlist status when quota is full', function () {

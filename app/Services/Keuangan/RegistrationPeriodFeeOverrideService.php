@@ -2,6 +2,7 @@
 
 namespace App\Services\Keuangan;
 
+use App\Models\FeeSchedule;
 use App\Models\FeeType;
 use App\Models\RegistrationPeriod;
 use App\Models\RegistrationPeriodFeeOverride;
@@ -13,7 +14,13 @@ class RegistrationPeriodFeeOverrideService
 {
     public function listForPeriod(RegistrationPeriod $period): Collection
     {
+        // Defense in depth: scope to active school even though every HTTP
+        // caller already verifies via ensureBelongsToActiveSchool. US2
+        // snapshot will call this directly without that controller guard.
+        $school = School::activeOrFail();
+
         return RegistrationPeriodFeeOverride::query()
+            ->where('school_id', $school->id)
             ->where('registration_period_id', $period->id)
             ->with(RegistrationPeriodFeeOverride::EAGER_LOAD_RELATIONS)
             ->orderBy('created_at')
@@ -24,13 +31,17 @@ class RegistrationPeriodFeeOverrideService
     {
         $school = School::activeOrFail();
 
-        $this->ensureFeeTypeBelongsToSchool($data['fee_type_id'], $school->id);
-        $this->ensureFeeTypeIsOnceAtEnrollment($data['fee_type_id']);
+        // Validate fee_type once: tenant scope, cadence, and that an actual
+        // fee_schedule exists for (period.AY × fee_type) — otherwise the
+        // override would never surface in the resolver output and the admin
+        // would think they saved garbage.
+        $feeType = $this->loadValidatedFeeType($data['fee_type_id'], $school->id);
+        $this->ensureScheduleExistsForPeriodAy($period->academic_year_id, $feeType->id);
 
         $override = RegistrationPeriodFeeOverride::create([
             'school_id' => $school->id,
             'registration_period_id' => $period->id,
-            'fee_type_id' => $data['fee_type_id'],
+            'fee_type_id' => $feeType->id,
             'amount' => (int) $data['amount'],
             'reason' => $data['reason'],
             'created_by' => $userId,
@@ -66,24 +77,18 @@ class RegistrationPeriodFeeOverrideService
         $override->delete();
     }
 
-    private function ensureFeeTypeBelongsToSchool(string $feeTypeId, string $schoolId): void
-    {
-        $exists = FeeType::query()
-            ->whereKey($feeTypeId)
-            ->where('school_id', $schoolId)
-            ->exists();
-
-        abort_unless($exists, 422, 'Jenis biaya tidak ditemukan untuk pesantren ini.');
-    }
-
     /**
-     * Override hanya berlaku untuk biaya pendaftaran (sekali saat masuk).
-     * Cadence lain (monthly, yearly, dst) tidak boleh — gunakan fee_schedules
-     * default per AY. Cek di service supaya pesan validasi user-friendly.
+     * Single round-trip validator: load the fee_type once, then assert it
+     * belongs to the school and is cadence `once_at_enrollment`. Replaces
+     * the older split (`exists()` + `findOrFail()`) that needed two queries.
      */
-    private function ensureFeeTypeIsOnceAtEnrollment(string $feeTypeId): void
+    private function loadValidatedFeeType(string $feeTypeId, string $schoolId): FeeType
     {
-        $feeType = FeeType::findOrFail($feeTypeId);
+        $feeType = FeeType::find($feeTypeId);
+
+        if ($feeType === null || $feeType->school_id !== $schoolId) {
+            abort(422, 'Jenis biaya tidak ditemukan untuk pesantren ini.');
+        }
 
         if ($feeType->default_cadence !== FeeType::CADENCE_ONCE_AT_ENROLLMENT) {
             throw new HttpException(
@@ -91,5 +96,28 @@ class RegistrationPeriodFeeOverrideService
                 'Override hanya berlaku untuk biaya pendaftaran (cadence sekali saat masuk). Untuk biaya berulang gunakan tarif default di Biaya Pendidikan.'
             );
         }
+
+        return $feeType;
+    }
+
+    /**
+     * Reject overrides for (period × fee_type) pairs that have no matching
+     * fee_schedule in the period's academic_year. Without this, the resolver
+     * (which iterates schedules and looks up overrides) silently drops the
+     * orphan row — the admin saves the override and it never appears in the
+     * biaya list. Catch it at write time with a friendly message instead.
+     */
+    private function ensureScheduleExistsForPeriodAy(string $academicYearId, string $feeTypeId): void
+    {
+        $exists = FeeSchedule::query()
+            ->where('academic_year_id', $academicYearId)
+            ->where('fee_type_id', $feeTypeId)
+            ->exists();
+
+        abort_unless(
+            $exists,
+            422,
+            'Tetapkan dulu tarif default jenis biaya ini di Biaya Pendidikan untuk tahun ajaran periode tsb sebelum membuat override.'
+        );
     }
 }

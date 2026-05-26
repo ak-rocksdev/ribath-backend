@@ -15,9 +15,14 @@ class UpdatePeriodFeeOverrideRequest extends FormRequest
     {
         // fee_type_id intentionally absent — immutable post-create
         // (admin hapus + buat baru kalau salah pilih jenis biaya).
+        //
+        // `filled` on reason rejects empty strings when the field is present
+        // (Laravel's `sometimes` alone would still accept `""`, blanking the
+        // audit trail). The field is optional on PATCH overall, but if sent
+        // it must carry a real value.
         return [
             'amount' => ['sometimes', 'integer', 'min:0', 'max:999999999999'],
-            'reason' => ['sometimes', 'string'],
+            'reason' => ['sometimes', 'string', 'filled'],
         ];
     }
 
@@ -26,6 +31,7 @@ class UpdatePeriodFeeOverrideRequest extends FormRequest
         return [
             'amount.integer' => 'Nominal override harus berupa angka bulat.',
             'amount.min' => 'Nominal override tidak boleh negatif.',
+            'reason.filled' => 'Alasan keputusan komite tidak boleh dikosongkan.',
         ];
     }
 }
