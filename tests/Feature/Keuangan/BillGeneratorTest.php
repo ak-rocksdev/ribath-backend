@@ -133,6 +133,29 @@ test('generator writes audit log row with action=generated and actor_kind from c
         ->and($log->changes['cadence_filter'])->toBe('all');
 });
 
+test('arrears-summary endpoint returns 3 buckets with student_count + total_remaining without uuid sum() error', function () {
+    // Reproduce the pgsql bug where chained count/sum on the same builder
+    // leaked DISTINCT into a SUM(uuid) call. Now uses selectRaw single query.
+    $student = Student::factory()->create(['school_id' => $this->school->id]);
+    $assignment = StudentFeeAssignment::factory()->forStudent($student)->forFeeType($this->spp)
+        ->forAcademicYear($this->ay)->create(['locked_amount' => 500000, 'cadence' => 'monthly']);
+    // Overdue bill from previous period
+    Bill::factory()->forAssignment($assignment)->pending()
+        ->create([
+            'billing_period_start' => now('Asia/Jakarta')->subMonths(2)->startOfMonth()->toDateString(),
+            'billing_period_end' => now('Asia/Jakarta')->subMonths(2)->endOfMonth()->toDateString(),
+            'due_date' => now('Asia/Jakarta')->subMonths(2)->startOfMonth()->addDays(9)->toDateString(),
+        ]);
+    $admin = makeBillManagerUser();
+
+    $this->actingAs($admin)
+        ->getJson('/api/v1/bills/arrears-summary')
+        ->assertOk()
+        ->assertJsonStructure(['data' => ['overdue_1_month', 'overdue_2_3_months', 'overdue_more_than_3_months']])
+        ->assertJsonPath('data.overdue_2_3_months.student_count', 1)
+        ->assertJsonPath('data.overdue_2_3_months.total_remaining', 500000);
+});
+
 test('manual generate via POST endpoint requires manage-student-fees and returns stats', function () {
     Student::factory()->create(['school_id' => $this->school->id]);
     StudentFeeAssignment::factory()->forFeeType($this->spp)->forAcademicYear($this->ay)

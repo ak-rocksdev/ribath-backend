@@ -81,6 +81,10 @@ class BillController extends Controller
             'overdue_2_3_months' => [Carbon::parse($today)->subMonths(3)->toDateString(), Carbon::parse($today)->subMonth()->subDay()->toDateString()],
             'overdue_more_than_3_months' => [null, Carbon::parse($today)->subMonths(3)->subDay()->toDateString()],
         ])->map(function ($range) use ($school, $today) {
+            // Single query with selectRaw + first() — earlier attempt at chained
+            // count() + sum() on the same builder produced bogus `sum(distinct
+            // student_id)` SQL because the builder is mutable and aggregate
+            // state leaks between calls (uuid sum() doesn't exist in pgsql).
             $q = Bill::query()
                 ->where('school_id', $school->id)
                 ->whereIn('status', [Bill::STATUS_PENDING, Bill::STATUS_PARTIAL])
@@ -91,9 +95,12 @@ class BillController extends Controller
             }
             $q->where('due_date', '<=', $range[1]);
 
+            $row = $q->selectRaw('COUNT(DISTINCT student_id) AS student_count, COALESCE(SUM(expected_amount - paid_amount), 0) AS total_remaining')
+                ->first();
+
             return [
-                'student_count' => $q->distinct('student_id')->count('student_id'),
-                'total_remaining' => (int) $q->sum(\DB::raw('expected_amount - paid_amount')),
+                'student_count' => (int) ($row->student_count ?? 0),
+                'total_remaining' => (int) ($row->total_remaining ?? 0),
             ];
         })->all();
 
