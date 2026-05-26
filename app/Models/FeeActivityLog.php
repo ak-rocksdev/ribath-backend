@@ -23,6 +23,8 @@ class FeeActivityLog extends Model
 
     const SUBJECT_PAYMENT = 'payment';
 
+    const SUBJECT_PERIOD_OVERRIDE = 'period_override';
+
     const SUBJECTS = [
         self::SUBJECT_FEE_TYPE,
         self::SUBJECT_FEE_SCHEDULE,
@@ -30,6 +32,7 @@ class FeeActivityLog extends Model
         self::SUBJECT_EXCEPTION,
         self::SUBJECT_BILL,
         self::SUBJECT_PAYMENT,
+        self::SUBJECT_PERIOD_OVERRIDE,
     ];
 
     const ACTION_CREATED = 'created';

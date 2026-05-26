@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
 use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
+use App\Http\Controllers\Api\PSB\RegistrationPeriodFeeOverrideController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
 use App\Http\Controllers\Api\Public\StudentCompletionController;
 use Illuminate\Support\Facades\Route;
@@ -274,6 +275,17 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-registration-periods');
         Route::delete('/{registrationPeriod}', [RegistrationPeriodController::class, 'destroy'])
             ->middleware('permission:manage-registration-periods');
+
+        // Per-period biaya pendaftaran override (Opsi A++):
+        // hanya berlaku untuk fee_type cadence once_at_enrollment.
+        Route::get('/{registrationPeriod}/fee-overrides', [RegistrationPeriodFeeOverrideController::class, 'index'])
+            ->middleware('permission:view-registration-periods');
+        Route::post('/{registrationPeriod}/fee-overrides', [RegistrationPeriodFeeOverrideController::class, 'store'])
+            ->middleware('permission:manage-registration-periods');
+        Route::patch('/{registrationPeriod}/fee-overrides/{override}', [RegistrationPeriodFeeOverrideController::class, 'update'])
+            ->middleware('permission:manage-registration-periods');
+        Route::delete('/{registrationPeriod}/fee-overrides/{override}', [RegistrationPeriodFeeOverrideController::class, 'destroy'])
+            ->middleware('permission:manage-registration-periods');
     });
 
 });
@@ -282,6 +294,7 @@ Route::prefix('v1')->group(function () {
 Route::prefix('v1/public/psb')->group(function () {
     Route::get('/active-period', [PublicPsbController::class, 'activePeriod']);
     Route::get('/active-periods', [PublicPsbController::class, 'activePeriods']);
+    Route::get('/periods/{registrationPeriod}/biaya', [PublicPsbController::class, 'periodBiaya']);
     Route::post('/register', [PublicPsbController::class, 'register']);
 });
 
