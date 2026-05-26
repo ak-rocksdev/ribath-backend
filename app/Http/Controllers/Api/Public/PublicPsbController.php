@@ -44,14 +44,8 @@ class PublicPsbController extends Controller
         return $this->successResponse($registration, 'Registration submitted successfully', 201);
     }
 
-    /**
-     * Public endpoint: effective biaya untuk satu periode PSB.
-     * Wali calon bisa lihat tanpa login. Override-aware via the resolver.
-     *
-     * Public ≠ cross-tenant: route model binding alone resolves any periode
-     * regardless of school. We explicitly 404 cross-tenant IDs so an actor
-     * cannot enumerate other pesantren's fee structures by guessing UUIDs.
-     */
+    // Public ≠ cross-tenant: route model binding resolves any periode regardless
+    // of school, so we 404 cross-tenant IDs to prevent UUID-guess enumeration.
     public function periodBiaya(RegistrationPeriod $registrationPeriod): JsonResponse
     {
         $school = School::activeOrFail();
@@ -59,6 +53,7 @@ class PublicPsbController extends Controller
 
         $biaya = $this->biayaResolver->resolveForPeriod($registrationPeriod);
 
-        return $this->successResponse($biaya, 'Period biaya retrieved');
+        return $this->successResponse($biaya, 'Period biaya retrieved')
+            ->header('Cache-Control', 'public, max-age=60, s-maxage=60');
     }
 }

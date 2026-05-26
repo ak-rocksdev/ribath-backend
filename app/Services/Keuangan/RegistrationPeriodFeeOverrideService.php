@@ -8,15 +8,13 @@ use App\Models\RegistrationPeriod;
 use App\Models\RegistrationPeriodFeeOverride;
 use App\Models\School;
 use Illuminate\Database\Eloquent\Collection;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class RegistrationPeriodFeeOverrideService
 {
     public function listForPeriod(RegistrationPeriod $period): Collection
     {
-        // Defense in depth: scope to active school even though every HTTP
-        // caller already verifies via ensureBelongsToActiveSchool. US2
-        // snapshot will call this directly without that controller guard.
+        // Defense in depth — US2 snapshot will call this without the
+        // controller's ensureBelongsToActiveSchool guard.
         $school = School::activeOrFail();
 
         return RegistrationPeriodFeeOverride::query()
@@ -31,10 +29,6 @@ class RegistrationPeriodFeeOverrideService
     {
         $school = School::activeOrFail();
 
-        // Validate fee_type once: tenant scope, cadence, and that an actual
-        // fee_schedule exists for (period.AY × fee_type) — otherwise the
-        // override would never surface in the resolver output and the admin
-        // would think they saved garbage.
         $feeType = $this->loadValidatedFeeType($data['fee_type_id'], $school->id);
         $this->ensureScheduleExistsForPeriodAy($period->academic_year_id, $feeType->id);
 
@@ -77,11 +71,6 @@ class RegistrationPeriodFeeOverrideService
         $override->delete();
     }
 
-    /**
-     * Single round-trip validator: load the fee_type once, then assert it
-     * belongs to the school and is cadence `once_at_enrollment`. Replaces
-     * the older split (`exists()` + `findOrFail()`) that needed two queries.
-     */
     private function loadValidatedFeeType(string $feeTypeId, string $schoolId): FeeType
     {
         $feeType = FeeType::find($feeTypeId);
@@ -91,22 +80,15 @@ class RegistrationPeriodFeeOverrideService
         }
 
         if ($feeType->default_cadence !== FeeType::CADENCE_ONCE_AT_ENROLLMENT) {
-            throw new HttpException(
-                422,
-                'Override hanya berlaku untuk biaya pendaftaran (cadence sekali saat masuk). Untuk biaya berulang gunakan tarif default di Biaya Pendidikan.'
-            );
+            abort(422, 'Override hanya berlaku untuk biaya pendaftaran (cadence sekali saat masuk). Untuk biaya berulang gunakan tarif default di Biaya Pendidikan.');
         }
 
         return $feeType;
     }
 
-    /**
-     * Reject overrides for (period × fee_type) pairs that have no matching
-     * fee_schedule in the period's academic_year. Without this, the resolver
-     * (which iterates schedules and looks up overrides) silently drops the
-     * orphan row — the admin saves the override and it never appears in the
-     * biaya list. Catch it at write time with a friendly message instead.
-     */
+    // Reject (period × fee_type) pairs with no matching fee_schedule in the
+    // period's academic_year — the resolver iterates schedules and silently
+    // drops orphan overrides, so the admin would save data that never shows up.
     private function ensureScheduleExistsForPeriodAy(string $academicYearId, string $feeTypeId): void
     {
         $exists = FeeSchedule::query()
