@@ -19,7 +19,7 @@ test('active period endpoint returns active period when one exists', function ()
     $response->assertOk()
         ->assertJsonStructure([
             'success',
-            'data' => ['id', 'name', 'year', 'wave', 'registration_open', 'registration_close'],
+            'data' => ['id', 'name', 'academic_year_id', 'wave', 'registration_open', 'registration_close'],
             'message',
         ])
         ->assertJsonPath('success', true)

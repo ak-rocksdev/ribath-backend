@@ -14,14 +14,12 @@ class RegistrationPeriod extends Model
 
     protected $fillable = [
         'school_id',
+        'academic_year_id',
         'name',
-        'year',
         'wave',
         'registration_open',
         'registration_close',
         'entry_date',
-        'registration_fee',
-        'monthly_tuition_fee',
         'student_quota',
         'enrolled_count',
         'description',
@@ -34,8 +32,6 @@ class RegistrationPeriod extends Model
             'registration_open' => 'datetime',
             'registration_close' => 'datetime',
             'entry_date' => 'date',
-            'registration_fee' => 'decimal:2',
-            'monthly_tuition_fee' => 'decimal:2',
             'is_active' => 'boolean',
         ];
     }
@@ -43,6 +39,11 @@ class RegistrationPeriod extends Model
     public function school(): BelongsTo
     {
         return $this->belongsTo(School::class);
+    }
+
+    public function academicYear(): BelongsTo
+    {
+        return $this->belongsTo(AcademicYear::class);
     }
 
     public function registrations(): HasMany
