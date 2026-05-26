@@ -6,10 +6,12 @@ use App\Models\CashBookCategory;
 use App\Models\CashBookEntry;
 use App\Models\FeeSchedule;
 use App\Models\FeeType;
+use App\Models\StudentFeeAssignment;
 use App\Observers\CashBookCategoryObserver;
 use App\Observers\CashBookEntryObserver;
 use App\Observers\FeeScheduleObserver;
 use App\Observers\FeeTypeObserver;
+use App\Observers\StudentFeeAssignmentObserver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -32,6 +34,7 @@ class AppServiceProvider extends ServiceProvider
 
         FeeType::observe(FeeTypeObserver::class);
         FeeSchedule::observe(FeeScheduleObserver::class);
+        StudentFeeAssignment::observe(StudentFeeAssignmentObserver::class);
 
         $this->protectAgainstDestructiveDbCommands();
     }

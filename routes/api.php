@@ -19,6 +19,8 @@ use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
 use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
+use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
+use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
 use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
@@ -260,6 +262,21 @@ Route::prefix('v1')->group(function () {
         Route::post('/', [FeeScheduleController::class, 'store']);
         Route::patch('/{feeSchedule}', [FeeScheduleController::class, 'update']);
         Route::delete('/{feeSchedule}', [FeeScheduleController::class, 'destroy']);
+    });
+
+    // Fee Management — US2 Student Fee Assignments
+    Route::prefix('students/{student}/fee-assignments')->middleware('auth:sanctum')->group(function () {
+        Route::get('/', [StudentFeeAssignmentController::class, 'index'])
+            ->middleware('permission:view-student-fees');
+        Route::post('/snapshot', [StudentFeeAssignmentController::class, 'snapshot'])
+            ->middleware('permission:manage-student-fees');
+        Route::post('/manual', [StudentFeeAssignmentController::class, 'manual'])
+            ->middleware('permission:manage-student-fees');
+    });
+
+    Route::prefix('fees/unassigned-students')->middleware(['auth:sanctum', 'permission:view-student-fees'])->group(function () {
+        Route::get('/count', [FeeUnassignedStudentsController::class, 'count']);
+        Route::get('/', [FeeUnassignedStudentsController::class, 'index']);
     });
 
     // PSB Period Management routes
