@@ -18,9 +18,11 @@ use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
+use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
 use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
+use App\Http\Controllers\Api\Keuangan\StudentPaymentController;
 use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
@@ -277,6 +279,35 @@ Route::prefix('v1')->group(function () {
     Route::prefix('fees/unassigned-students')->middleware(['auth:sanctum', 'permission:view-student-fees'])->group(function () {
         Route::get('/count', [FeeUnassignedStudentsController::class, 'count']);
         Route::get('/', [FeeUnassignedStudentsController::class, 'index']);
+    });
+
+    // Fee Management — US3 Bills + Payments + Cash Book auto-link
+    Route::prefix('bills')->middleware('auth:sanctum')->group(function () {
+        Route::get('/arrears-summary', [BillController::class, 'arrearsSummary'])
+            ->middleware('permission:view-student-fees');
+        Route::get('/arrears-students', [BillController::class, 'arrearsStudents'])
+            ->middleware('permission:view-student-fees');
+        Route::post('/generate', [BillController::class, 'generate'])
+            ->middleware('permission:manage-student-fees');
+        Route::get('/', [BillController::class, 'index'])
+            ->middleware('permission:view-student-fees');
+        Route::get('/{bill}', [BillController::class, 'show'])
+            ->middleware('permission:view-student-fees');
+        Route::delete('/{bill}', [BillController::class, 'destroy'])
+            ->middleware('permission:manage-student-fees');
+    });
+
+    Route::prefix('student-payments')->middleware('auth:sanctum')->group(function () {
+        Route::post('/bulk', [StudentPaymentController::class, 'bulkStore'])
+            ->middleware('permission:record-payments');
+        Route::get('/', [StudentPaymentController::class, 'index'])
+            ->middleware('permission:view-student-fees');
+        Route::post('/', [StudentPaymentController::class, 'store'])
+            ->middleware('permission:record-payments');
+        Route::get('/{studentPayment}/proof', [StudentPaymentController::class, 'streamProof'])
+            ->middleware('permission:view-student-fees');
+        Route::delete('/{studentPayment}', [StudentPaymentController::class, 'destroy'])
+            ->middleware('permission:record-payments');
     });
 
     // PSB Period Management routes

@@ -28,11 +28,16 @@ class CashBookActivityLog extends Model
 
     const ACTION_RESTORED = 'restored';
 
+    // Used by StudentPaymentService::reverse — payment reversal triggers a
+    // single audit row per side with semantic meaning, not raw `deleted`.
+    const ACTION_REVERSED = 'reversed';
+
     const ACTIONS = [
         self::ACTION_CREATED,
         self::ACTION_UPDATED,
         self::ACTION_DELETED,
         self::ACTION_RESTORED,
+        self::ACTION_REVERSED,
     ];
 
     /**
