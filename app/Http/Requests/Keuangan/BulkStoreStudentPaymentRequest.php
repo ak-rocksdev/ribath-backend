@@ -3,13 +3,12 @@
 namespace App\Http\Requests\Keuangan;
 
 use App\Models\School;
+use App\Models\StudentPayment;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class BulkStoreStudentPaymentRequest extends FormRequest
 {
-    private const METHODS = ['cash', 'transfer', 'other'];
-
     public function authorize(): bool
     {
         return true;
@@ -30,7 +29,7 @@ class BulkStoreStudentPaymentRequest extends FormRequest
                 'required', 'date',
                 'before_or_equal:'.now('Asia/Jakarta')->toDateString(),
             ],
-            'items.*.payment_method' => ['required', 'string', Rule::in(self::METHODS)],
+            'items.*.payment_method' => ['required', 'string', Rule::in(StudentPayment::METHODS)],
             'items.*.notes' => ['nullable', 'string', 'max:2000'],
         ];
     }

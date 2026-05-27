@@ -3,13 +3,12 @@
 namespace App\Http\Requests\Keuangan;
 
 use App\Models\School;
+use App\Models\StudentPayment;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreStudentPaymentRequest extends FormRequest
 {
-    private const METHODS = ['cash', 'transfer', 'other'];
-
     private const PROOF_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';
 
     private const PROOF_MAX_KB = 5120; // 5 MB
@@ -35,7 +34,7 @@ class StoreStudentPaymentRequest extends FormRequest
                 // app TZ (UTC) and breaks during 00:00–07:00 WIB per memory.
                 'before_or_equal:'.now('Asia/Jakarta')->toDateString(),
             ],
-            'payment_method' => ['required', 'string', Rule::in(self::METHODS)],
+            'payment_method' => ['required', 'string', Rule::in(StudentPayment::METHODS)],
             'notes' => ['nullable', 'string', 'max:2000'],
             'proof' => ['nullable', 'file', 'mimetypes:'.self::PROOF_MIMES, 'max:'.self::PROOF_MAX_KB],
         ];

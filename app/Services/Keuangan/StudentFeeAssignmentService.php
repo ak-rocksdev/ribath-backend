@@ -81,35 +81,41 @@ class StudentFeeAssignmentService
             abort(422, 'Tidak ada tarif tersimpan untuk tahun ajaran ini. Pilih tahun ajaran lain atau gunakan mode "Input Manual".');
         }
 
-        $existingFeeTypeIds = StudentFeeAssignment::query()
-            ->where('student_id', $student->id)
-            ->pluck('fee_type_id')
-            ->all();
+        // DB::transaction so a concurrent admin doing the same snapshot can't
+        // leave partial rows on a unique-violation crash mid-loop. Both racers
+        // serialize through the txn; loser hits the unique on a single row
+        // and the whole batch rolls back instead of half-committing.
+        return DB::transaction(function () use ($student, $sourceAy, $schedules) {
+            $existingFeeTypeIds = StudentFeeAssignment::query()
+                ->where('student_id', $student->id)
+                ->pluck('fee_type_id')
+                ->all();
 
-        $created = 0;
-        $skipped = 0;
+            $created = 0;
+            $skipped = 0;
 
-        foreach ($schedules as $schedule) {
-            if (in_array($schedule->fee_type_id, $existingFeeTypeIds, true) || $schedule->feeType === null) {
-                $skipped++;
+            foreach ($schedules as $schedule) {
+                if (in_array($schedule->fee_type_id, $existingFeeTypeIds, true) || $schedule->feeType === null) {
+                    $skipped++;
 
-                continue;
+                    continue;
+                }
+
+                StudentFeeAssignment::create([
+                    'school_id' => $student->school_id,
+                    'student_id' => $student->id,
+                    'fee_type_id' => $schedule->fee_type_id,
+                    'locked_amount' => $schedule->amount,
+                    'cadence' => $schedule->feeType->default_cadence,
+                    'source_academic_year_id' => $sourceAy->id,
+                    'source' => StudentFeeAssignment::SOURCE_MANUAL_SNAPSHOT,
+                    'created_by' => auth()->id(),
+                ]);
+                $created++;
             }
 
-            StudentFeeAssignment::create([
-                'school_id' => $student->school_id,
-                'student_id' => $student->id,
-                'fee_type_id' => $schedule->fee_type_id,
-                'locked_amount' => $schedule->amount,
-                'cadence' => $schedule->feeType->default_cadence,
-                'source_academic_year_id' => $sourceAy->id,
-                'source' => StudentFeeAssignment::SOURCE_MANUAL_SNAPSHOT,
-                'created_by' => auth()->id(),
-            ]);
-            $created++;
-        }
-
-        return ['created_count' => $created, 'skipped_count' => $skipped];
+            return ['created_count' => $created, 'skipped_count' => $skipped];
+        });
     }
 
     // Admin inputs nominal+cadence per fee_type for legacy AY tarifnya tidak ada.

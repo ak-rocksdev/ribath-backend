@@ -8,7 +8,7 @@ use Illuminate\Console\Command;
 
 class GenerateMonthlyBills extends Command
 {
-    protected $signature = 'fee:generate-bills {--period=} {--cadence=all}';
+    protected $signature = 'fee:generate-bills {--period=} {--cadence=all} {--actor=console}';
 
     protected $description = 'Generate bills for the given period (YYYY-MM, defaults to current Asia/Jakarta month). Idempotent.';
 
@@ -16,15 +16,11 @@ class GenerateMonthlyBills extends Command
     {
         $period = $this->option('period') ?: null;
         $cadence = $this->option('cadence') ?: 'all';
+        $actor = $this->option('actor') === 'scheduler'
+            ? FeeActivityLog::ACTOR_SCHEDULER
+            : FeeActivityLog::ACTOR_CONSOLE;
 
-        // Console actor (not authenticated user) — generator writes audit log
-        // with actor_kind=console so the run is traceable but not attributed
-        // to any user.
-        $stats = $generator->generate(
-            $period,
-            $cadence,
-            FeeActivityLog::ACTOR_CONSOLE,
-        );
+        $stats = $generator->generate($period, $cadence, $actor);
 
         $this->info('Bill generator finished.');
         foreach ($stats as $k => $v) {

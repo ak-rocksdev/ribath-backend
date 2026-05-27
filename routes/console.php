@@ -8,9 +8,11 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-// US3 — Daily bill generator. Runs at 00:01 Asia/Jakarta. Idempotent so
-// re-runs in the same period are safe (firstOrCreate per unique pair).
-Schedule::command('fee:generate-bills')
+// Daily bill generator at 00:01 Asia/Jakarta. `--actor=scheduler` is required
+// so `BillGeneratorService::shouldGenerate` can block once_at_enrollment
+// cadence from the daily cron (enrollment bills are created at PSB approval
+// time, not by cron). Idempotent — re-runs in the same period are safe.
+Schedule::command('fee:generate-bills --actor=scheduler')
     ->dailyAt('00:01')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
