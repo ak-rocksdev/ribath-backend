@@ -71,7 +71,7 @@ class BillGeneratorService
                 continue;
             }
 
-            if (! $this->shouldGenerate($cadence, $reference, $assignment)) {
+            if (! $this->shouldGenerate($cadence, $reference, $assignment, $actorKind)) {
                 $stats['bills_skipped_cadence']++;
 
                 continue;
@@ -210,13 +210,25 @@ class BillGeneratorService
     }
 
     // Returns true if a bill should be generated for this cadence given
-    // the reference month. Monthly/quarterly/semester/yearly each generate
-    // at most once per period; the firstOrCreate idempotency handles the
-    // re-run case. once_at_enrollment is excluded from scheduler.
-    public function shouldGenerate(string $cadence, Carbon $reference, StudentFeeAssignment $assignment): bool
-    {
+    // the reference month and actor context.
+    //
+    // - monthly/quarterly/semesterly/yearly: idempotent re-runs (existing
+    //   exists() check at write time handles dedup)
+    // - once_at_enrollment: scheduler is blocked entirely (enrollment bill
+    //   is created at PSB approval time via future hook, not by daily cron).
+    //   User-triggered (manual API POST) or console (artisan) may still
+    //   generate it once per assignment.
+    public function shouldGenerate(
+        string $cadence,
+        Carbon $reference,
+        StudentFeeAssignment $assignment,
+        string $actorKind,
+    ): bool {
         if ($cadence === 'once_at_enrollment') {
-            // Only generate if no bill exists yet for this assignment, regardless of period.
+            if ($actorKind === FeeActivityLog::ACTOR_SCHEDULER) {
+                return false;
+            }
+
             return ! Bill::query()
                 ->where('student_fee_assignment_id', $assignment->id)
                 ->exists();

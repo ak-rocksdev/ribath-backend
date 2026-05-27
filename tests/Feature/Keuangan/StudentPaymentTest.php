@@ -196,6 +196,52 @@ test('bulk happy path 5 items creates all + 5 cash_book_entries', function () {
 // Reversal (FR-031 + Clarifications Q2 withoutEvents semantic)
 // ──────────────────────────────────────────────────────
 
+test('double-reverse on same payment cannot decrement bill below zero', function () {
+    // Two-layer protection:
+    //   1. Laravel route model binding excludes soft-deleted by default →
+    //      second HTTP DELETE on a reversed payment returns 404.
+    //   2. If a live concurrent request races past binding (two parallel
+    //      reversal RPCs on the same payment), the service-level lockForUpdate
+    //      + trashed() check produces a 409 instead of decrementing twice.
+    $admin = makePaymentManagerUser();
+
+    $this->actingAs($admin)
+        ->postJson('/api/v1/student-payments', [
+            'bill_id' => $this->bill->id,
+            'amount' => 500000,
+            'payment_date' => now('Asia/Jakarta')->toDateString(),
+            'payment_method' => 'transfer',
+        ])
+        ->assertCreated();
+
+    $payment = StudentPayment::first();
+
+    $this->actingAs($admin)
+        ->deleteJson("/api/v1/student-payments/{$payment->id}")
+        ->assertOk();
+
+    // HTTP path: route binding returns 404 (soft-deleted not visible)
+    $this->actingAs($admin)
+        ->deleteJson("/api/v1/student-payments/{$payment->id}")
+        ->assertNotFound();
+
+    // Service path: direct call with the still-in-memory pre-trashed model
+    // should detect the now-soft-deleted state and abort 409 (the lockForUpdate
+    // re-fetch sees deleted_at and short-circuits before decrementing).
+    $service = app(\App\Services\Keuangan\StudentPaymentService::class);
+    try {
+        $service->reverse($payment, $admin->id);
+        $this->fail('Expected abort 409 from double-reverse, none thrown');
+    } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+        expect($e->getStatusCode())->toBe(409);
+    }
+
+    // Bill stays at paid_amount=0 (no negative drift)
+    $this->bill->refresh();
+    expect((int) $this->bill->paid_amount)->toBe(0)
+        ->and($this->bill->status)->toBe(Bill::STATUS_PENDING);
+});
+
 test('reversal soft-deletes payment + cash_book_entry + decrements bill + 1 reversed log per side', function () {
     $admin = makePaymentManagerUser();
 

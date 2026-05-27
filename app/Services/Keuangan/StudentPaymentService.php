@@ -30,7 +30,10 @@ class StudentPaymentService
 
         /** @var StudentPayment $payment */
         $payment = DB::transaction(function () use ($data, $school, $userId) {
+            // Eager load assignment.feeType + student so the lazy-load
+            // round trips don't extend the lockForUpdate window.
             $bill = Bill::query()
+                ->with(['assignment.feeType', 'student'])
                 ->where('school_id', $school->id)
                 ->where('id', $data['bill_id'])
                 ->lockForUpdate()
@@ -139,23 +142,34 @@ class StudentPaymentService
     public function reverse(StudentPayment $payment, int $userId, ?string $reason = null): void
     {
         DB::transaction(function () use ($payment, $userId, $reason) {
-            $originalAmount = (int) $payment->amount;
-            $entry = $payment->cashBookEntry;
+            // Lock the payment row first to serialize concurrent reversal
+            // requests on the same payment. Without this, two simultaneous
+            // DELETE requests both pass route binding, both decrement the
+            // bill, and paid_amount goes negative (PG CHECK constraint
+            // crashes mid-transaction).
+            $locked = StudentPayment::query()->lockForUpdate()->find($payment->id);
+            if ($locked === null || $locked->trashed()) {
+                abort(409, 'Pembayaran sudah dibatalkan sebelumnya.');
+            }
 
-            StudentPayment::withoutEvents(fn () => $payment->delete());
+            $originalAmount = (int) $locked->amount;
+            $entry = $locked->cashBookEntry;
+            $proofPath = $locked->proof_file_path;
+
+            StudentPayment::withoutEvents(fn () => $locked->delete());
             if ($entry !== null) {
                 CashBookEntry::withoutEvents(fn () => $entry->delete());
             }
 
-            $bill = $payment->bill()->lockForUpdate()->first();
+            $bill = $locked->bill()->lockForUpdate()->first();
             if ($bill !== null) {
                 $this->applyPaymentToBill($bill, -$originalAmount);
             }
 
             FeeActivityLog::create([
-                'school_id' => $payment->school_id,
+                'school_id' => $locked->school_id,
                 'subject_type' => FeeActivityLog::SUBJECT_PAYMENT,
-                'subject_id' => $payment->id,
+                'subject_id' => $locked->id,
                 'action' => FeeActivityLog::ACTION_REVERSED,
                 'actor_kind' => FeeActivityLog::ACTOR_USER,
                 'actor_id' => $userId,
@@ -171,6 +185,14 @@ class StudentPaymentService
                     'actor_id' => $userId,
                     'changes' => ['original_amount' => $originalAmount, 'reason' => $reason],
                 ]);
+            }
+
+            // Drop proof file from disk — soft-deleted payment cannot be
+            // restored via API, so the file is orphaned anyway. Storage is
+            // not part of the DB transaction; if the unlink fails the txn
+            // commits regardless (file integrity is best-effort).
+            if ($proofPath !== null) {
+                $this->proofStorage->delete($proofPath);
             }
         });
     }

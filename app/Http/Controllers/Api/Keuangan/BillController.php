@@ -76,15 +76,13 @@ class BillController extends Controller
         $school = School::activeOrFail();
         $today = Carbon::now('Asia/Jakarta')->toDateString();
 
-        $buckets = collect([
-            'overdue_1_month' => [Carbon::parse($today)->subMonth()->toDateString(), $today],
-            'overdue_2_3_months' => [Carbon::parse($today)->subMonths(3)->toDateString(), Carbon::parse($today)->subMonth()->subDay()->toDateString()],
-            'overdue_more_than_3_months' => [null, Carbon::parse($today)->subMonths(3)->subDay()->toDateString()],
-        ])->map(function ($range) use ($school, $today) {
-            // Single query with selectRaw + first() — earlier attempt at chained
+        $buckets = collect(array_keys(self::arrearsBucketKeys()))->mapWithKeys(function ($bucket) use ($school, $today) {
+            $range = self::arrearsBucketRange($bucket, $today);
+
+            // Single selectRaw query per bucket — earlier attempt at chained
             // count() + sum() on the same builder produced bogus `sum(distinct
-            // student_id)` SQL because the builder is mutable and aggregate
-            // state leaks between calls (uuid sum() doesn't exist in pgsql).
+            // student_id)` SQL because builder aggregate state leaks between
+            // calls (uuid sum() crashes in pgsql).
             $q = Bill::query()
                 ->where('school_id', $school->id)
                 ->whereIn('status', [Bill::STATUS_PENDING, Bill::STATUS_PARTIAL])
@@ -98,10 +96,10 @@ class BillController extends Controller
             $row = $q->selectRaw('COUNT(DISTINCT student_id) AS student_count, COALESCE(SUM(expected_amount - paid_amount), 0) AS total_remaining')
                 ->first();
 
-            return [
+            return [$bucket => [
                 'student_count' => (int) ($row->student_count ?? 0),
                 'total_remaining' => (int) ($row->total_remaining ?? 0),
-            ];
+            ]];
         })->all();
 
         return $this->successResponse($buckets, 'Arrears summary retrieved');
@@ -114,11 +112,7 @@ class BillController extends Controller
         $today = Carbon::now('Asia/Jakarta')->toDateString();
         $perPage = min((int) $request->input('per_page', 25), 100);
 
-        $range = match ($bucket) {
-            'overdue_2_3_months' => [Carbon::parse($today)->subMonths(3)->toDateString(), Carbon::parse($today)->subMonth()->subDay()->toDateString()],
-            'overdue_more_than_3_months' => [null, Carbon::parse($today)->subMonths(3)->subDay()->toDateString()],
-            default => [Carbon::parse($today)->subMonth()->toDateString(), $today],
-        };
+        $range = self::arrearsBucketRange($bucket, $today);
 
         $query = Bill::query()
             ->with(['student', 'assignment.feeType'])
@@ -144,6 +138,40 @@ class BillController extends Controller
             ],
             'message' => 'Arrears students retrieved',
         ]);
+    }
+
+    private static function arrearsBucketKeys(): array
+    {
+        return [
+            'overdue_1_month' => true,
+            'overdue_2_3_months' => true,
+            'overdue_more_than_3_months' => true,
+        ];
+    }
+
+    /**
+     * Returns [lowerBoundOrNull, upperBound] inclusive due_date range for the
+     * given bucket relative to today (Asia/Jakarta). Null lower bound means
+     * unbounded (everything older than the upper).
+     */
+    private static function arrearsBucketRange(string $bucket, string $today): array
+    {
+        $base = Carbon::parse($today);
+
+        return match ($bucket) {
+            'overdue_2_3_months' => [
+                $base->copy()->subMonths(3)->toDateString(),
+                $base->copy()->subMonth()->subDay()->toDateString(),
+            ],
+            'overdue_more_than_3_months' => [
+                null,
+                $base->copy()->subMonths(3)->subDay()->toDateString(),
+            ],
+            default => [
+                $base->copy()->subMonth()->toDateString(),
+                $today,
+            ],
+        };
     }
 
     public function destroy(Bill $bill): JsonResponse

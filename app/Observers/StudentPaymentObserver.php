@@ -32,7 +32,10 @@ class StudentPaymentObserver
 
     private function computeDiff(StudentPayment $payment): ?array
     {
-        $ignored = ['updated_at'];
+        // proof_file_path/mime are post-commit storage details — exposing the
+        // disk path in the audit log diff leaks internals to admins and adds
+        // noise when the only "change" was attaching a receipt file.
+        $ignored = ['updated_at', 'proof_file_path', 'proof_file_mime'];
         $before = [];
         $after = [];
 
