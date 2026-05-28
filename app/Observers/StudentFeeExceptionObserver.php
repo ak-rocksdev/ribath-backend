@@ -5,9 +5,9 @@ namespace App\Observers;
 use App\Models\FeeActivityLog;
 use App\Models\StudentFeeException;
 
-// Audit pattern identik dengan FeeScheduleObserver; subject_type = `exception`.
-// Exceptions belong to an assignment which carries school_id — we resolve the
-// school via the loaded assignment relation.
+// Same audit pattern as FeeScheduleObserver; subject_type = `exception`.
+// Exceptions belong to an assignment which carries school_id — resolved via
+// the loaded assignment relation.
 class StudentFeeExceptionObserver
 {
     public function created(StudentFeeException $exception): void

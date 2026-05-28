@@ -42,14 +42,7 @@ class StudentFeeAssignmentResource extends JsonResource
     private function activeExceptions(string $atDate): array
     {
         return $this->exceptions
-            ->filter(function (StudentFeeException $e) use ($atDate) {
-                $from = $e->effective_from?->toDateString();
-                $until = $e->effective_until?->toDateString();
-
-                return $from !== null
-                    && $from <= $atDate
-                    && ($until === null || $until >= $atDate);
-            })
+            ->filter(fn (StudentFeeException $e) => StudentFeeException::isActiveAt($e, $atDate))
             ->map(fn (StudentFeeException $e) => [
                 'id' => $e->id,
                 'kind' => $e->kind,

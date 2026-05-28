@@ -52,8 +52,20 @@ class StudentFeeException extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    // Exceptions whose window covers $atDate:
-    //   effective_from <= atDate AND (effective_until IS NULL OR effective_until >= atDate)
+    // Window covering test: effective_from <= atDate AND
+    // (effective_until IS NULL OR effective_until >= atDate). Single source of
+    // truth for both the SQL scope (below) and the in-memory checks used by
+    // EffectiveAmountCalculator + the resources when the relation is eager-loaded.
+    public static function isActiveAt(self $exception, string $atDate): bool
+    {
+        $from = $exception->effective_from?->toDateString();
+        $until = $exception->effective_until?->toDateString();
+
+        return $from !== null
+            && $from <= $atDate
+            && ($until === null || $until >= $atDate);
+    }
+
     public function scopeActiveAt(Builder $q, Carbon $atDate): Builder
     {
         $date = $atDate->toDateString();

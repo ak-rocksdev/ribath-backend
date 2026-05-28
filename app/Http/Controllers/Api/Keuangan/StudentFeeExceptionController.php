@@ -41,6 +41,9 @@ class StudentFeeExceptionController extends Controller
         $this->ensureAssignmentBelongsToStudent($assignment, $student);
         $this->ensureExceptionBelongsToAssignment($exception, $assignment);
 
+        // Attach the route-bound assignment so the service's cap re-check +
+        // the observer don't lazy-load it (symmetry with the create path).
+        $exception->setRelation('assignment', $assignment);
         $updated = $this->exceptionService->update($exception, $request->validated());
 
         return $this->successResponse(new StudentFeeExceptionResource($updated), 'Pengecualian diperbarui');
@@ -55,6 +58,7 @@ class StudentFeeExceptionController extends Controller
         $this->ensureAssignmentBelongsToStudent($assignment, $student);
         $this->ensureExceptionBelongsToAssignment($exception, $assignment);
 
+        $exception->setRelation('assignment', $assignment);
         $this->exceptionService->delete($exception);
 
         return $this->successResponse(null, 'Pengecualian dihapus');

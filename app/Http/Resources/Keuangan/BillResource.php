@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources\Keuangan;
 
+use App\Models\StudentFeeAssignment;
+use App\Models\StudentFeeException;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class BillResource extends JsonResource
@@ -34,33 +36,33 @@ class BillResource extends JsonResource
             'remaining_amount' => max(0, (int) $this->expected_amount - (int) $this->paid_amount),
             'status' => $this->status,
             'due_date' => $this->due_date->toDateString(),
-            'active_exceptions_summary' => $this->activeExceptionsSummary(),
+            // Only emit when the relation chain is loaded (show endpoint) — the
+            // list endpoint deliberately skips the eager-load to avoid N+1, so
+            // the key is ABSENT there rather than a misleading empty array a
+            // consumer can't distinguish from "genuinely no exceptions".
+            $this->mergeWhen($this->exceptionsRelationLoaded(), fn () => [
+                'active_exceptions_summary' => $this->activeExceptionsSummary(),
+            ]),
             'created_at' => $this->created_at->toIso8601String(),
         ];
     }
 
-    // Exceptions active at this bill's billing_period_start, serialized for the
-    // tagihan UI. Returns [] when the assignment.exceptions relation wasn't
-    // eager-loaded (e.g. list endpoints that don't need it) to avoid N+1.
-    private function activeExceptionsSummary(): array
+    private function exceptionsRelationLoaded(): bool
     {
         $assignment = $this->whenLoaded('assignment');
-        if (! $assignment instanceof \App\Models\StudentFeeAssignment || ! $assignment->relationLoaded('exceptions')) {
-            return [];
-        }
 
+        return $assignment instanceof StudentFeeAssignment && $assignment->relationLoaded('exceptions');
+    }
+
+    // Exceptions active at this bill's billing_period_start, serialized for the
+    // tagihan UI. Precondition: assignment.exceptions eager-loaded (gated above).
+    private function activeExceptionsSummary(): array
+    {
         $periodStart = $this->billing_period_start->toDateString();
 
-        return $assignment->exceptions
-            ->filter(function (\App\Models\StudentFeeException $e) use ($periodStart) {
-                $from = $e->effective_from?->toDateString();
-                $until = $e->effective_until?->toDateString();
-
-                return $from !== null
-                    && $from <= $periodStart
-                    && ($until === null || $until >= $periodStart);
-            })
-            ->map(fn (\App\Models\StudentFeeException $e) => [
+        return $this->assignment->exceptions
+            ->filter(fn (StudentFeeException $e) => StudentFeeException::isActiveAt($e, $periodStart))
+            ->map(fn (StudentFeeException $e) => [
                 'kind' => $e->kind,
                 'discount_amount' => $e->discount_amount !== null ? (int) $e->discount_amount : null,
                 'reason' => $e->reason,
