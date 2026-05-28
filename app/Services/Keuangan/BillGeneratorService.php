@@ -42,7 +42,7 @@ class BillGeneratorService
             : Carbon::now('Asia/Jakarta')->startOfMonth();
 
         $assignments = StudentFeeAssignment::query()
-            ->with(['student', 'feeType'])
+            ->with(['student', 'feeType', 'exceptions'])
             ->where('school_id', $school->id)
             ->whereHas('student', fn ($q) => $q->where('status', Student::STATUS_ACTIVE))
             ->get();

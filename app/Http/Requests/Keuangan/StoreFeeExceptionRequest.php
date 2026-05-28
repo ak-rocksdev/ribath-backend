@@ -20,6 +20,7 @@ class StoreFeeExceptionRequest extends FormRequest
             'discount_amount' => [
                 'nullable',
                 'required_if:kind,'.StudentFeeException::KIND_PARTIAL_NOMINAL,
+                'prohibited_if:kind,'.StudentFeeException::KIND_FULL_WAIVER,
                 'integer', 'min:1',
             ],
             'reason' => ['required', 'string', 'max:500'],
@@ -34,6 +35,7 @@ class StoreFeeExceptionRequest extends FormRequest
             'kind.required' => 'Jenis pengecualian wajib dipilih.',
             'kind.in' => 'Jenis pengecualian tidak valid.',
             'discount_amount.required_if' => 'Nominal potongan wajib diisi untuk potongan nominal.',
+            'discount_amount.prohibited_if' => 'Beasiswa penuh tidak memakai nominal potongan.',
             'discount_amount.min' => 'Nominal potongan harus lebih dari 0.',
             'reason.required' => 'Alasan wajib diisi.',
             'reason.max' => 'Alasan maksimal 500 karakter.',

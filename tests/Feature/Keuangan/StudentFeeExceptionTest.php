@@ -158,6 +158,80 @@ test('second full_waiver rejected when one already active (FR-020)', function ()
         ->assertJsonPath('message', 'Sudah ada beasiswa penuh aktif. Hapus dulu untuk menambah baru.');
 });
 
+test('expired full_waiver does NOT block a new full_waiver (effective-date aware FR-020)', function () {
+    StudentFeeException::factory()->forAssignment($this->assignment)->fullWaiver()
+        ->effectiveFrom(now('Asia/Jakarta')->subYear()->toDateString())
+        ->effectiveUntil(now('Asia/Jakarta')->subMonths(6)->toDateString())->create();
+    $admin = makeFeeExceptionManager();
+
+    $this->actingAs($admin)
+        ->postJson(exceptionUrl($this->student->id, $this->assignment->id), [
+            'kind' => 'full_waiver',
+            'reason' => 'tahun ajaran baru',
+            'effective_from' => now('Asia/Jakarta')->toDateString(),
+        ])
+        ->assertCreated();
+});
+
+test('expired partial does NOT count toward the discount cap (effective-date aware FR-019)', function () {
+    StudentFeeException::factory()->forAssignment($this->assignment)->partialDiscount(400000)
+        ->effectiveFrom(now('Asia/Jakarta')->subYear()->toDateString())
+        ->effectiveUntil(now('Asia/Jakarta')->subMonths(6)->toDateString())->create();
+    $admin = makeFeeExceptionManager();
+
+    $this->actingAs($admin)
+        ->postJson(exceptionUrl($this->student->id, $this->assignment->id), [
+            'kind' => 'partial_nominal',
+            'discount_amount' => 400000,
+            'reason' => 'potongan baru',
+            'effective_from' => now('Asia/Jakarta')->toDateString(),
+        ])
+        ->assertCreated();
+});
+
+test('cross-tenant exception update/delete returns 404', function () {
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    $otherStudent = Student::factory()->create(['school_id' => $otherSchool->id]);
+    $otherAssignment = StudentFeeAssignment::factory()->forStudent($otherStudent)->forFeeType($this->spp)
+        ->forAcademicYear($this->ay)->create();
+    $otherException = StudentFeeException::factory()->forAssignment($otherAssignment)->partialDiscount(100000)->create();
+    $admin = makeFeeExceptionManager();
+
+    $this->actingAs($admin)
+        ->patchJson(exceptionUrl($otherStudent->id, $otherAssignment->id, $otherException->id), ['discount_amount' => 50000])
+        ->assertNotFound();
+
+    $this->actingAs($admin)
+        ->deleteJson(exceptionUrl($otherStudent->id, $otherAssignment->id, $otherException->id))
+        ->assertNotFound();
+});
+
+test('update rejects changing kind (immutable)', function () {
+    $exception = StudentFeeException::factory()->forAssignment($this->assignment)->partialDiscount(200000)->create();
+    $admin = makeFeeExceptionManager();
+
+    $this->actingAs($admin)
+        ->patchJson(exceptionUrl($this->student->id, $this->assignment->id, $exception->id), [
+            'kind' => 'full_waiver',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['kind']);
+});
+
+test('full_waiver rejects discount_amount in payload', function () {
+    $admin = makeFeeExceptionManager();
+
+    $this->actingAs($admin)
+        ->postJson(exceptionUrl($this->student->id, $this->assignment->id), [
+            'kind' => 'full_waiver',
+            'discount_amount' => 50000,
+            'reason' => 'salah isi',
+            'effective_from' => now('Asia/Jakarta')->toDateString(),
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['discount_amount']);
+});
+
 // ──────────────────────────────────────────────────────
 // EffectiveAmountCalculator integration
 // ──────────────────────────────────────────────────────
