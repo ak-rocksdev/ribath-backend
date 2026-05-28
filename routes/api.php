@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
 use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
+use App\Http\Controllers\Api\Keuangan\StudentFeeExceptionController;
 use App\Http\Controllers\Api\Keuangan\StudentPaymentController;
 use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
@@ -273,6 +274,14 @@ Route::prefix('v1')->group(function () {
         Route::post('/snapshot', [StudentFeeAssignmentController::class, 'snapshot'])
             ->middleware('permission:manage-student-fees');
         Route::post('/manual', [StudentFeeAssignmentController::class, 'manual'])
+            ->middleware('permission:manage-student-fees');
+
+        // US4 — Pengecualian (beasiswa / potongan) nested under an assignment
+        Route::post('/{assignment}/exceptions', [StudentFeeExceptionController::class, 'store'])
+            ->middleware('permission:manage-student-fees');
+        Route::patch('/{assignment}/exceptions/{exception}', [StudentFeeExceptionController::class, 'update'])
+            ->middleware('permission:manage-student-fees');
+        Route::delete('/{assignment}/exceptions/{exception}', [StudentFeeExceptionController::class, 'destroy'])
             ->middleware('permission:manage-student-fees');
     });
 

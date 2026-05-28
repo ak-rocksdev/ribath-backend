@@ -53,7 +53,7 @@ class BillController extends Controller
     public function show(Bill $bill): JsonResponse
     {
         $this->ensureBelongsToActiveSchool($bill);
-        $bill->load(['student', 'assignment.feeType', 'payments']);
+        $bill->load(['student', 'assignment.feeType', 'assignment.exceptions', 'payments']);
 
         return $this->successResponse(new BillResource($bill), 'Bill retrieved');
     }

@@ -2,12 +2,16 @@
 
 namespace App\Http\Resources\Keuangan;
 
+use App\Models\StudentFeeException;
+use App\Services\Keuangan\EffectiveAmountCalculator;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class StudentFeeAssignmentResource extends JsonResource
 {
     public function toArray($request): array
     {
+        $today = now('Asia/Jakarta');
+
         return [
             'id' => $this->id,
             'fee_type_id' => $this->fee_type_id,
@@ -25,11 +29,36 @@ class StudentFeeAssignmentResource extends JsonResource
                 'name' => $this->sourceAcademicYear->name,
             ]),
             'source' => $this->source,
-            // exception support added in US4 — for now effective == locked.
-            'effective_amount_current_period' => (int) $this->locked_amount,
-            'active_exceptions' => [],
+            'effective_amount_current_period' => app(EffectiveAmountCalculator::class)
+                ->compute($this->resource, $today),
+            'active_exceptions' => $this->relationLoaded('exceptions')
+                ? $this->activeExceptions($today->toDateString())
+                : [],
             'created_by' => $this->created_by,
             'created_at' => $this->created_at->toIso8601String(),
         ];
+    }
+
+    private function activeExceptions(string $atDate): array
+    {
+        return $this->exceptions
+            ->filter(function (StudentFeeException $e) use ($atDate) {
+                $from = $e->effective_from?->toDateString();
+                $until = $e->effective_until?->toDateString();
+
+                return $from !== null
+                    && $from <= $atDate
+                    && ($until === null || $until >= $atDate);
+            })
+            ->map(fn (StudentFeeException $e) => [
+                'id' => $e->id,
+                'kind' => $e->kind,
+                'discount_amount' => $e->discount_amount !== null ? (int) $e->discount_amount : null,
+                'reason' => $e->reason,
+                'effective_from' => $e->effective_from->toDateString(),
+                'effective_until' => $e->effective_until?->toDateString(),
+            ])
+            ->values()
+            ->all();
     }
 }

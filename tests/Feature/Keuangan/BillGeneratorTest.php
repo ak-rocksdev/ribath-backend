@@ -156,6 +156,65 @@ test('arrears-summary endpoint returns 3 buckets with student_count + total_rema
         ->assertJsonPath('data.overdue_2_3_months.total_remaining', 500000);
 });
 
+test('scheduler does NOT generate once_at_enrollment bills — only user/console may', function () {
+    $daftar = FeeType::factory()->forSchool($this->school)->withCadence('once_at_enrollment')
+        ->create(['code' => 'pendaftaran', 'cash_book_category_id' => $this->category->id]);
+    FeeSchedule::factory()->forSchool($this->school)->forAcademicYear($this->ay)->forFeeType($daftar)
+        ->create(['amount' => 5000000]);
+    $student = Student::factory()->create(['school_id' => $this->school->id, 'status' => 'active']);
+    StudentFeeAssignment::factory()->forStudent($student)->forFeeType($daftar)->forAcademicYear($this->ay)
+        ->create(['locked_amount' => 5000000, 'cadence' => 'once_at_enrollment']);
+
+    $admin = makeBillManagerUser();
+
+    // Scheduler skips enrollment-cadence entirely.
+    $schedulerStats = $this->generator->generate(now('Asia/Jakarta')->format('Y-m'), 'all', FeeActivityLog::ACTOR_SCHEDULER);
+    expect($schedulerStats['bills_created'])->toBe(0)
+        ->and(Bill::where('cadence_at_generation', 'once_at_enrollment')->count())->toBe(0);
+
+    // Manual user trigger may still generate once.
+    $userStats = $this->generator->generate(now('Asia/Jakarta')->format('Y-m'), 'all', FeeActivityLog::ACTOR_USER, $admin->id);
+    expect($userStats['bills_created'])->toBe(1);
+
+    // Re-run by user: existing → skip.
+    $userStats2 = $this->generator->generate(now('Asia/Jakarta')->format('Y-m'), 'all', FeeActivityLog::ACTOR_USER, $admin->id);
+    expect($userStats2['bills_created'])->toBe(0);
+});
+
+test('bills generated after exception use new effective amount; existing bills not retroactive', function () {
+    $student = Student::factory()->create(['school_id' => $this->school->id, 'status' => 'active']);
+    $assignment = StudentFeeAssignment::factory()->forStudent($student)->forFeeType($this->spp)
+        ->forAcademicYear($this->ay)->create(['locked_amount' => 500000, 'cadence' => 'monthly']);
+
+    $this->generator->generate(now('Asia/Jakarta')->subMonth()->format('Y-m'));
+    $existingBill = Bill::where('student_fee_assignment_id', $assignment->id)->first();
+    expect((int) $existingBill->expected_amount)->toBe(500000);
+
+    App\Models\StudentFeeException::factory()->forAssignment($assignment)->partialDiscount(200000)
+        ->effectiveFrom(now('Asia/Jakarta')->startOfMonth()->toDateString())->create();
+
+    $this->generator->generate(now('Asia/Jakarta')->format('Y-m'));
+    $newBill = Bill::where('student_fee_assignment_id', $assignment->id)
+        ->whereDate('billing_period_start', now('Asia/Jakarta')->startOfMonth()->toDateString())
+        ->first();
+    expect((int) $newBill->expected_amount)->toBe(300000)
+        ->and((int) $existingBill->fresh()->expected_amount)->toBe(500000);
+});
+
+test('full_waiver makes generated bill waived with expected 0', function () {
+    $student = Student::factory()->create(['school_id' => $this->school->id, 'status' => 'active']);
+    $assignment = StudentFeeAssignment::factory()->forStudent($student)->forFeeType($this->spp)
+        ->forAcademicYear($this->ay)->create(['locked_amount' => 500000, 'cadence' => 'monthly']);
+    App\Models\StudentFeeException::factory()->forAssignment($assignment)->fullWaiver()
+        ->effectiveFrom(now('Asia/Jakarta')->startOfMonth()->toDateString())->create();
+
+    $this->generator->generate(now('Asia/Jakarta')->format('Y-m'));
+
+    $bill = Bill::where('student_fee_assignment_id', $assignment->id)->first();
+    expect((int) $bill->expected_amount)->toBe(0)
+        ->and($bill->status)->toBe(Bill::STATUS_WAIVED);
+});
+
 test('manual generate via POST endpoint requires manage-student-fees and returns stats', function () {
     Student::factory()->create(['school_id' => $this->school->id]);
     StudentFeeAssignment::factory()->forFeeType($this->spp)->forAcademicYear($this->ay)

@@ -167,7 +167,7 @@ class StudentFeeAssignmentService
     public function listForStudent(Student $student): Collection
     {
         return StudentFeeAssignment::query()
-            ->with(['feeType', 'sourceAcademicYear'])
+            ->with(['feeType', 'sourceAcademicYear', 'exceptions'])
             ->where('student_id', $student->id)
             ->orderBy('created_at')
             ->get();
