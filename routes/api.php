@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
 use App\Http\Controllers\Api\Keuangan\BillController;
+use App\Http\Controllers\Api\Keuangan\FeeActivityLogController;
 use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
 use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
@@ -289,6 +290,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/count', [FeeUnassignedStudentsController::class, 'count']);
         Route::get('/', [FeeUnassignedStudentsController::class, 'index']);
     });
+
+    Route::get('fee-activity-logs', [FeeActivityLogController::class, 'index'])
+        ->middleware(['auth:sanctum', 'permission:view-student-fees']);
 
     // Fee Management — US3 Bills + Payments + Cash Book auto-link
     Route::prefix('bills')->middleware('auth:sanctum')->group(function () {
