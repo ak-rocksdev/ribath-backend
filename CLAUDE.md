@@ -333,3 +333,4 @@ return response()->json([
 - **Server:** VPS with Nginx + PHP-FPM + PostgreSQL + Redis
 - **Locally:** Laragon (Nginx on port 8181)
 - **Frontend:** Deployed separately on the Same VPS with Nginx (React SPA)
+- **Cron / scheduler:** see [`docs/VPS-CRON-JOBS.md`](docs/VPS-CRON-JOBS.md)
