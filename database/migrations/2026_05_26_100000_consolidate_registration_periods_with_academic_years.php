@@ -15,10 +15,19 @@ return new class extends Migration
      *
      * Sequence:
      *   1. Add nullable academic_year_id FK.
-     *   2. Backfill: match existing registration_periods.year (string) to
-     *      academic_years.name within the same school.
+     *   2. Backfill (two strategies, name-match first then date-overlap):
+     *      2a. Match registration_periods.year (string) to academic_years.name
+     *          within the same school.
+     *      2b. For any row still NULL: find an AY in the same school whose
+     *          [start_date, end_date] window contains the period.entry_date.
+     *          Handles the real-world case where AY uses Hijriyah naming
+     *          ("1448/1449") and registration_period.year uses Masehi
+     *          ("2025/2026") — no string match possible, but calendar dates
+     *          anchor them unambiguously. If multiple AYs overlap, prefer
+     *          the one whose start_date is latest (newer AY for the period).
      *   3. Make academic_year_id NOT NULL (will fail if any row was left
-     *      unmatched — surface that as a deployment-time error).
+     *      unmatched after both strategies — surface that as a deployment-
+     *      time error).
      *   4. Drop the legacy biaya columns + the now-redundant year string.
      */
     public function up(): void
@@ -31,11 +40,7 @@ return new class extends Migration
                 ->restrictOnDelete();
         });
 
-        // Backfill: link each periode to the AY with matching name string
-        // within the same school. Periode without a matching AY name stays
-        // NULL — the NOT NULL conversion below will fail loudly, which is
-        // what we want (forces explicit cleanup before the migration runs
-        // somewhere else).
+        // 2a. Name match (cheap, deterministic) — handles consistent naming.
         DB::statement('
             UPDATE registration_periods
             SET academic_year_id = (
@@ -47,15 +52,31 @@ return new class extends Migration
             WHERE academic_year_id IS NULL
         ');
 
-        // If any row is still unmatched, abort so the developer notices.
+        // 2b. Date-overlap fallback — handles Hijriyah↔Masehi naming mismatch.
+        DB::statement('
+            UPDATE registration_periods
+            SET academic_year_id = (
+                SELECT id FROM academic_years
+                WHERE academic_years.school_id = registration_periods.school_id
+                  AND registration_periods.entry_date BETWEEN academic_years.start_date AND academic_years.end_date
+                ORDER BY academic_years.start_date DESC
+                LIMIT 1
+            )
+            WHERE academic_year_id IS NULL
+        ');
+
+        // If any row is still unmatched after both strategies, abort.
         $unmatched = DB::table('registration_periods')
             ->whereNull('academic_year_id')
             ->count();
 
         if ($unmatched > 0) {
             throw new \RuntimeException(
-                "{$unmatched} registration_periods could not be matched to an academic_year by name. ".
-                'Seed the missing AY (matching the `year` string) before re-running this migration.'
+                "{$unmatched} registration_periods could not be matched to an academic_year. ".
+                'Tried (a) name match on academic_years.name = registration_periods.year, and ' .
+                '(b) date-overlap match on academic_years.[start_date, end_date] containing ' .
+                'registration_periods.entry_date. Seed the missing AY (covering the period entry_date) ' .
+                'or rename an existing AY to match before re-running this migration.'
             );
         }
 
