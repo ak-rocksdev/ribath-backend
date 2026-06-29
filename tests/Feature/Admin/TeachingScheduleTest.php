@@ -140,6 +140,41 @@ test('authenticated user with permission can list teaching schedules', function 
         ->assertJsonCount(3, 'data');
 });
 
+test('list excludes soft-deleted (inactive) schedules', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    // An active schedule that should appear in the list
+    TeachingSchedule::factory()->create([
+        'school_id' => $school->id,
+        'academic_year_id' => $academicYear->id,
+        'day_of_week' => 'monday',
+        'time_slot_id' => $timeSlot->id,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $subjectBook->id,
+        'teacher_id' => $teacher->id,
+        'is_active' => true,
+    ]);
+
+    // A soft-deleted schedule — must NOT appear in the list
+    $deleted = TeachingSchedule::factory()->inactive()->create([
+        'school_id' => $school->id,
+        'academic_year_id' => $academicYear->id,
+        'day_of_week' => 'tuesday',
+        'time_slot_id' => $timeSlot->id,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $subjectBook->id,
+        'teacher_id' => $teacher->id,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/teaching-schedules');
+
+    $response->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonMissing(['id' => $deleted->id]);
+});
+
 test('teaching schedule list is not paginated', function () {
     $testData = createScheduleTestData();
     [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;

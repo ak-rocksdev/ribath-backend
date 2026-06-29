@@ -37,6 +37,7 @@ class TeachingScheduleService
         $school = School::activeOrFail();
 
         $query = TeachingSchedule::where('school_id', $school->id)
+            ->where('is_active', true)
             ->with(TeachingSchedule::EAGER_LOAD_RELATIONS);
 
         if (! empty($filters['academic_year_id'])) {
