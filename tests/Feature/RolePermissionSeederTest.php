@@ -43,7 +43,12 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'manage-school-profile')->exists())->toBeTrue()
         ->and(Permission::where('name', 'view-cashbook')->exists())->toBeTrue()
         ->and(Permission::where('name', 'manage-cashbook')->exists())->toBeTrue()
-        ->and(Permission::count())->toBe(32);
+        ->and(Permission::where('name', 'manage-fee-types')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-fee-schedules')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-student-fees')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-student-fees')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'record-payments')->exists())->toBeTrue()
+        ->and(Permission::count())->toBe(37);
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {
@@ -77,6 +82,13 @@ test('seeder assigns permissions to pengurus_pesantren', function () {
         ->and($pengurusPesantren->hasPermissionTo('view-schedules'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('manage-schedules'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('manage-school-profile'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-cashbook'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-cashbook'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-fee-types'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-fee-schedules'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-student-fees'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-student-fees'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('record-payments'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse();
 });
 

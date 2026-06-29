@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\AcademicYear;
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\School;
@@ -7,7 +8,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 
 beforeEach(function () {
-    School::factory()->create(['is_active' => true]);
+    $this->school = School::factory()->create(['is_active' => true]);
 });
 
 function createAuthenticatedUser(string $role = 'super_admin'): User
@@ -21,12 +22,26 @@ function createAuthenticatedUser(string $role = 'super_admin'): User
     return $user;
 }
 
+/**
+ * Helper: create an AY tied to the active school. Tests that POST a period
+ * call this to get the FK they need, instead of the old hard-coded year string.
+ */
+function createActiveSchoolAcademicYear(string $name = '2025/2026'): AcademicYear
+{
+    $school = School::where('is_active', true)->firstOrFail();
+
+    return AcademicYear::factory()->create([
+        'school_id' => $school->id,
+        'name' => $name,
+    ]);
+}
+
 // ──────────────────────────────────────────────────────
 // Authentication & Authorization
 // ──────────────────────────────────────────────────────
 
 test('unauthenticated user cannot access any period endpoint', function () {
-    $period = RegistrationPeriod::factory()->create();
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create();
 
     $this->getJson('/api/v1/psb/periods')->assertUnauthorized();
     $this->postJson('/api/v1/psb/periods')->assertUnauthorized();
@@ -50,12 +65,13 @@ test('user without permission cannot create period', function () {
     $seeder = new RolePermissionSeeder;
     $seeder->run();
 
+    $ay = createActiveSchoolAcademicYear();
     $userWithoutPermission = User::factory()->create();
 
     $this->actingAs($userWithoutPermission)
         ->postJson('/api/v1/psb/periods', [
             'name' => 'Test Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-01-01',
             'registration_close' => '2025-03-01',
@@ -66,6 +82,7 @@ test('user without permission cannot create period', function () {
 
 test('super admin can access all endpoints bypassing permissions', function () {
     $superAdmin = createAuthenticatedUser('super_admin');
+    $ay = createActiveSchoolAcademicYear();
 
     $this->actingAs($superAdmin)
         ->getJson('/api/v1/psb/periods')
@@ -74,7 +91,7 @@ test('super admin can access all endpoints bypassing permissions', function () {
     $response = $this->actingAs($superAdmin)
         ->postJson('/api/v1/psb/periods', [
             'name' => 'Test Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-01-01',
             'registration_close' => '2025-03-01',
@@ -92,7 +109,7 @@ test('super admin can access all endpoints bypassing permissions', function () {
     $this->actingAs($superAdmin)
         ->putJson("/api/v1/psb/periods/{$periodId}", [
             'name' => 'Updated Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-01-01',
             'registration_close' => '2025-03-01',
@@ -112,7 +129,7 @@ test('user with view-registration-periods can list and show periods', function (
     $user = User::factory()->create();
     $user->givePermissionTo('view-registration-periods');
 
-    $period = RegistrationPeriod::factory()->create();
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create();
 
     $this->actingAs($user)
         ->getJson('/api/v1/psb/periods')
@@ -129,13 +146,14 @@ test('user with manage-registration-periods can create update and delete', funct
     $seeder = new RolePermissionSeeder;
     $seeder->run();
 
+    $ay = createActiveSchoolAcademicYear();
     $user = User::factory()->create();
     $user->givePermissionTo('manage-registration-periods');
 
     $response = $this->actingAs($user)
         ->postJson('/api/v1/psb/periods', [
             'name' => 'Test Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-01-01',
             'registration_close' => '2025-03-01',
@@ -149,7 +167,7 @@ test('user with manage-registration-periods can create update and delete', funct
     $this->actingAs($user)
         ->putJson("/api/v1/psb/periods/{$periodId}", [
             'name' => 'Updated Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-01-01',
             'registration_close' => '2025-03-01',
@@ -169,7 +187,7 @@ test('user with manage-registration-periods can create update and delete', funct
 test('can list periods with pagination', function () {
     $user = createAuthenticatedUser('super_admin');
 
-    RegistrationPeriod::factory()->count(20)->create();
+    RegistrationPeriod::factory()->forSchool($this->school)->count(20)->create();
 
     $response = $this->actingAs($user)
         ->getJson('/api/v1/psb/periods');
@@ -191,16 +209,15 @@ test('can list periods with pagination', function () {
 
 test('can create a period with valid data', function () {
     $user = createAuthenticatedUser('super_admin');
+    $ay = createActiveSchoolAcademicYear();
 
     $periodData = [
         'name' => 'Pendaftaran 2025/2026',
-        'year' => '2025/2026',
+        'academic_year_id' => $ay->id,
         'wave' => 1,
         'registration_open' => '2025-01-15 08:00:00',
         'registration_close' => '2025-03-15 23:59:59',
         'entry_date' => '2025-07-01',
-        'registration_fee' => 250000,
-        'monthly_tuition_fee' => 750000,
         'student_quota' => 50,
         'description' => 'First wave registration for academic year 2025/2026',
         'is_active' => true,
@@ -213,13 +230,13 @@ test('can create a period with valid data', function () {
         ->assertJsonPath('success', true)
         ->assertJsonPath('message', 'Registration period created')
         ->assertJsonPath('data.name', 'Pendaftaran 2025/2026')
-        ->assertJsonPath('data.year', '2025/2026')
+        ->assertJsonPath('data.academic_year_id', $ay->id)
         ->assertJsonPath('data.wave', 1)
         ->assertJsonPath('data.student_quota', 50);
 
     $this->assertDatabaseHas('registration_periods', [
         'name' => 'Pendaftaran 2025/2026',
-        'year' => '2025/2026',
+        'academic_year_id' => $ay->id,
         'wave' => 1,
     ]);
 });
@@ -233,7 +250,7 @@ test('create validates required fields', function () {
     $response->assertUnprocessable()
         ->assertJsonValidationErrors([
             'name',
-            'year',
+            'academic_year_id',
             'wave',
             'registration_open',
             'registration_close',
@@ -241,14 +258,34 @@ test('create validates required fields', function () {
         ]);
 });
 
+test('create rejects academic_year_id from another school (no cross-tenant leak)', function () {
+    $user = createAuthenticatedUser('super_admin');
+    $otherSchool = School::factory()->create();
+    $otherAY = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+
+    $response = $this->actingAs($user)
+        ->postJson('/api/v1/psb/periods', [
+            'name' => 'Test Period',
+            'academic_year_id' => $otherAY->id,
+            'wave' => 1,
+            'registration_open' => '2025-01-01',
+            'registration_close' => '2025-03-01',
+            'entry_date' => '2025-07-01',
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['academic_year_id']);
+});
+
 test('create validates date ordering', function () {
     $user = createAuthenticatedUser('super_admin');
+    $ay = createActiveSchoolAcademicYear();
 
     // registration_close must be after registration_open
     $response = $this->actingAs($user)
         ->postJson('/api/v1/psb/periods', [
             'name' => 'Test Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-03-01',
             'registration_close' => '2025-01-01',
@@ -262,7 +299,7 @@ test('create validates date ordering', function () {
     $response = $this->actingAs($user)
         ->postJson('/api/v1/psb/periods', [
             'name' => 'Test Period',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 1,
             'registration_open' => '2025-01-01',
             'registration_close' => '2025-03-01',
@@ -275,7 +312,7 @@ test('create validates date ordering', function () {
 
 test('can show a single period', function () {
     $user = createAuthenticatedUser('super_admin');
-    $period = RegistrationPeriod::factory()->create([
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create([
         'name' => 'Pendaftaran Gelombang 1',
     ]);
 
@@ -291,7 +328,7 @@ test('can show a single period', function () {
 
 test('show includes registrations count', function () {
     $user = createAuthenticatedUser('super_admin');
-    $period = RegistrationPeriod::factory()->create();
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create();
 
     Registration::factory()->count(5)->create([
         'registration_period_id' => $period->id,
@@ -307,14 +344,15 @@ test('show includes registrations count', function () {
 
 test('can update a period', function () {
     $user = createAuthenticatedUser('super_admin');
-    $period = RegistrationPeriod::factory()->create([
+    $ay = createActiveSchoolAcademicYear();
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create([
         'name' => 'Original Name',
     ]);
 
     $response = $this->actingAs($user)
         ->putJson("/api/v1/psb/periods/{$period->id}", [
             'name' => 'Updated Name',
-            'year' => '2025/2026',
+            'academic_year_id' => $ay->id,
             'wave' => 2,
             'registration_open' => '2025-04-01',
             'registration_close' => '2025-06-01',
@@ -336,7 +374,7 @@ test('can update a period', function () {
 
 test('can delete a period with no registrations', function () {
     $user = createAuthenticatedUser('super_admin');
-    $period = RegistrationPeriod::factory()->create();
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create();
 
     $response = $this->actingAs($user)
         ->deleteJson("/api/v1/psb/periods/{$period->id}");
@@ -352,7 +390,7 @@ test('can delete a period with no registrations', function () {
 
 test('cannot delete a period that has registrations', function () {
     $user = createAuthenticatedUser('super_admin');
-    $period = RegistrationPeriod::factory()->create();
+    $period = RegistrationPeriod::factory()->forSchool($this->school)->create();
 
     Registration::factory()->create([
         'registration_period_id' => $period->id,

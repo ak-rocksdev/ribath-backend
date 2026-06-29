@@ -8,6 +8,7 @@ use App\Models\RegistrationPeriod;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\Keuangan\StudentFeeAssignmentService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -16,7 +17,8 @@ use Spatie\Permission\Models\Role;
 class PsbService
 {
     public function __construct(
-        private RegistrationNumberGenerator $registrationNumberGenerator
+        private RegistrationNumberGenerator $registrationNumberGenerator,
+        private StudentFeeAssignmentService $feeAssignmentService,
     ) {}
 
     public function register(array $validatedData): Registration
@@ -85,6 +87,10 @@ class PsbService
                 'status' => 'active',
                 'entry_date' => $entryDate,
             ]);
+
+            // Snapshot tarif locked per FR-009. Hard-fails (DomainException → 422)
+            // jika AY aktif ≠ 1 — admin wajib fix AY config dulu sebelum approve.
+            $this->feeAssignmentService->snapshotForStudent($student);
 
             $registration->update([
                 'status' => Registration::STATUS_ACCEPTED,

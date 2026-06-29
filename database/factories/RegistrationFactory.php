@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
+use App\Models\School;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 class RegistrationFactory extends Factory
@@ -15,6 +16,9 @@ class RegistrationFactory extends Factory
         $registrantType = $this->faker->randomElement(['guardian', 'student']);
 
         return [
+            // Default to active school for tests that don't override — matches
+            // PsbService::register() which always sets school_id from School::activeOrFail().
+            'school_id' => School::where('is_active', true)->first()?->id ?? School::factory(),
             'registration_period_id' => RegistrationPeriod::factory(),
             'registration_number' => 'PSB-'.now()->year.'-'.str_pad($this->faker->unique()->numberBetween(1, 99999), 5, '0', STR_PAD_LEFT),
             'status' => Registration::STATUS_NEW,

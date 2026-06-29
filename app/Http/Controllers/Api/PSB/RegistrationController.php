@@ -93,11 +93,15 @@ class RegistrationController extends Controller
             return $this->errorResponse('Registration is already accepted', code: 422);
         }
 
-        $result = $this->psbService->acceptRegistration(
-            $registration,
-            $request->user(),
-            $request->validated()['class_level']
-        );
+        try {
+            $result = $this->psbService->acceptRegistration(
+                $registration,
+                $request->user(),
+                $request->validated()['class_level']
+            );
+        } catch (\DomainException $e) {
+            return $this->errorResponse($e->getMessage(), code: 422);
+        }
 
         return $this->successResponse($result, 'Registration accepted successfully');
     }

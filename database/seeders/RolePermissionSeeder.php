@@ -60,6 +60,13 @@ class RolePermissionSeeder extends Seeder
             // Cash Book (Buku Kas)
             'view-cashbook',
             'manage-cashbook',
+
+            // Fee Management (SPP & biaya santri)
+            'manage-fee-types',
+            'manage-fee-schedules',
+            'manage-student-fees',
+            'view-student-fees',
+            'record-payments',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -98,6 +105,11 @@ class RolePermissionSeeder extends Seeder
             'manage-school-profile',
             'view-cashbook',
             'manage-cashbook',
+            'manage-fee-types',
+            'manage-fee-schedules',
+            'manage-student-fees',
+            'view-student-fees',
+            'record-payments',
         ]);
 
         $adminUser = User::firstOrCreate(

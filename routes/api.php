@@ -18,6 +18,14 @@ use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
+use App\Http\Controllers\Api\Keuangan\BillController;
+use App\Http\Controllers\Api\Keuangan\FeeActivityLogController;
+use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
+use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
+use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
+use App\Http\Controllers\Api\Keuangan\StudentFeeExceptionController;
+use App\Http\Controllers\Api\Keuangan\StudentPaymentController;
+use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
@@ -245,6 +253,76 @@ Route::prefix('v1')->group(function () {
         Route::get('/', [CashBookActivityLogController::class, 'index']);
     });
 
+    // Fee Management — US1 Master Data (fee_types + fee_schedules)
+    Route::prefix('fee-types')->middleware(['auth:sanctum', 'permission:manage-fee-types'])->group(function () {
+        Route::get('/', [FeeTypeController::class, 'index']);
+        Route::post('/', [FeeTypeController::class, 'store']);
+        Route::patch('/{feeType}', [FeeTypeController::class, 'update']);
+        Route::delete('/{feeType}', [FeeTypeController::class, 'destroy']);
+    });
+
+    Route::prefix('fee-schedules')->middleware(['auth:sanctum', 'permission:manage-fee-schedules'])->group(function () {
+        Route::get('/', [FeeScheduleController::class, 'index']);
+        Route::post('/', [FeeScheduleController::class, 'store']);
+        Route::patch('/{feeSchedule}', [FeeScheduleController::class, 'update']);
+        Route::delete('/{feeSchedule}', [FeeScheduleController::class, 'destroy']);
+    });
+
+    // Fee Management — US2 Student Fee Assignments
+    Route::prefix('students/{student}/fee-assignments')->middleware('auth:sanctum')->group(function () {
+        Route::get('/', [StudentFeeAssignmentController::class, 'index'])
+            ->middleware('permission:view-student-fees');
+        Route::post('/snapshot', [StudentFeeAssignmentController::class, 'snapshot'])
+            ->middleware('permission:manage-student-fees');
+        Route::post('/manual', [StudentFeeAssignmentController::class, 'manual'])
+            ->middleware('permission:manage-student-fees');
+
+        // US4 — Pengecualian (beasiswa / potongan) nested under an assignment
+        Route::post('/{assignment}/exceptions', [StudentFeeExceptionController::class, 'store'])
+            ->middleware('permission:manage-student-fees');
+        Route::patch('/{assignment}/exceptions/{exception}', [StudentFeeExceptionController::class, 'update'])
+            ->middleware('permission:manage-student-fees');
+        Route::delete('/{assignment}/exceptions/{exception}', [StudentFeeExceptionController::class, 'destroy'])
+            ->middleware('permission:manage-student-fees');
+    });
+
+    Route::prefix('fees/unassigned-students')->middleware(['auth:sanctum', 'permission:view-student-fees'])->group(function () {
+        Route::get('/count', [FeeUnassignedStudentsController::class, 'count']);
+        Route::get('/', [FeeUnassignedStudentsController::class, 'index']);
+    });
+
+    Route::get('fee-activity-logs', [FeeActivityLogController::class, 'index'])
+        ->middleware(['auth:sanctum', 'permission:view-student-fees']);
+
+    // Fee Management — US3 Bills + Payments + Cash Book auto-link
+    Route::prefix('bills')->middleware('auth:sanctum')->group(function () {
+        Route::get('/arrears-summary', [BillController::class, 'arrearsSummary'])
+            ->middleware('permission:view-student-fees');
+        Route::get('/arrears-students', [BillController::class, 'arrearsStudents'])
+            ->middleware('permission:view-student-fees');
+        Route::post('/generate', [BillController::class, 'generate'])
+            ->middleware('permission:manage-student-fees');
+        Route::get('/', [BillController::class, 'index'])
+            ->middleware('permission:view-student-fees');
+        Route::get('/{bill}', [BillController::class, 'show'])
+            ->middleware('permission:view-student-fees');
+        Route::delete('/{bill}', [BillController::class, 'destroy'])
+            ->middleware('permission:manage-student-fees');
+    });
+
+    Route::prefix('student-payments')->middleware('auth:sanctum')->group(function () {
+        Route::post('/bulk', [StudentPaymentController::class, 'bulkStore'])
+            ->middleware('permission:record-payments');
+        Route::get('/', [StudentPaymentController::class, 'index'])
+            ->middleware('permission:view-student-fees');
+        Route::post('/', [StudentPaymentController::class, 'store'])
+            ->middleware('permission:record-payments');
+        Route::get('/{studentPayment}/proof', [StudentPaymentController::class, 'streamProof'])
+            ->middleware('permission:view-student-fees');
+        Route::delete('/{studentPayment}', [StudentPaymentController::class, 'destroy'])
+            ->middleware('permission:record-payments');
+    });
+
     // PSB Period Management routes
     Route::prefix('psb/periods')->middleware('auth:sanctum')->group(function () {
         Route::get('/', [RegistrationPeriodController::class, 'index'])
@@ -265,6 +343,7 @@ Route::prefix('v1')->group(function () {
 Route::prefix('v1/public/psb')->group(function () {
     Route::get('/active-period', [PublicPsbController::class, 'activePeriod']);
     Route::get('/active-periods', [PublicPsbController::class, 'activePeriods']);
+    Route::get('/periods/{registrationPeriod}/biaya', [PublicPsbController::class, 'periodBiaya']);
     Route::post('/register', [PublicPsbController::class, 'register']);
 });
 

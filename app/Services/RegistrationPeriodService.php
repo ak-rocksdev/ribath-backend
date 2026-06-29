@@ -11,8 +11,9 @@ class RegistrationPeriodService
 {
     public function listPeriods(int $perPage = 15): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        return RegistrationPeriod::withCount('registrations')
-            ->orderByDesc('year')
+        return RegistrationPeriod::with('academicYear')
+            ->withCount('registrations')
+            ->orderByDesc('entry_date')
             ->orderByDesc('wave')
             ->paginate($perPage);
     }

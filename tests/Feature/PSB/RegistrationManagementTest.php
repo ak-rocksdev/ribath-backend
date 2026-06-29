@@ -1,7 +1,9 @@
 <?php
 
+use App\Models\AcademicYear;
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
+use App\Models\School;
 use App\Models\User;
 use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
@@ -39,6 +41,11 @@ function seedClassLevels(): void
 {
     (new SchoolSeeder)->run();
     (new ClassLevelSeeder)->run();
+    // Active AY required by PsbService::acceptRegistration snapshot hook (FR-009).
+    AcademicYear::factory()->create([
+        'school_id' => School::where('is_active', true)->firstOrFail()->id,
+        'is_active' => true,
+    ]);
 }
 
 // -------------------------------------------------------

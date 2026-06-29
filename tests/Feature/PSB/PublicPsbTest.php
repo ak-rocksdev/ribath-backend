@@ -1,6 +1,11 @@
 <?php
 
+use App\Models\AcademicYear;
+use App\Models\CashBookCategory;
+use App\Models\FeeSchedule;
+use App\Models\FeeType;
 use App\Models\RegistrationPeriod;
+use App\Models\School;
 use Database\Seeders\SchoolSeeder;
 
 beforeEach(function () {
@@ -19,7 +24,7 @@ test('active period endpoint returns active period when one exists', function ()
     $response->assertOk()
         ->assertJsonStructure([
             'success',
-            'data' => ['id', 'name', 'year', 'wave', 'registration_open', 'registration_close'],
+            'data' => ['id', 'name', 'academic_year_id', 'wave', 'registration_open', 'registration_close'],
             'message',
         ])
         ->assertJsonPath('success', true)
@@ -238,6 +243,43 @@ test('register endpoint links to active period if one exists', function () {
         'full_name' => 'Test Student',
         'registration_period_id' => $activePeriod->id,
     ]);
+});
+
+// ──────────────────────────────────────────────────────
+// Public Biaya Endpoint
+// ──────────────────────────────────────────────────────
+
+test('public biaya endpoint returns fee_schedules for the period AY', function () {
+    $school = School::where('is_active', true)->firstOrFail();
+    $ay = AcademicYear::factory()->create(['school_id' => $school->id]);
+    $period = RegistrationPeriod::factory()->forSchool($school)->forAcademicYear($ay)->create();
+
+    $category = CashBookCategory::factory()->for($school, 'school')->create();
+    $pendaftaranFeeType = FeeType::factory()
+        ->forSchool($school)
+        ->withCadence(FeeType::CADENCE_ONCE_AT_ENROLLMENT)
+        ->create(['cash_book_category_id' => $category->id, 'label' => 'Pendaftaran']);
+
+    FeeSchedule::factory()->forSchool($school)->forAcademicYear($ay)->forFeeType($pendaftaranFeeType)
+        ->create(['amount' => 500000]);
+
+    $response = $this->getJson("/api/v1/public/psb/periods/{$period->id}/biaya")
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $items = $response->json('data');
+    expect($items)->toHaveCount(1)
+        ->and($items[0]['amount'])->toBe(500000)
+        ->and($items[0]['fee_type_label'])->toBe('Pendaftaran');
+});
+
+test('public biaya endpoint 404s for cross-tenant period (no enumeration leak)', function () {
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    $otherAy = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    $otherPeriod = RegistrationPeriod::factory()->forSchool($otherSchool)->forAcademicYear($otherAy)->create();
+
+    $this->getJson("/api/v1/public/psb/periods/{$otherPeriod->id}/biaya")
+        ->assertNotFound();
 });
 
 test('register endpoint assigns waitlist status when quota is full', function () {

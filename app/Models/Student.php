@@ -160,6 +160,11 @@ class Student extends Model
         return $this->hasMany(StudentParent::class);
     }
 
+    public function feeAssignments(): HasMany
+    {
+        return $this->hasMany(StudentFeeAssignment::class);
+    }
+
     public function health(): HasOne
     {
         return $this->hasOne(StudentHealth::class);
