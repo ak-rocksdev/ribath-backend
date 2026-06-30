@@ -1177,6 +1177,32 @@ test('delete sets is_active to false instead of removing the record', function (
     expect(TeachingSchedule::find($scheduleId)->is_active)->toBeFalse();
 });
 
+test('can create a new schedule in a slot after the previous one was deleted', function () {
+    $testData = createScheduleTestData();
+    [$user] = $testData;
+
+    $payload = createSchedulePayload([], $testData);
+
+    // Create the first schedule in the slot
+    $first = $this->actingAs($user)
+        ->postJson('/api/v1/teaching-schedules', $payload);
+    $first->assertCreated();
+    $firstId = $first->json('data.id');
+
+    // Soft-delete it
+    $this->actingAs($user)
+        ->deleteJson("/api/v1/teaching-schedules/{$firstId}")
+        ->assertOk();
+
+    // Re-create a schedule in the exact same slot — must succeed (the soft-deleted
+    // row must not block it via the unique index)
+    $second = $this->actingAs($user)
+        ->postJson('/api/v1/teaching-schedules', $payload);
+
+    $second->assertCreated();
+    expect($second->json('data.id'))->not->toBe($firstId);
+});
+
 // ── Cross-entity deletion protection tests ───────────────────────────
 
 test('cannot delete academic year with existing teaching schedules', function () {
