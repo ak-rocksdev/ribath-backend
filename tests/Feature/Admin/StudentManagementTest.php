@@ -1,13 +1,16 @@
 <?php
 
+use App\Models\School;
 use App\Models\Student;
 use App\Models\User;
-use Spatie\Permission\Models\Role;
+use Database\Seeders\ClassLevelSeeder;
+use Database\Seeders\RolePermissionSeeder;
+use Database\Seeders\SchoolSeeder;
 
 beforeEach(function () {
-    $this->seed(\Database\Seeders\SchoolSeeder::class);
-    $this->seed(\Database\Seeders\ClassLevelSeeder::class);
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(SchoolSeeder::class);
+    $this->seed(ClassLevelSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 });
 
 function createStudentAdmin(): User
@@ -137,6 +140,24 @@ test('create student manually', function () {
         ->assertJsonPath('success', true)
         ->assertJsonPath('data.full_name', 'New Student')
         ->assertJsonPath('data.class_level', 'tamhidi');
+});
+
+test('create student manually assigns the active school', function () {
+    $admin = createStudentAdmin();
+    $activeSchool = School::where('is_active', true)->firstOrFail();
+
+    $response = $this->actingAs($admin)
+        ->postJson('/api/v1/students', [
+            'full_name' => 'Santri Lama',
+            'birth_date' => '2012-03-10',
+            'gender' => 'L',
+            'program' => 'regular',
+            'entry_date' => '2025-07-01',
+        ])
+        ->assertStatus(201);
+
+    $createdStudent = Student::findOrFail($response->json('data.id'));
+    expect($createdStudent->school_id)->toBe($activeSchool->id);
 });
 
 test('create student with guardian link', function () {

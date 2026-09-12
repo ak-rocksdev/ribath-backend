@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\School;
 use App\Models\Student;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +44,12 @@ class StudentService
 
     public function createStudent(array $data): Student
     {
+        // Manual "Tambah Santri" path. Tenancy is assigned server-side, the same
+        // way PsbService takes it from the registration. Without it the student
+        // is saved with school_id NULL and every tenancy-guarded endpoint (fee
+        // assignments, bills, payments) returns 404 for them.
+        $data['school_id'] = School::activeOrFail()->id;
+
         $student = Student::create($data);
         $this->syncProfileCompletionTimestamp($student);
 

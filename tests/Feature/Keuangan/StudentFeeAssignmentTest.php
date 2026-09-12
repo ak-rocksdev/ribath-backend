@@ -12,6 +12,7 @@ use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentFeeAssignment;
 use App\Models\User;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -194,6 +195,35 @@ test('manager can manual-snapshot a legacy student with AY referensi', function 
     }
 });
 
+test('student created via manual Tambah Santri form can get a fee snapshot', function () {
+    Permission::firstOrCreate(['name' => 'create-students']);
+    $admin = makeStudentFeeManager();
+    $admin->givePermissionTo('create-students');
+
+    $manuallyCreatedStudentId = $this->actingAs($admin)
+        ->postJson('/api/v1/students', [
+            'full_name' => 'Santri Lama',
+            'birth_date' => '2012-03-10',
+            'gender' => 'L',
+            'program' => 'regular',
+            'entry_date' => '2025-07-01',
+        ])
+        ->assertCreated()
+        ->json('data.id');
+
+    $this->actingAs($admin)
+        ->getJson("/api/v1/students/{$manuallyCreatedStudentId}/fee-assignments")
+        ->assertOk();
+
+    $this->actingAs($admin)
+        ->postJson("/api/v1/students/{$manuallyCreatedStudentId}/fee-assignments/snapshot", [
+            'academic_year_id' => $this->activeAy->id,
+        ])
+        ->assertCreated()
+        ->assertJsonPath('data.created_count', 2)
+        ->assertJsonPath('data.skipped_count', 0);
+});
+
 test('manual snapshot is idempotent — skips fee_types already assigned', function () {
     $student = Student::factory()->create(['school_id' => $this->school->id]);
     StudentFeeAssignment::factory()->forStudent($student)->forFeeType($this->spp)->forAcademicYear($this->activeAy)
@@ -271,7 +301,7 @@ test('duplicate assignment (same student × fee_type) is blocked', function () {
 
     expect(fn () => StudentFeeAssignment::factory()->forStudent($student)->forFeeType($this->spp)->forAcademicYear($this->activeAy)
         ->create())
-        ->toThrow(\Illuminate\Database\UniqueConstraintViolationException::class);
+        ->toThrow(UniqueConstraintViolationException::class);
 });
 
 test('list assignments endpoint returns student fee assignments with eager loaded refs', function () {
