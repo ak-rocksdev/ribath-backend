@@ -3,13 +3,35 @@
 namespace App\Http\Requests\Akademik;
 
 use App\Models\AcademicSemester;
+use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
 
 class UpdateAcademicSemesterRequest extends FormRequest
 {
+    use EnsuresActiveSchoolTenancy;
+
+    /**
+     * Cross-tenant records must be hidden behind a 404 before any of their
+     * data is read (global constraint 1). This has to happen here — in
+     * authorize(), which runs before rules()/withValidator() — rather than
+     * only in the controller, because withValidator()'s cross-field checks
+     * already read the OTHER school's stored semester (via
+     * mergedWithExisting()) to validate the submitted body. If tenancy were
+     * only checked in the controller (which runs after validation), a
+     * request against a foreign academic year would surface as 422 or 200
+     * depending on that other school's stored dates — an oracle that leaks
+     * their data. Checking here makes every foreign academic year 404,
+     * uniformly, before any of its semester data is touched.
+     */
     public function authorize(): bool
     {
+        $academicYear = $this->route('academicYear');
+
+        if ($academicYear) {
+            $this->ensureBelongsToActiveSchool($academicYear);
+        }
+
         return true;
     }
 

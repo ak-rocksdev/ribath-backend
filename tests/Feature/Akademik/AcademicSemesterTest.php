@@ -293,6 +293,36 @@ test('updating a semester for another schools academic year returns 404', functi
     $response->assertNotFound();
 });
 
+test('updating a semester for another schools academic year returns 404 even when the body would fail cross-field validation against that schools stored dates', function () {
+    // Regression test for a cross-tenant oracle: withValidator()'s
+    // after-hook reads the stored semester to merge partial PUT bodies
+    // for the after_or_equal/between checks. If tenancy were only
+    // enforced in the controller (which runs after validation), a
+    // request against a foreign academic year would surface as 422
+    // (validation failure) instead of a uniform 404 whenever the
+    // submitted body happens to conflict with that other school's real
+    // stored dates — leaking their existence. Tenancy must be enforced
+    // before any of that data is read, so this must be 404 regardless.
+    [$user] = createSchoolAndUserForSemesters();
+
+    $otherSchool = School::factory()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($otherAcademicYear);
+    app(AcademicSemesterService::class)->updateSemester($otherAcademicYear, 1, [
+        'start_date' => '2026-07-01',
+        'end_date' => '2026-12-31',
+    ]);
+
+    // Only end_date is sent, and it's before the OTHER school's stored
+    // start_date (2026-07-01) — a naive merge-then-validate would 422 here.
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$otherAcademicYear->id}/semesters/1", [
+            'end_date' => '2026-01-01',
+        ]);
+
+    $response->assertNotFound();
+});
+
 // ── Migration backfill ───────────────────────────────────────────────────
 
 test('migration backfills semesters for pre-existing academic years', function () {
