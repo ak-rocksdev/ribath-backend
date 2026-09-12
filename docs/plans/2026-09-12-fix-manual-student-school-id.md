@@ -370,7 +370,7 @@ StudentService::createStudent() tidak mengisi students.school_id, sehingga santr
 
 - [ ] **Step 5: Deploy ke VPS — HANYA atas instruksi eksplisit user**
 
-`deploy.sh` di VPS hanya menjalankan migrasi bila diberi flag `--migrate` (flag ini selalu membuat backup `pg_dump` pre-migrate lebih dulu). Tanpa `--migrate`, kode ter-deploy tapi backfill TIDAK jalan. Catatan: `scripts/deploy.sh` di repo ini lebih lama daripada versi di VPS.
+`deploy.sh` di VPS hanya menjalankan migrasi bila diberi flag `--migrate` (flag ini selalu membuat backup `pg_dump` pre-migrate lebih dulu). Tanpa `--migrate`, kode ter-deploy tapi backfill TIDAK jalan. (`scripts/deploy.sh` di repo sudah disamakan dengan versi VPS pada 2026-09-12.)
 ```bash
 git push origin main   # deploy.sh meng-clone dari GitHub
 ssh hyperscore-vps "bash /srv/www/ribath-backend/scripts/deploy.sh --migrate"
