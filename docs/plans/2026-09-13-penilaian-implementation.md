@@ -1,0 +1,333 @@
+# Penilaian (Nilai, Absensi Pertemuan, Tahfizh, Rapor) — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. One task = one fresh implementer. TDD applies to every task (write the failing Pest test first, then the code).
+
+**Goal:** Implement the Penilaian feature end-to-end in two repos (backend `ribath-backend`, frontend `ribath-masjid-hub`) as 18 vertical slices, in the order P0 → A → (B ∥ C) → D.
+
+**Spec (binding authority):** `ribath-masjid-hub/docs/superpowers/specs/2026-09-12-penilaian-spec.md`
+**Decisions & rationale:** `ribath-masjid-hub/docs/superpowers/specs/2026-09-12-penilaian-pra-development.md` (sections 2, 6–9)
+**Glossary:** `ribath-backend/CONTEXT.md` — use these terms in code comments, UI copy, and messages.
+**ADRs:** `ribath-backend/docs/adr/0001–0003` — respect them; do not "fix" what they decide.
+**Tickets:** `ribath-masjid-hub/docs/tickets/penilaian/NN-*.md` (same numbering as tasks below).
+
+**Branch:** `003-penilaian` in BOTH repos (already created). Commit per task in each repo touched. Never push. Never deploy.
+
+---
+
+## Global Constraints
+
+1. **Tenancy:** every new table has `school_id` (uuid, FK `schools`, cascade). Services fill it from `School::activeOrFail()`. Request input never sets it. Controllers use `EnsuresActiveSchoolTenancy::ensureBelongsToActiveSchool()` on route-bound models (404 on mismatch).
+2. **Authorization:** Spatie Permission only, via route middleware `permission:{name}`. No Policy classes. New permission names (seed in `RolePermissionSeeder`, grant all to `pengurus_pesantren`): `manage-grading-settings`, `view-grades`, `manage-grades`, `view-attendance`, `manage-attendance`, `view-memorization`, `manage-memorization`. Semester config reuses `view-academic-years` / `manage-academic-years`.
+3. **Semester Akademik is a pair:** every table scoped to a semester carries `academic_year_id` (uuid FK `academic_years`) + `semester` (smallint 1|2). `academic_semesters` has unique `(academic_year_id, semester)` and is looked up by that pair — never referenced by FK (ADR 0002).
+4. **NULL ≠ 0:** `score` columns nullable; NULL = belum diinput. Calculators never coalesce NULL to 0. Final score is NULL while any active factor is NULL.
+5. **Audit columns:** every table holding grading/attendance/memorization data has `created_by` and `updated_by` (unsignedBigInteger nullable, FK `users.id` nullOnDelete). Services set them from `auth()->id()` on create/update.
+6. **Migrations run on SQLite (tests) and PostgreSQL (prod):** use the query builder; wrap CHECK constraints in `if (DB::getDriverName() === 'pgsql')`. PHP 8.2-compatible code (no 8.3+ features). Run CLI as `herd php artisan …`, `herd php vendor/bin/pest`. Never `migrate:fresh` / `db:wipe` locally; only `herd php artisan migrate`.
+7. **API shape:** routes under `/api/v1`, kebab-case; controllers thin (Form Request + Service + `ApiResponseTrait`). Envelope `{success,data,message}` + `errors`/`meta`. Validation messages in Indonesian.
+8. **Bulk endpoints:** upsert by natural key, all-or-nothing inside one DB transaction, 422 with `errors` keyed by `student_id` (and factor/task code where relevant, e.g. `errors["<student_id>.uts"]`), response returns the saved rows including `updated_at`, `updated_by`.
+9. **Naming:** descriptive names over short ones (`$activeAcademicSemester`, `calculateNormalizedWeights()`). Models PascalCase, tables snake_case plural, UUID PK (`HasUuids`), `$fillable` on every model.
+10. **Tests (Pest):** every endpoint gets: happy path, validation 422, no-permission 403, other-school record 404. Students used in tenancy paths are created through `POST /api/v1/students` (not factory) at least once per test file. Test output must be pristine (no deprecation noise).
+11. **Frontend:** one `src/services/api/<resource>Service.ts` per resource, hooks in `src/hooks/use<Resource>.ts`, types in `src/types/grading.ts` (create in Task 2) matching API shapes in English, Zod schemas in `src/schemas/`, pages under `src/pages/akademik/...` and `src/pages/tahfidz/...`, routes in `src/routes/config/dashboardRoutes.tsx` guarded with `<ProtectedRoute allowedRoles={['super_admin','pengurus_pesantren']}>`, sidebar entries in `src/components/layout/Sidebar.tsx` group "Akademik" (and "Tahfidz"). UI copy Indonesian. Failed queries render an error state with the server message, distinct from empty state. `npm run build` must pass. `npx eslint <files you created or touched>` must report zero errors (the repo carries ~480 pre-existing lint errors elsewhere — do not fix them, do not run repo-wide lint as a gate). New Vitest tests live under `src/test/grading/` and must pass via `npx vitest run src/test/grading`; the pre-existing failure in `src/test/hooks/usePaginatedQuery.test.tsx` is known and out of scope.
+12. **Do not touch Supabase code** except to hide legacy menu items where a task says so.
+13. **Workspace hygiene:** `dev-dist/sw.js` may be regenerated by `npm run dev`; never commit it.
+
+### Fixed values (seed data)
+
+Templates (`grading_templates`, per school): `teori_kitab` "Teori/Kitab", `tahfizh` "Tahfizh".
+
+Factors (`grading_factors`, per school; `sort_order` in listed order):
+
+| code | name | input_type | score_scale | is_midterm_exam | template & default weight |
+|---|---|---|---|---|---|
+| `uts` | UTS | manual_once | percent | true | teori_kitab 20 |
+| `uas` | UAS | manual_once | percent | false | teori_kitab 30 |
+| `tugas` | Tugas | manual_periodic | percent | false | teori_kitab 20 |
+| `keaktifan` | Keaktifan | end_of_semester_bulk | level_1_4 | false | teori_kitab 10 |
+| `adab` | Adab | end_of_semester_bulk | level_1_4 | false | teori_kitab 10 |
+| `absensi` | Absensi | auto_from_attendance | percent | false | teori_kitab 10 |
+| `target_hafalan` | Pencapaian Target | auto_from_log | percent | false | tahfizh 20 |
+| `kualitas_setoran` | Kualitas Setoran | auto_from_log | percent | false | tahfizh 20 |
+| `murajaah` | Murajaah | auto_from_log | percent | false | tahfizh 20 |
+| `uas_tahfizh` | UAS Tahfizh | manual_once | percent | false | tahfizh 40 |
+
+Default `scale_levels` JSON for `level_1_4` factors:
+`[{"level":1,"label":"Kurang","description":"Menunggu rumusan kurikulum","score":60},{"level":2,"label":"Cukup","description":"Menunggu rumusan kurikulum","score":75},{"level":3,"label":"Baik","description":"Menunggu rumusan kurikulum","score":85},{"level":4,"label":"Sangat Baik","description":"Menunggu rumusan kurikulum","score":100}]`
+
+Enum values: `input_type` ∈ manual_once | manual_periodic | end_of_semester_bulk | auto_from_log | auto_from_attendance; `score_scale` ∈ percent | level_1_4; `class_sessions.status` ∈ held | cancelled; `student_attendances.status` ∈ present | sick | excused | absent; `memorization_logs.type` ∈ new | review; `report_cards.status` ∈ draft | final.
+
+Fann/Kitab Tahfizh: subject category slug `tahfizh`, name "Tahfizh", color `bg-emerald-100`; subject book title "Tahfizh Al-Qur'an", `class_levels` = all class level slugs of the school, `semesters` [1,2], `sessions_per_week` 6, grading template `tahfizh`.
+
+Constants: `ATTENDANCE_EDIT_WINDOW_DAYS = 14`; `PAGES_PER_JUZ = 20`; final score rounding 2 decimals (half up).
+
+---
+
+### Task 1: P0 — backfill kelas santri + seed Fann/Kitab Tahfizh
+
+**Repo:** backend only. **Blocked by:** none.
+
+**Deliver:**
+- Data migration `backfill_students_class_level_id` (query builder, SQLite+pgsql): for every student with `class_level_id` NULL and non-null `class_level` slug, set `class_level_id` = the `class_levels.id` whose `slug` matches within the same `school_id` (students with NULL school_id: match by slug across the active school only if exactly one match). Log count of unresolved slugs via `Log::warning` (no exception). `down()` is a no-op.
+- `StudentService::createStudent()` and `updateStudent()`: when `class_level` slug is given and `class_level_id` absent, resolve `class_level_id` from the slug for the school (so new students never end up NULL again). Keep existing behaviour otherwise.
+- `SubjectCategorySeeder`: add fann `tahfizh` (idempotent by school+slug). New `TahfizhSubjectBookSeeder` (registered in `DatabaseSeeder` after `SubjectCategorySeeder`): creates the "Tahfizh Al-Qur'an" book for the active school if missing (grading_template_id is set later by Task 4's backfill — leave the column out here).
+- Tests: `tests/Feature/Migrations/BackfillStudentsClassLevelIdTest.php` (insert students with slug only, run the migration class's `up()` directly as in `BackfillStudentsSchoolIdTest`, assert ids resolved, unresolved left NULL); StudentManagementTest: `POST /students` with `class_level` resolves `class_level_id`; seeder test that both seeders are idempotent (run twice → one row).
+
+**Acceptance:** all 21 local students would resolve (all slugs known); pest green; `herd php artisan migrate` applied locally; `herd php artisan db:seed --class=TahfizhSubjectBookSeeder` creates the kitab locally.
+
+---
+
+### Task 2: Semester Akademik
+
+**Repo:** backend + frontend. **Blocked by:** none.
+
+**Backend:**
+- Migration `create_academic_semesters_table`: `id` uuid PK, `school_id`, `academic_year_id` (FK academic_years cascade), `semester` smallint, `start_date` date nullable, `end_date` date nullable, `midterm_exam_date` date nullable, `uts_enabled` boolean default true, timestamps; unique `(academic_year_id, semester)`; pgsql CHECK `semester IN (1,2)` and `end_date >= start_date` when both not null.
+- Data migration (same file or next timestamp) inserting semesters 1 and 2 for every existing academic year lacking them (query builder, generate UUIDs with `Str::uuid7()` or `Str::orderedUuid()`).
+- Model `AcademicSemester` (`HasUuids`, fillable, casts dates/bool, `academicYear()` belongsTo, `school()`), relation `AcademicYear::semesters()` hasMany, `AcademicYear::semester(int)` helper returning the row.
+- Service `App\Services\Akademik\AcademicSemesterService`: `createSemestersForAcademicYear(AcademicYear)`, `listForAcademicYear(AcademicYear)`, `updateSemester(AcademicYear, int $semester, array $data)`, `findByPair(string $academicYearId, int $semester): ?AcademicSemester`. Hook `createSemestersForAcademicYear` into `AcademicYearService::createAcademicYear` (inside a DB transaction). Also add `AcademicSemester::findByPair` static convenience delegating to the same query.
+- Validation (Form Request `Akademik/UpdateAcademicSemesterRequest`): `start_date`/`end_date`/`midterm_exam_date` nullable date, `end_date` after_or_equal `start_date`, `midterm_exam_date` between them when all set, `uts_enabled` boolean. Indonesian messages.
+- Routes (permissions `view-academic-years` / `manage-academic-years`): `GET /academic-years/{academicYear}/semesters`, `PUT /academic-years/{academicYear}/semesters/{semester}` (semester 1|2, 404 otherwise). Controller `Api/Akademik/AcademicSemesterController` with tenancy check on academicYear. Include `semesters` in `GET /academic-years` and `/active` responses (eager load).
+- Tests `tests/Feature/Akademik/AcademicSemesterTest.php`: creating an AY via `POST /academic-years` yields 2 semesters; update dates/flag; validation; 403; other-school 404; migration backfill test for pre-existing AYs.
+
+**Frontend:**
+- Types `src/types/grading.ts`: `AcademicSemester { id, academic_year_id, semester: 1|2, start_date, end_date, midterm_exam_date, uts_enabled, created_at, updated_at }`; extend `AcademicYear` type with `semesters?: AcademicSemester[]`.
+- Service `academicSemesterService.ts` (`list(academicYearId)`, `update(academicYearId, semester, data)`), hook `useAcademicSemesters.ts` (query + mutation invalidating academic-years queries).
+- On the Tahun Ajaran page (route `/admin/tahun-ajaran`): per academic year, a "Semester" section/dialog with two rows (Semester 1, Semester 2): tanggal mulai, tanggal selesai, tanggal UTS, saklar "UTS diadakan". Zod schema `academicSemesterSchema.ts` mirroring the Form Request. Vitest test for the schema in `src/test/grading/academicSemesterSchema.test.ts`.
+
+**Acceptance:** pest green; lint + build green; local migration applied and the 3 existing AYs have 6 semester rows.
+
+---
+
+### Task 3: Template, Faktor, dan Bobot per Semester
+
+**Repo:** backend + frontend. **Blocked by:** Task 2.
+
+**Backend:**
+- Migrations: `grading_templates` (id, school_id, code string 30, name string 100, description text nullable, is_active bool default true, timestamps; unique (school_id, code)); `grading_factors` (id, school_id, code 30, name 100, input_type 30, score_scale 15, scale_levels json nullable, is_midterm_exam bool default false, sort_order smallint default 0, timestamps; unique (school_id, code); pgsql CHECK on input_type/score_scale); `grading_template_factors` (id, school_id, grading_template_id FK cascade, grading_factor_id FK cascade, academic_year_id FK, semester smallint, weight decimal(5,2), is_active bool default true, timestamps; unique (grading_template_id, grading_factor_id, academic_year_id, semester)).
+- Models `GradingTemplate`, `GradingFactor` (casts scale_levels array, constants for enums), `GradingTemplateFactor`.
+- `App\Services\Akademik\GradingDefaultsInstaller`: `installForSchool(School)` creates the 2 templates + 10 factors (idempotent by code) with the fixed values table; `ensureWeightsForSemester(AcademicSemester)` creates `grading_template_factors` rows for every template×factor of that template, copying `weight`/`is_active` from the most recent earlier semester of the same school that has rows (order by academic year start_date then semester), else from `DEFAULT_WEIGHTS`; `ensureWeightsForAllSemesters(School)` loops all semesters. Seeder `GradingDefaultsSeeder` (in `DatabaseSeeder` after `SchoolSeeder`) calls both for the active school. `AcademicSemesterService::createSemestersForAcademicYear` calls `ensureWeightsForSemester` for each new semester (if templates exist).
+- `App\Services\Akademik\GradingSettingsService`: `listTemplates()`, `listFactors()`, `updateFactor(GradingFactor, data)` (name, scale_levels validated: exactly levels 1..4, each with label string, description string, score 0–100), `getSemesterWeights(academicYearId, semester)` → per template: factors with weight/is_active + `has_grades` flag (false until Task 5 adds `student_grades`; implement as a method that checks table existence via `Schema::hasTable('student_grades')` so Task 5 only flips the query), `replaceSemesterWeights(academicYearId, semester, templateId, rows[])` validating active weights sum to exactly 100.00 (422 message "Jumlah bobot faktor aktif harus 100%.") inside a transaction.
+- Routes: `GET /grading-templates` (view-grades), `GET /grading-factors` (view-grades), `PUT /grading-factors/{gradingFactor}` (manage-grading-settings), `GET /grading-template-factors?academic_year_id&semester` (view-grades), `PUT /grading-template-factors` body `{academic_year_id, semester, grading_template_id, factors:[{grading_factor_id, weight, is_active}]}` (manage-grading-settings). Controllers under `Api/Akademik`. Form Requests under `Http/Requests/Akademik`.
+- Seed permissions `manage-grading-settings`, `view-grades`, `manage-grades` (all 7 new names can be added now, granted to pengurus_pesantren).
+- Tests `tests/Feature/Akademik/GradingSettingsTest.php`: installer idempotent; new AY gets weights copied from previous semester (change a weight in sem 1, create next AY → copied); default weights when none; sum≠100 rejected; factor scale_levels validation; permissions; tenancy.
+
+**Frontend:**
+- Types: `GradingTemplate`, `GradingFactor`, `GradingTemplateFactor`, `SemesterWeightsResponse`.
+- Services `gradingSettingsService.ts`; hooks `useGradingSettings.ts`.
+- Page `/akademik/penilaian/pengaturan` ("Pengaturan Penilaian"): semester selector (AY + semester, default active), per template a table of factors with weight input and active toggle, live sum indicator, save (422 message shown), warning banner when `has_grades` is true ("Semester ini sudah punya nilai; mengubah bobot akan menghitung ulang rekap."); a second tab "Skala Adab & Keaktifan" to edit `scale_levels` (label, description, score) per level_1_4 factor. Zod schemas + Vitest for the weights schema (sum check) and scale schema.
+- Sidebar: add "Pengaturan Penilaian" under Akademik.
+
+**Acceptance:** pest green, eslint clean on touched files, build green; local `herd php artisan db:seed --class=GradingDefaultsSeeder` installs defaults and weights for the 6 local semesters.
+
+---
+
+### Task 4: Kitab → Template Penilaian
+
+**Repo:** backend + frontend. **Blocked by:** Task 3.
+
+- Migration: add nullable `grading_template_id` (FK grading_templates nullOnDelete) to `subject_books`; data migration sets every existing book to the school's `teori_kitab` template, and the book titled "Tahfizh Al-Qur'an" to `tahfizh` (both only if templates exist — otherwise `GradingDefaultsInstaller::installForSchool` must also backfill books lacking a template: add `assignDefaultTemplateToSubjectBooks(School)` and call it from the seeder so prod `--seed` covers it).
+- `SubjectBook` model: fillable + `gradingTemplate()` relation; `SubjectBookService` create/update accept `grading_template_id` (validated exists for active school); `GET /subject-books` responses include `grading_template:id,code,name`. `TahfizhSubjectBookSeeder` now sets the template.
+- Tests: update/create with template; invalid template 422; other-school template 404/422; backfill sets teori_kitab.
+- Frontend: `SubjectBook` type gets `grading_template_id` + `grading_template`; Kitab form (`/kitab`) gets a required select "Template Penilaian"; list shows a small badge with template name.
+
+**Acceptance:** pest green, eslint clean on touched files, build green; local backfill applied (all 57 books teori_kitab, Tahfizh book tahfizh).
+
+---
+
+### Task 5: Grid Nilai manual UTS/UAS per Kelas × Kitab
+
+**Repo:** backend + frontend. **Blocked by:** Tasks 1, 4.
+
+**Backend:**
+- Migration `student_grades`: id, school_id, student_id FK cascade, subject_book_id FK, grading_factor_id FK, academic_year_id FK, semester smallint, class_level_id FK nullable (snapshot), score decimal(5,2) nullable, scale_level smallint nullable, notes text nullable, created_by, updated_by, timestamps; unique `(student_id, subject_book_id, grading_factor_id, academic_year_id, semester)` named `uniq_student_grade_factor_semester`; index (school_id, academic_year_id, semester, class_level_id, subject_book_id); pgsql CHECK score 0..100, scale_level 1..4.
+- Model `StudentGrade`. `GradingSettingsService::getSemesterWeights` now computes `has_grades` from this table.
+- `App\Services\Akademik\GradableSubjectService::listForSemester(academicYearId, semester, ?classLevelId)`: distinct (class_level, subject_book, teacher) from active `teaching_schedules` of the active school for that pair, with the book's `grading_template`; (Tahfizh pairs are added in Task 13). Books without a template are returned with `grading_template: null` and flagged `is_gradable=false`.
+- `App\Services\Akademik\StudentGradeService`: `getGrid(academicYearId, semester, classLevelId, subjectBookId)` → students of the class (status active first, then non-active with `is_active_student=false`, ordered by name), the template's factors for that semester (only `manual_once` + `end_of_semester_bulk`, with weight/is_active), and existing grades keyed by student+factor; `upsertGrid(...)` for a list of `{student_id, scores: {factor_code: number|null}}`: validates the book has a template, every factor code belongs to the template and is manual_once/end_of_semester_bulk, each student belongs to the class and school, score 0–100 or null; writes in a transaction using updateOrCreate on the natural key, snapshotting `class_level_id`, setting created_by/updated_by; returns saved rows. 422 error keys `"<student_id>.<factor_code>"`.
+- Routes (view-grades / manage-grades): `GET /gradable-subjects?academic_year_id&semester&class_level_id`, `GET /student-grades?academic_year_id&semester&class_level_id&subject_book_id`, `PUT /student-grades/bulk`.
+- Tests `tests/Feature/Akademik/StudentGradeTest.php`: grid lists students & factors; upsert creates then updates (no duplicates, same count after resubmit); NULL stays NULL and 0 stays 0; book without template 422; pair not in schedule 422; per-student error keys; response has updated_by; students created via `POST /students`; permissions; tenancy.
+
+**Frontend:**
+- Service `studentGradeService.ts`, `gradableSubjectService.ts`; hooks `useStudentGrades.ts`, `useGradableSubjects.ts`.
+- Page `/akademik/nilai` ("Input Nilai"): selectors AY+semester (default active), Kelas, Kitab (from gradable subjects; show template badge); grid rows = santri, columns = manual factors (UTS, UAS, …; level_1_4 factors are shown read-only here with a link to Task 7's page), inputs 0–100 with blank = kosong; non-active students greyed with badge "Tidak aktif"; save button → bulk PUT; 422 highlights cells by `student_id.factor`; each cell tooltip shows "Diubah oleh … pada …"; draft autosave to localStorage key `grade-grid:<ay>:<sem>:<class>:<book>` with "Pulihkan draf" prompt and clear on successful save. Zod schema `studentGradeGridSchema.ts` + Vitest.
+- Sidebar: replace legacy "Input Nilai Bulanan" (`/nilai/bulanan`) entries with "Input Nilai" → `/akademik/nilai` in every role block that had it (super_admin, pengurus). Do not delete the legacy page/route yet.
+
+**Acceptance:** pest green, eslint clean on touched files, build green; controller smoke: grid loads for a real local class and saves.
+
+---
+
+### Task 6: Rekap Kelas × Kitab + normalisasi + nilai akhir
+
+**Repo:** backend + frontend. **Blocked by:** Task 5.
+
+**Backend (pure calculators in `App\Services\Akademik\Calculation\`, unit-tested in `tests/Unit/Akademik/`):**
+- `GradeWeightNormalizer::normalize(array $factors, array $disabledFactorCodes = []): array` — input: list of `['code'=>string,'weight'=>float,'is_active'=>bool]`; output: `code => normalizedWeight` for factors that are active and not disabled, where normalizedWeight = weight ÷ Σ(active weights) × 100. Empty result when nothing active. This is the ONE normalization function (§4.2).
+- `FinalGradeCalculator::calculate(array $factorScores, array $normalizedWeights): FinalGradeResult` — `factorScores` = `code => float|null` for every code in normalizedWeights; result has `finalScore` (?float, rounded 2 decimals half-up) and `missingFactorCodes` (codes whose score is null). If any missing → finalScore null.
+- `MidtermExclusionRule::disabledFactorCodesFor(AcademicSemester $semester, Student $student, array $factors): array` — returns codes with `is_midterm_exam` when `uts_enabled` is false OR (`midterm_exam_date` not null AND `student.entry_date > midterm_exam_date`).
+- `App\Services\Akademik\GradeRecapService::recapForClassSubject(academicYearId, semester, classLevelId, subjectBookId)`: loads semester (422 "Semester akademik belum dikonfigurasi." if no weights rows), template factors, students, grades; per student: builds factorScores where manual factors come from `student_grades.score`, `manual_periodic` and `auto_*` factors are provided by `FactorScoreProviderRegistry` (interface `FactorScoreProvider { supports(GradingFactor): bool; scoresFor(context): array<studentId, ?float> }`; Task 6 registers nothing for tugas/absensi/hafalan so they yield null with `source` = 'tugas'|'absensi'|'hafalan'); result per student: `factors: [{code, name, score, source (manual|tugas|absensi|hafalan), weight, normalized_weight, is_active, is_missing}]`, `final_score`, `missing_factor_codes`, `is_complete`. Response also carries the header (class, book, template, semester flags).
+- Route `GET /grade-recaps/class?academic_year_id&semester&class_level_id&subject_book_id` (view-grades).
+- Tests: unit tests for the three calculators (worked example from spec: 20/30/20/10/10/10 without UTS → 37.5/25/12.5/12.5/12.5; single factor; none active; NULL propagation; rounding); feature test for recap: final NULL with missing, complete when all filled (use a template with only manual factors by deactivating others for that semester via the weights endpoint), uts_enabled=false normalizes, entry_date after midterm normalizes and Tahfizh unaffected, 422 when semester unconfigured, permissions, tenancy.
+
+**Frontend:**
+- Service `gradeRecapService.ts`, hook `useGradeRecap.ts`; page `/akademik/rekap` ("Rekap Nilai") with the same selectors as Input Nilai; table: santri × factors (score or "—" with amber "Kosong" chip), nilai akhir column (or "Belum lengkap" badge), header shows normalized weights and a note when UTS is disabled/normalized; row expands to show per-factor source/weight details.
+- Sidebar: add "Rekap Nilai".
+
+**Acceptance:** unit + feature pest green; eslint clean on touched files; build green.
+
+---
+
+### Task 7: Input massal Adab & Keaktifan (skala 1–4)
+
+**Repo:** backend + frontend. **Blocked by:** Task 5.
+
+- Backend: extend `StudentGradeService::upsertGrid` so `level_1_4` factors accept `{level: 1..4|null}` (request shape `scores: {adab: {level: 3}}` OR simply `scores: {adab: 3}` — choose ONE: use `scores: {adab: 3}` where for `level_1_4` factors the integer is the level; service converts via `scale_levels[level].score` and stores both `scale_level` and `score`; null clears both). Grid GET returns for such factors both `scale_level` and `score`, plus the factor's `scale_levels`. Tests: level stored with converted score; after editing `scale_levels` new saves use new conversion but old rows keep their stored score; level 5 → 422.
+- Frontend: page `/akademik/nilai/adab-keaktifan` ("Adab & Keaktifan"): selectors AY+semester+Kelas+Kitab; grid santri × (Keaktifan, Adab) with 1–4 segmented buttons; a side panel listing each level's label + description (from `scale_levels`); save via the same bulk endpoint; localStorage draft; Vitest for the schema. Link from Input Nilai page. Sidebar entry under Akademik.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 8: Tugas
+
+**Repo:** backend + frontend. **Blocked by:** Task 6.
+
+- Migrations `class_tasks` (id, school_id, class_level_id FK, subject_book_id FK, academic_year_id FK, semester, title string 150, task_date date, description text nullable, created_by, updated_by, timestamps, softDeletes) and `student_task_scores` (id, school_id, class_task_id FK cascade, student_id FK cascade, score decimal(5,2) nullable, created_by, updated_by, timestamps; unique (class_task_id, student_id); pgsql CHECK 0..100).
+- Models `ClassTask` (SoftDeletes, `scores()` hasMany), `StudentTaskScore`.
+- `App\Services\Akademik\ClassTaskService`: list (filters AY/semester/class/book, with `scored_count`/`student_count`), create (task_date within semester dates when set: 422 "Tanggal tugas di luar rentang semester."), update, delete (soft), `getScores(task)` (students of the class + score rows), `upsertScores(task, rows[{student_id, score}])` all-or-nothing keyed `errors[student_id]`.
+- `TaskFactorScoreProvider` implementing `FactorScoreProvider` for `manual_periodic`: for each student, average of `student_task_scores.score` across the class×book×semester tasks; null if no task exists or any of the student's task scores is null (Belum Lengkap per spec). Register in the registry.
+- Routes (view-grades/manage-grades): `GET/POST /class-tasks`, `GET/PUT/DELETE /class-tasks/{classTask}`, `GET /class-tasks/{classTask}/scores`, `PUT /class-tasks/{classTask}/scores/bulk`.
+- Tests: CRUD, date range, bulk scores, recap Tugas factor average, null propagation (one unscored student), no tasks → null, soft delete removes from average, permissions, tenancy.
+- Frontend: page `/akademik/tugas` ("Tugas"): selectors AY+semester+Kelas+Kitab; task list (title, date, scored/total) with create/edit dialog (Zod schema + Vitest); clicking a task opens a scoring grid (santri × score) with bulk save and localStorage draft; delete with confirm. Rekap page now shows Tugas factor values. Sidebar entry.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 9: Rekap per Santri + peringatan ubah bobot
+
+**Repo:** backend + frontend. **Blocked by:** Task 6.
+
+- Backend: `GradeRecapService::recapForStudent(Student, academicYearId, semester)`: every gradable book for the student's class (pairs from schedules) — plus Tahfizh once Task 13 exists (design the method to reuse `GradableSubjectService`) — each with the same per-factor breakdown, final score and completeness; overall `is_complete`. Route `GET /grade-recaps/student/{student}?academic_year_id&semester` (view-grades, tenancy on student). Weight change warning: `PUT /grading-template-factors` response includes `recalculated_grades_count` (number of student_grades rows in that semester for that template's books) so the UI can show the warning after save too. Tests: student recap lists books from schedules only, completeness aggregation, other-school 404.
+- Frontend: page `/akademik/rekap/santri/:studentId` with AY+semester selector; card per kitab with final score/"Belum lengkap" and expandable factor table; link from Rekap Kelas rows and from the santri detail page (add a "Nilai" tab or button on `/santri/:id` that navigates here). Pengaturan Penilaian: confirm dialog before saving weights when `has_grades` is true.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 10: Pertemuan dan Absensi
+
+**Repo:** backend + frontend. **Blocked by:** Tasks 1, 2.
+
+- Migrations `class_sessions` (id, school_id, teaching_schedule_id FK, session_date date, academic_year_id FK, semester, class_level_id FK, subject_book_id FK, teacher_id FK, status string 10 default held, cancel_reason string 255 nullable, created_by, updated_by, timestamps, softDeletes; unique (teaching_schedule_id, session_date); index (school_id, academic_year_id, semester, session_date)) and `student_attendances` (id, school_id, class_session_id FK cascade, student_id FK cascade, status string 10, notes string 255 nullable, created_by, updated_by, timestamps; unique (class_session_id, student_id); pgsql CHECK status).
+- Models `ClassSession` (SoftDeletes, constants, `attendances()`), `StudentAttendance`.
+- `App\Services\Akademik\ClassSessionService`: `listSessions(filters: academic_year_id, semester, class_level_id, teaching_schedule_id, date range)`; `recordSession(teachingSchedule, sessionDate, attendances[])` creating `held` session + attendance rows for the given students (students of the schedule's class with entry_date ≤ session_date are expected; rows for students not in the class → 422 keyed by student_id); `updateAttendances(session, rows)`; `cancelSession(teachingSchedule, sessionDate, reason)` (creates or updates as cancelled; cancelling a held session with attendances requires super_admin? → no: allowed, attendances kept but ignored); `reopenSession` not needed. Date rules in `SessionDatePolicy`: date's day_of_week must equal the schedule's (422 "Tanggal tidak sesuai hari jadwal."); for non-super_admin: session_date ≤ today and, when editing an existing session, session_date ≥ today − 14 days (422 "Perubahan absensi hanya boleh sampai 14 hari ke belakang."); super_admin: session_date ≤ semester end_date (if set) and response/UI carry `requires_override_warning=true` when date > today. Snapshot class/book/teacher from schedule; semester pair from schedule.
+- Routes (view-attendance/manage-attendance): `GET /class-sessions`, `POST /class-sessions` (body: teaching_schedule_id, session_date, attendances[{student_id,status,notes}]), `PUT /class-sessions/{classSession}/attendances`, `POST /class-sessions/cancel` (teaching_schedule_id, session_date, reason), `GET /class-sessions/{classSession}`. Also `GET /teaching-schedules/{teachingSchedule}/expected-students?session_date=` returning students expected for that date.
+- Tests `tests/Feature/Akademik/ClassSessionTest.php`: record + attendances; unique per date; wrong weekday 422; 14-day rule for pengurus; super_admin future date allowed with warning flag; cancel; student not in class 422; student entered after date not expected; permissions; tenancy.
+- Frontend: page `/akademik/absensi` ("Absensi Pertemuan"): pick AY+semester, Kelas, then the day's schedules (or a schedule list with day filter), pick date (date picker restricted to the schedule's weekday; super_admin sees a warning banner for future/today dates); attendance grid with 4-state toggles (Hadir/Sakit/Izin/Alpa) defaulting to Hadir, notes, save; "Batalkan pertemuan" action with reason; list of recorded sessions for the selected schedule with status badges. Types/services/hooks/Zod + Vitest. Sidebar: replace legacy "Rekap Absensi Bulanan" entries with "Absensi Pertemuan" → `/akademik/absensi`.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 11: Alert Pertemuan Bolong + libur massal
+
+**Repo:** backend + frontend. **Blocked by:** Task 10.
+
+- `App\Services\Akademik\MissingSessionFinder::findForSemester(academicYearId, semester, ?teacherId)`: requires semester start_date/end_date (else returns `{configured:false, items:[]}`); enumerates dates from max(start_date, first schedule) to min(end_date, yesterday) for each active teaching schedule of the pair whose weekday matches, minus dates with any `class_sessions` row (held or cancelled, not soft-deleted); groups by teacher: `[{teacher:{id,full_name}, missing_count, items:[{teaching_schedule_id, session_date, class_level, subject_book, time_slot}]}]`, sorted by missing_count desc. Route `GET /attendance-alerts?academic_year_id&semester` (defaults: active AY + active semester) (view-attendance).
+- `ClassSessionService::cancelDateRange(startDate, endDate, reason)`: for every active schedule of the active AY/semester and each matching date in range, create `cancelled` sessions; skip dates that already have a session; return `{created, skipped}` with details. Route `POST /class-sessions/cancel-range` (manage-attendance). Reason required.
+- Tests: alert appears for yesterday, not today; cancelled removes; unconfigured semester → configured:false; grouping/sorting; cancel-range creates/skips counts; permissions.
+- Frontend: dashboard card/banner (super_admin & pengurus dashboards) "N pertemuan belum diabsen" with per-ustadz breakdown and links to `/akademik/absensi?schedule=<id>&date=<d>` (Absensi page reads these query params to preselect); on the Absensi page, a "Tandai libur" dialog (rentang tanggal + alasan) showing created/skipped result. Hook `useAttendanceAlerts` with staleTime 60s.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 12: Nilai Absensi ke rekap
+
+**Repo:** backend + frontend. **Blocked by:** Tasks 10, 6.
+
+- `AttendanceScoreCalculator::calculate(int $present, int $absent): ?float` in the Calculation namespace — score = present ÷ (present + absent) × 100, rounded 2 decimals; null when denominator 0. Marked `@provisional` (spec §3.4b) in a docblock. Unit tests.
+- `AttendanceFactorScoreProvider` for `auto_from_attendance`: for each student in the class, count `held` sessions of that class×book×semester with session_date ≥ student.entry_date having an attendance row for the student; present/absent counts; sick/excused ignored; students with no rows → null. Register in registry.
+- Route `GET /attendance-recaps?academic_year_id&semester&class_level_id&subject_book_id` (view-attendance) → per student counts (present, sick, excused, absent, recorded_sessions, score).
+- Tests: recap Absensi factor equals calculator output in a full flow via endpoints (record sessions → recap); neutral statuses; late-entry student; no sessions → null.
+- Frontend: Rekap Nilai shows Absensi factor; new page section or tab "Kehadiran" on `/akademik/absensi` showing the attendance recap table for the selected class×kitab.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 13: Target Hafalan
+
+**Repo:** backend + frontend. **Blocked by:** Tasks 1, 2 (needs Task 4's Tahfizh template for pairs; if Task 4 is done, include it in gradable pairs).
+
+- Migration `memorization_targets` (id, school_id, student_id FK cascade, academic_year_id FK, semester, target_pages decimal(6,1), teacher_id FK teachers, notes text nullable, created_by, updated_by, timestamps, softDeletes; unique (student_id, academic_year_id, semester) — with SoftDeletes, enforce uniqueness in the service for non-deleted rows and add a pgsql partial unique index `WHERE deleted_at IS NULL`).
+- Model `MemorizationTarget`; `App\Services\Tahfidz\MemorizationTargetService` (list by AY/semester with student+teacher, create, update, delete; `target_pages` > 0; accepts `target_juz` in requests and converts ×20 when `target_pages` absent).
+- `GradableSubjectService`: add the Tahfizh book (the school's book with template `tahfizh`) for students with a non-deleted target in the pair; `StudentGradeService::getGrid` for the Tahfizh book: students = those with targets (any class) when `class_level_id` is omitted, else filtered by class. `GradeRecapService::recapForStudent` includes Tahfizh when the student has a target.
+- Routes (view-memorization/manage-memorization): `GET/POST /memorization-targets`, `PUT/DELETE /memorization-targets/{memorizationTarget}`.
+- Seed permissions `view-memorization`, `manage-memorization` if not already seeded in Task 3.
+- Tests `tests/Feature/Tahfidz/MemorizationTargetTest.php`: CRUD, juz conversion, uniqueness per semester, appears in gradable subjects, student from an akademik class can have a target, permissions, tenancy.
+- Frontend: page `/tahfidz/target` ("Target Hafalan"): AY+semester selector, table of targets (santri, kelas, target halaman, juz equivalent, ustadz), add/edit dialog (santri search, input mode toggle Juz/Halaman, ustadz select), delete. Types/service/hook/Zod + Vitest. Sidebar: new group "Tahfidz" with "Target Hafalan".
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 14: Log Setoran dan Murajaah
+
+**Repo:** backend + frontend. **Blocked by:** Task 13.
+
+- Migration `memorization_logs` (id, school_id, student_id FK, subject_book_id FK, academic_year_id FK, semester, teacher_id FK, log_date date, type string 10, juz smallint nullable, start_page smallint nullable, end_page smallint nullable, pages decimal(5,1), material_note string 255 nullable, quality_score smallint, notes text nullable, created_by, updated_by, timestamps, softDeletes; index (school_id, student_id, academic_year_id, semester, type); pgsql CHECK type, quality_score 0..100, pages > 0).
+- Model `MemorizationLog`; `App\Services\Tahfidz\MemorizationLogService`: list (filters student, AY/semester, type, date range; paginated), create (subject_book_id resolved server-side to the school's Tahfizh book; log_date within semester dates when set: 422 "Tanggal setoran di luar rentang semester."; quality_score required 0–100; pages multiple of 0.5 > 0; end_page ≥ start_page when both), update, delete (soft); `progressForStudent(student, AY, semester)` → target_pages, total_new_pages, achievement_percent (capped 100, null without target), counts and averages per type, recent logs.
+- Routes: `GET/POST /memorization-logs`, `PUT/DELETE /memorization-logs/{memorizationLog}`, `GET /students/{student}/memorization-progress?academic_year_id&semester` (view-memorization).
+- Tests: CRUD, validation, progress numbers, soft delete excluded, permissions, tenancy.
+- Frontend: page `/tahfidz/setoran` ("Log Setoran"): quick-entry form at top (santri with target, jenis Setoran/Murajaah, juz + halaman awal/akhir or halaman count, nilai kualitas, ustadz, tanggal) that remembers last ustadz+tanggal in localStorage and resets only the per-entry fields after save; below, a filterable log list (santri, jenis, date) with edit/delete; a "Progres" drawer per santri showing target vs total pages, averages. Sidebar: "Log Setoran" under Tahfidz. Replace legacy "Tahfidz Bulanan" entries.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 15: Faktor otomatis tahfizh + UAS Tahfizh
+
+**Repo:** backend + frontend. **Blocked by:** Tasks 14, 6.
+
+- `MemorizationFactorCalculator::calculate(?float $targetPages, float $newPages, array $newQualityScores, array $reviewQualityScores): MemorizationFactorResult` with `targetAchievement` (null without target or target ≤ 0; else min(100, newPages/target×100)), `submissionQuality` (avg of new quality scores; null if none), `review` (avg of review scores; null if none), all rounded 2 decimals. `@provisional` docblock. Unit tests.
+- `MemorizationFactorScoreProvider` for `auto_from_log` mapping factor codes `target_hafalan`, `kualitas_setoran`, `murajaah` to the result fields; per student in the grid for the Tahfizh book. Register.
+- Grid/recap for the Tahfizh book: `uas_tahfizh` is `manual_once` and works through the existing grade grid (Task 5) — ensure the Tahfizh book appears in Input Nilai with students from targets; recap shows the three auto factors with source 'hafalan' and `missing_reason` "Target belum diset" when target absent.
+- Tests: full flow via endpoints (target + logs + UAS → recap final score = weighted 20/20/20/40); no target → NULL with reason; no review → NULL; cap at 100.
+- Frontend: Rekap pages render 'hafalan' source and missing reason; Input Nilai page: when the Tahfizh book is selected, show the info "Santri diambil dari Target Hafalan" and the UAS Tahfizh column.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 16: Rapor — finalisasi snapshot dan pembatalan
+
+**Repo:** backend + frontend. **Blocked by:** Tasks 8, 9, 12, 15.
+
+- Migrations `report_cards` (id, school_id, student_id FK, academic_year_id FK, semester, class_level_id FK nullable snapshot, status string 10 default draft, finalized_at timestamp nullable, finalized_by FK users nullable, unfinalize_reason text nullable, unfinalized_at nullable, unfinalized_by nullable, created_by, updated_by, timestamps; unique (student_id, academic_year_id, semester)) and `report_card_entries` (id, school_id, report_card_id FK cascade, subject_book_id FK, final_score decimal(5,2), breakdown json, timestamps; unique (report_card_id, subject_book_id)).
+- `App\Services\Akademik\ReportCardService`: `listForClass(AY, semester, classLevelId)` → students with status (none/draft/final), completeness (from recap); `finalize(student, AY, semester)`: recap must be complete for every book (422 "Rapor belum bisa difinalkan: masih ada nilai kosong." with the list), writes report_card (final) + entries with breakdown = the recap's per-factor array (score, weight, normalized_weight, source, is_active), inside a transaction; `show(reportCard)` returns entries from snapshot; `unfinalize(reportCard, reason)` only for super_admin role (403 otherwise), reason required, sets status draft and keeps entries (overwritten on next finalize).
+- Write-protection: a `FinalizedReportCardGuard::assertEditable(studentId, academicYearId, semester)` invoked by StudentGradeService, ClassTaskService (scores), ClassSessionService (attendance rows) and MemorizationLogService/TargetService before writing anything for that student+semester; throws a domain exception mapped to 422 "Rapor santri ini sudah final untuk semester tersebut."
+- Routes (view-grades/manage-grades): `GET /report-cards?academic_year_id&semester&class_level_id`, `GET /report-cards/{reportCard}`, `POST /report-cards/finalize`, `POST /report-cards/{reportCard}/unfinalize`.
+- Tests: finalize blocked when incomplete; snapshot contents; recap-after-final equals snapshot even after a grade change attempt (which is rejected); unfinalize by pengurus 403, by super_admin OK with reason; permissions; tenancy.
+- Frontend: page `/akademik/rapor` ("Rapor"): AY+semester+Kelas selector, table santri × (kelengkapan, status draft/final, aksi Finalkan / Lihat / Batalkan (super_admin, dialog alasan)); detail page `/akademik/rapor/:reportCardId` rendering the snapshot (per kitab table). Grade/attendance/log pages show a locked notice when the student's rapor is final (use the 422 message). Sidebar entry "Rapor".
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 17: Ekspor Rapor PDF
+
+**Repo:** backend + frontend. **Blocked by:** Task 16.
+
+- Backend: `GET /report-cards/{reportCard}/pdf` (view-grades) using the same PDF stack as the teaching schedule export (spatie/laravel-pdf + Blade view for PDF only). Content: school header with logo (reuse the export's logo helper), santri (name, class), semester, table per kitab (final score + factor breakdown), finalized date/by, footer signature lines. Only `final` report cards (422 for draft). Test asserts 200 + `application/pdf` (mirror TeachingScheduleExportTest's approach to Browsershot availability).
+- Frontend: "Unduh PDF" button on the rapor detail and list rows (final only), streaming via the existing export service pattern.
+
+**Acceptance:** pest green, eslint clean on touched files, build green.
+
+---
+
+### Task 18: Hapus kode halaman Supabase lama
+
+**Repo:** frontend only. **Blocked by:** Task 16.
+
+- Remove routes, lazy imports, pages and mobile nav entries for `/nilai/bulanan`, `/absensi/bulanan`, `/tahfidz/bulanan`, `/nilai`, `/absensi/rekap-bulanan` (pages under `src/pages/nilai`, `src/pages/absensi`, `src/pages/tahfidz`, `src/pages/admin/absensi/rekap-bulanan`) and any components/hooks used only by them (verify with grep before deleting). Keep wali-santri pages (`/absensi-anak`, `/tahfidz-anak`) untouched. Mobile bottom nav "Nilai" → `/akademik/nilai`.
+- eslint clean on touched files + `npm run build` green; grep proves no dangling imports.
+
+**Acceptance:** eslint clean on touched files, build green; sidebar and routes contain only the new pages.
