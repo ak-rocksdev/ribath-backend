@@ -16,6 +16,7 @@ class DatabaseSeeder extends Seeder
             ClassLevelSeeder::class,
             RolePermissionSeeder::class,
             SubjectCategorySeeder::class,
+            TahfizhSubjectBookSeeder::class,
             TimeSlotSeeder::class,
         ]);
     }

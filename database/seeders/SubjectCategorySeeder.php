@@ -23,6 +23,7 @@ class SubjectCategorySeeder extends Seeder
             ['slug' => 'tarikh',   'name' => 'Tarikh',   'color' => 'bg-red-100',    'sort_order' => 8],
             ['slug' => 'balaghah', 'name' => 'Balaghah', 'color' => 'bg-teal-100',   'sort_order' => 9],
             ['slug' => 'lughah',   'name' => 'Lughah',   'color' => 'bg-cyan-100',   'sort_order' => 10],
+            ['slug' => 'tahfizh',  'name' => 'Tahfizh',  'color' => 'bg-emerald-100', 'sort_order' => 11],
         ];
 
         foreach ($categories as $category) {
