@@ -5,19 +5,26 @@ namespace App\Services;
 use App\Exceptions\HasDependentsException;
 use App\Models\AcademicYear;
 use App\Models\School;
+use App\Models\TeachingSchedule;
+use App\Services\Akademik\AcademicSemesterService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
 class AcademicYearService
 {
+    public function __construct(
+        private AcademicSemesterService $academicSemesterService,
+    ) {}
+
     public function listAll(): Collection
     {
         $school = School::activeOrFail();
 
         $query = AcademicYear::where('school_id', $school->id)
+            ->with('semesters')
             ->orderByDesc('name');
 
-        if (class_exists(\App\Models\TeachingSchedule::class)) {
+        if (class_exists(TeachingSchedule::class)) {
             $query->withCount('teachingSchedules');
         }
 
@@ -34,6 +41,7 @@ class AcademicYearService
 
         return AcademicYear::where('school_id', $defaultSchool->id)
             ->where('is_active', true)
+            ->with('semesters')
             ->first();
     }
 
@@ -43,7 +51,13 @@ class AcademicYearService
 
         $data['school_id'] = $school->id;
 
-        return AcademicYear::create($data);
+        return DB::transaction(function () use ($data) {
+            $academicYear = AcademicYear::create($data);
+
+            $this->academicSemesterService->createSemestersForAcademicYear($academicYear);
+
+            return $academicYear;
+        });
     }
 
     public function updateAcademicYear(AcademicYear $academicYear, array $data): AcademicYear
@@ -56,7 +70,7 @@ class AcademicYearService
     public function deleteAcademicYear(AcademicYear $academicYear): void
     {
         // Check for teaching schedule dependents if the model/table exists
-        if (class_exists(\App\Models\TeachingSchedule::class)) {
+        if (class_exists(TeachingSchedule::class)) {
             if ($academicYear->teachingSchedules()->exists()) {
                 throw new HasDependentsException(
                     'Cannot delete academic year with existing teaching schedules'

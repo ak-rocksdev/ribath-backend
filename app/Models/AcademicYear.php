@@ -40,4 +40,18 @@ class AcademicYear extends Model
     {
         return $this->hasMany(TeachingSchedule::class);
     }
+
+    public function semesters(): HasMany
+    {
+        return $this->hasMany(AcademicSemester::class)->orderBy('semester');
+    }
+
+    public function semester(int $semester): ?AcademicSemester
+    {
+        if ($this->relationLoaded('semesters')) {
+            return $this->semesters->firstWhere('semester', $semester);
+        }
+
+        return $this->semesters()->where('semester', $semester)->first();
+    }
 }

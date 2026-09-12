@@ -7,25 +7,26 @@ use App\Http\Controllers\Api\Admin\NotificationController;
 use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\SchoolController;
 use App\Http\Controllers\Api\Admin\StudentController;
-use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\SubjectBookController;
 use App\Http\Controllers\Api\Admin\SubjectCategoryController;
+use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\TeachingScheduleController;
 use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
+use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
 use App\Http\Controllers\Api\Auth\AuthController;
+use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
-use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\FeeActivityLogController;
 use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
+use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeExceptionController;
 use App\Http\Controllers\Api\Keuangan\StudentPaymentController;
-use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
@@ -135,6 +136,11 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-academic-years');
         Route::patch('/{academicYear}/semester', [AcademicYearController::class, 'switchSemester'])
             ->middleware('permission:manage-academic-years');
+        Route::get('/{academicYear}/semesters', [AcademicSemesterController::class, 'index'])
+            ->middleware('permission:view-academic-years');
+        Route::put('/{academicYear}/semesters/{semester}', [AcademicSemesterController::class, 'update'])
+            ->middleware('permission:manage-academic-years')
+            ->whereIn('semester', ['1', '2']);
     });
 
     // Time Slots routes
