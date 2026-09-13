@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Services\Akademik\FactorScores\FactorScoreProvider;
 use App\Services\Akademik\FactorScores\FactorScoreProviderRegistry;
+use App\Services\Akademik\FactorScores\TaskFactorScoreProvider;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
@@ -22,7 +23,7 @@ class GradingServiceProvider extends ServiceProvider
      * @var array<int, class-string<FactorScoreProvider>>
      */
     public const FACTOR_SCORE_PROVIDERS = [
-        // e.g. \App\Services\Akademik\FactorScores\TaskFactorScoreProvider::class,
+        TaskFactorScoreProvider::class,
     ];
 
     public function register(): void

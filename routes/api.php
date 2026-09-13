@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
+use App\Http\Controllers\Api\Akademik\ClassTaskController;
 use App\Http\Controllers\Api\Akademik\GradableSubjectController;
 use App\Http\Controllers\Api\Akademik\GradeRecapController;
 use App\Http\Controllers\Api\Akademik\GradingFactorController;
@@ -184,6 +185,24 @@ Route::prefix('v1')->group(function () {
     Route::prefix('grade-recaps')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/class', [GradeRecapController::class, 'classSubject'])
             ->middleware('permission:view-grades');
+    });
+
+    // Class task routes (Penilaian: Tugas per Kelas × Kitab)
+    Route::prefix('class-tasks')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [ClassTaskController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::post('/', [ClassTaskController::class, 'store'])
+            ->middleware('permission:manage-grades');
+        Route::get('/{classTask}', [ClassTaskController::class, 'show'])
+            ->middleware('permission:view-grades');
+        Route::put('/{classTask}', [ClassTaskController::class, 'update'])
+            ->middleware('permission:manage-grades');
+        Route::delete('/{classTask}', [ClassTaskController::class, 'destroy'])
+            ->middleware('permission:manage-grades');
+        Route::get('/{classTask}/scores', [ClassTaskController::class, 'scores'])
+            ->middleware('permission:view-grades');
+        Route::put('/{classTask}/scores/bulk', [ClassTaskController::class, 'bulkUpsertScores'])
+            ->middleware('permission:manage-grades');
     });
 
     // Time Slots routes
