@@ -27,11 +27,14 @@ use App\Services\Akademik\Calculation\MemorizationFactorResult;
  * fixed catalogue, but a provider must not throw on it — scores NULL,
  * "Faktor hafalan tidak dikenal".
  *
- * One pair of bulk queries (targets, logs) computes every student's
- * MemorizationFactorResult once per FactorScoreContext, memoized by
- * context identity for the lifetime of this provider instance — the
- * registry calls scoresFor() once per factor (three times for the three
- * codes above), but the underlying data only needs to be read once.
+ * Stateless like AttendanceFactorScoreProvider: every scoresFor() call runs
+ * its own pair of bulk queries (targets, logs) for the given context, scoped
+ * to (school, academic_year_id, semester) and the context's students — no
+ * caching across calls or across contexts, since a provider instance can be
+ * reused for several different contexts within one process (e.g. Task 16
+ * looping students × kitab through the recap builder), and caching by
+ * context object identity would risk serving another context's stale
+ * results once PHP recycles a garbage-collected object's id.
  */
 class MemorizationFactorScoreProvider implements FactorScoreProvider
 {
@@ -55,9 +58,6 @@ class MemorizationFactorScoreProvider implements FactorScoreProvider
         'submissionQuality' => self::MESSAGE_NO_SUBMISSIONS,
         'reviewQuality' => self::MESSAGE_NO_REVIEWS,
     ];
-
-    /** @var array<int, array<string, MemorizationFactorResult>> spl_object_id(context) => student id => result */
-    private array $resultsByContextId = [];
 
     public function __construct(
         private MemorizationFactorCalculator $memorizationFactorCalculator,
@@ -91,16 +91,10 @@ class MemorizationFactorScoreProvider implements FactorScoreProvider
     }
 
     /**
-     * @return array<string, MemorizationFactorResult> student id => result, memoized per context object
+     * @return array<string, MemorizationFactorResult> student id => result
      */
     private function resultsFor(FactorScoreContext $context): array
     {
-        $contextId = spl_object_id($context);
-
-        if (isset($this->resultsByContextId[$contextId])) {
-            return $this->resultsByContextId[$contextId];
-        }
-
         $school = School::activeOrFail();
         $studentIds = $context->students->pluck('id');
 
@@ -138,8 +132,6 @@ class MemorizationFactorScoreProvider implements FactorScoreProvider
                 $reviewLogs->map(fn (MemorizationLog $log) => (float) $log->quality_score)->all(),
             );
         }
-
-        $this->resultsByContextId[$contextId] = $results;
 
         return $results;
     }

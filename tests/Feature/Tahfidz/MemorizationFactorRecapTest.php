@@ -285,3 +285,47 @@ test('an auto_from_log factor with an unrecognized code scores NULL with a gener
     expect($scores[$student->id]->score)->toBeNull();
     expect($scores[$student->id]->missingReason)->toBe('Faktor hafalan tidak dikenal');
 });
+
+test('the same provider instance scores two different contexts correctly back to back, with no stale cross-context result', function () {
+    $context = setUpMemorizationFactorRecapContext();
+
+    $studentA = factorCreateStudent($this, $context['user'], 'Santri Provider Konteks A');
+    factorCreateTarget($this, $context, $studentA, 40);
+    factorCreateLog($this, $context, $studentA, 'new', 20, 80);
+
+    $studentB = factorCreateStudent($this, $context['user'], 'Santri Provider Konteks B');
+    factorCreateTarget($this, $context, $studentB, 10);
+    factorCreateLog($this, $context, $studentB, 'new', 10, 60);
+
+    $targetHafalanFactor = GradingFactor::where('school_id', $context['school']->id)->where('code', 'target_hafalan')->firstOrFail();
+    $provider = app(MemorizationFactorScoreProvider::class);
+
+    $contextA = new FactorScoreContext(
+        academicSemester: AcademicSemester::findByPair($context['academicYear']->id, 1),
+        academicYearId: $context['academicYear']->id,
+        semester: 1,
+        classLevelId: $context['classLevel']->id,
+        subjectBookId: $context['tahfizhBook']->id,
+        students: collect([$studentA->fresh()]),
+    );
+    $contextB = new FactorScoreContext(
+        academicSemester: AcademicSemester::findByPair($context['academicYear']->id, 1),
+        academicYearId: $context['academicYear']->id,
+        semester: 1,
+        classLevelId: $context['classLevel']->id,
+        subjectBookId: $context['tahfizhBook']->id,
+        students: collect([$studentB->fresh()]),
+    );
+
+    // 20 halaman ÷ 40 target × 100 = 50.
+    $scoresA = $provider->scoresFor($targetHafalanFactor, $contextA);
+    expect($scoresA[$studentA->id]->score)->toBe(50.0);
+
+    // 10 halaman ÷ 10 target × 100 = 100 — a different santri, a different number, same provider instance.
+    $scoresB = $provider->scoresFor($targetHafalanFactor, $contextB);
+    expect($scoresB[$studentB->id]->score)->toBe(100.0);
+
+    // Re-scoring contextA on the same instance still reports A's own number, not B's.
+    $scoresAAgain = $provider->scoresFor($targetHafalanFactor, $contextA);
+    expect($scoresAAgain[$studentA->id]->score)->toBe(50.0);
+});
