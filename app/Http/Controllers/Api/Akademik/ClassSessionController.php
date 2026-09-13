@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Akademik;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Akademik\CancelClassSessionRangeRequest;
 use App\Http\Requests\Akademik\CancelClassSessionRequest;
 use App\Http\Requests\Akademik\ListClassSessionsRequest;
 use App\Http\Requests\Akademik\ShowExpectedStudentsRequest;
@@ -72,6 +73,15 @@ class ClassSessionController extends Controller
             'Pertemuan berhasil dibatalkan',
             $cancellation['created'] ? 201 : 200
         );
+    }
+
+    public function cancelRange(CancelClassSessionRangeRequest $request): JsonResponse
+    {
+        $data = $request->validated();
+
+        $result = $this->classSessionService->cancelDateRange($data['start_date'], $data['end_date'], $data['reason']);
+
+        return $this->successResponse($result, 'Libur massal berhasil diproses');
     }
 
     public function expectedStudents(ShowExpectedStudentsRequest $request, TeachingSchedule $teachingSchedule): JsonResponse

@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
+use App\Http\Controllers\Api\Akademik\AttendanceAlertController;
 use App\Http\Controllers\Api\Akademik\ClassSessionController;
 use App\Http\Controllers\Api\Akademik\ClassTaskController;
 use App\Http\Controllers\Api\Akademik\GradableSubjectController;
@@ -220,6 +221,14 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-attendance');
         Route::put('/{classSession}/attendances', [ClassSessionController::class, 'updateAttendances'])
             ->middleware('permission:manage-attendance');
+        Route::post('/cancel-range', [ClassSessionController::class, 'cancelRange'])
+            ->middleware('permission:manage-attendance');
+    });
+
+    // Attendance alerts (Pertemuan Bolong)
+    Route::prefix('attendance-alerts')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [AttendanceAlertController::class, 'index'])
+            ->middleware('permission:view-attendance');
     });
 
     // Time Slots routes

@@ -4,8 +4,8 @@ namespace App\Services\Akademik;
 
 use App\Models\AcademicSemester;
 use App\Models\TeachingSchedule;
+use App\Support\BusinessDate;
 use Carbon\CarbonInterface;
-use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -33,7 +33,7 @@ final class SessionDatePolicy
 {
     public const ATTENDANCE_EDIT_WINDOW_DAYS = 14;
 
-    public const BUSINESS_TIMEZONE = 'Asia/Jakarta';
+    public const BUSINESS_TIMEZONE = BusinessDate::TIMEZONE;
 
     public const MESSAGE_WEEKDAY_MISMATCH = 'Tanggal tidak sesuai hari jadwal.';
 
@@ -154,16 +154,31 @@ final class SessionDatePolicy
      */
     public function isInsideEditWindow(CarbonInterface $sessionDate): bool
     {
-        return $sessionDate->toDateString() >= Carbon::now(self::BUSINESS_TIMEZONE)->subDays(self::ATTENDANCE_EDIT_WINDOW_DAYS)->toDateString();
+        return $sessionDate->toDateString() >= BusinessDate::daysAgoString(self::ATTENDANCE_EDIT_WINDOW_DAYS);
     }
 
     /**
-     * Today's date in WIB, as 'Y-m-d'. Same as now('Asia/Jakarta') but via
-     * Carbon directly, so the policy also runs in container-less unit tests.
+     * Libur massal (Task 11) is a planning action: a future date is always
+     * fine for everyone (holidays are announced ahead of time), but a
+     * non-super_admin still may not declare a NEW cancelled session for a
+     * past date older than the edit window. A super_admin is unrestricted
+     * within the semester (checked separately by the caller).
+     */
+    public function isPastEditWindowForRangeCancel(CarbonInterface $sessionDate, bool $actorIsSuperAdmin): bool
+    {
+        if ($actorIsSuperAdmin || $this->isFutureDate($sessionDate)) {
+            return false;
+        }
+
+        return ! $this->isInsideEditWindow($sessionDate);
+    }
+
+    /**
+     * Today's date in WIB, as 'Y-m-d'.
      */
     private function businessToday(): string
     {
-        return Carbon::now(self::BUSINESS_TIMEZONE)->toDateString();
+        return BusinessDate::todayString();
     }
 
     private function actorDateViolation(CarbonInterface $sessionDate, bool $actorIsSuperAdmin, bool $isEditingExistingSession): ?string

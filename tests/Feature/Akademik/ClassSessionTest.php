@@ -847,6 +847,157 @@ test('cancelling requires a reason of at most 255 characters', function () {
         ->assertJsonPath('errors.reason.0', 'Alasan pembatalan maksimal 255 karakter.');
 });
 
+// ── POST /class-sessions/cancel-range (libur massal) ──────────────────────
+
+test('libur massal creates a cancelled session for every matching date in range', function () {
+    $context = setUpClassSessionContext();
+
+    $response = $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-01',
+        'end_date' => '2025-09-08',
+        'reason' => 'Libur Maulid Nabi',
+    ]);
+
+    $response->assertOk()
+        ->assertJsonPath('data.created', 2)
+        ->assertJsonPath('data.skipped', 0)
+        ->assertJsonCount(2, 'data.created_items')
+        ->assertJsonCount(0, 'data.skipped_items');
+
+    expect(collect($response->json('data.created_items'))->pluck('session_date')->all())->toBe(['2025-09-01', '2025-09-08']);
+    expect(ClassSession::where('status', 'cancelled')->pluck('cancel_reason')->unique()->all())->toBe(['Libur Maulid Nabi']);
+    expect(ClassSession::where('status', 'cancelled')->count())->toBe(2);
+});
+
+test('libur massal skips a date that already has a live session, held or cancelled', function () {
+    $context = setUpClassSessionContext();
+    $ali = classSessionCreateStudent($this, $context['user'], 'Ali');
+    classSessionRecordThroughEndpoint($this, $context['user'], $context['schedule'], '2025-09-01', classSessionAttendanceRows([$ali]));
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel', [
+        'teaching_schedule_id' => $context['schedule']->id,
+        'session_date' => '2025-09-08',
+        'reason' => 'Sudah dibatalkan',
+    ])->assertCreated();
+
+    $response = $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-01',
+        'end_date' => '2025-09-08',
+        'reason' => 'Libur',
+    ]);
+
+    $response->assertOk()
+        ->assertJsonPath('data.created', 0)
+        ->assertJsonPath('data.skipped', 2);
+    expect(collect($response->json('data.skipped_items'))->pluck('session_date')->all())->toBe(['2025-09-01', '2025-09-08']);
+    // The already-held session must not have been converted to cancelled.
+    expect(ClassSession::whereDate('session_date', '2025-09-01')->value('status'))->toBe('held');
+});
+
+test('libur massal is clamped to the active semesters range and rejects a range entirely outside it', function () {
+    $context = setUpClassSessionContext();
+
+    // Overlaps the semester end (2025-12-31): only the in-range Mondays are created.
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-12-29',
+        'end_date' => '2026-01-05',
+        'reason' => 'Libur akhir semester',
+    ])
+        ->assertOk()
+        ->assertJsonPath('data.created', 1)
+        ->assertJsonPath('data.created_items.0.session_date', '2025-12-29');
+
+    // Entirely after the semester end.
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2026-02-01',
+        'end_date' => '2026-02-28',
+        'reason' => 'Libur',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['start_date']);
+});
+
+test('libur massal rejects a range longer than 62 days', function () {
+    $context = setUpClassSessionContext();
+
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-07-01',
+        'end_date' => '2025-09-15', // 77 days
+        'reason' => 'Libur',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['end_date']);
+});
+
+test('libur massal lets a non-super_admin declare a future holiday but not backdate past the edit window', function () {
+    $context = setUpClassSessionContext();
+
+    // Future: allowed for a non-super_admin here, unlike recording a single session.
+    $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-15',
+        'end_date' => '2025-09-15',
+        'reason' => 'Libur mendadak',
+    ])
+        ->assertOk()
+        ->assertJsonPath('data.created', 1);
+
+    // 2025-08-25 is 16 days back — outside the 14-day window (today − 14 = 2025-08-27).
+    $response = $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-08-25',
+        'end_date' => '2025-08-25',
+        'reason' => 'Libur telat',
+    ]);
+    $response->assertOk()
+        ->assertJsonPath('data.created', 0)
+        ->assertJsonPath('data.skipped', 1);
+
+    // A super_admin is unrestricted within the semester.
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-08-25',
+        'end_date' => '2025-08-25',
+        'reason' => 'Libur telat oleh super admin',
+    ])
+        ->assertOk()
+        ->assertJsonPath('data.created', 1);
+});
+
+test('libur massal validates its request shape', function () {
+    $context = setUpClassSessionContext();
+
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-08',
+        'end_date' => '2025-09-01',
+        'reason' => 'Libur',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['end_date']);
+
+    $this->actingAs($context['user'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-01',
+        'end_date' => '2025-09-08',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonPath('errors.reason.0', 'Alasan libur wajib diisi.');
+});
+
+test('libur massal requires manage-attendance', function () {
+    $context = setUpClassSessionContext();
+
+    $viewOnlyUser = User::factory()->create();
+    $viewOnlyUser->givePermissionTo('view-attendance');
+
+    $this->actingAs($viewOnlyUser)->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-01',
+        'end_date' => '2025-09-08',
+        'reason' => 'Libur',
+    ])->assertForbidden();
+
+    $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel-range', [
+        'start_date' => '2025-09-01',
+        'end_date' => '2025-09-08',
+        'reason' => 'Libur',
+    ])->assertOk();
+});
+
 // ── GET /class-sessions, GET /class-sessions/{classSession} ───────────────
 
 test('sessions are listed per semester with filters and attendance summaries', function () {

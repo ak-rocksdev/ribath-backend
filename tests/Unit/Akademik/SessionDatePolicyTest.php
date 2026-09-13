@@ -103,6 +103,20 @@ test('day 14 back is the last editable day and day 15 is rejected', function () 
     expect($policy->violationForAttendanceEdit(Carbon::parse('2025-08-26'), false))->toBe(SessionDatePolicy::MESSAGE_EDIT_WINDOW);
 });
 
+test('libur massal range-cancel allows any future date for everyone, but bounds a non-super_admin to the edit window in the past', function () {
+    $policy = new SessionDatePolicy;
+
+    // Future dates: fine for everyone (a planning action, unlike recording).
+    expect($policy->isPastEditWindowForRangeCancel(Carbon::parse('2025-09-15'), false))->toBeFalse();
+    expect($policy->isPastEditWindowForRangeCancel(Carbon::parse('2025-09-15'), true))->toBeFalse();
+    // Today and inside the 14-day window: fine for a non-super_admin.
+    expect($policy->isPastEditWindowForRangeCancel(Carbon::parse('2025-09-10'), false))->toBeFalse();
+    expect($policy->isPastEditWindowForRangeCancel(Carbon::parse('2025-08-27'), false))->toBeFalse();
+    // Outside the window in the past: blocked for a non-super_admin, fine for a super_admin.
+    expect($policy->isPastEditWindowForRangeCancel(Carbon::parse('2025-08-26'), false))->toBeTrue();
+    expect($policy->isPastEditWindowForRangeCancel(Carbon::parse('2025-08-26'), true))->toBeFalse();
+});
+
 test('today is the WIB (Asia/Jakarta) date, not the UTC one', function () {
     // 2025-09-09 23:30 UTC = Wednesday 2025-09-10 06:30 WIB.
     Carbon::setTestNow(Carbon::parse('2025-09-09 23:30:00', 'UTC'));
