@@ -122,7 +122,7 @@ function classTaskCreateStudent($testCase, User $user, string $fullName, string 
 /**
  * Same as classTaskCreateStudent(), with a caller-chosen entry_date — for
  * "late" students who join the class after some tasks already exist
- * (TaskExpectationRule).
+ * (EnrollmentDateRule).
  */
 function classTaskCreateStudentWithEntryDate($testCase, User $user, string $fullName, string $entryDate, string $classLevelSlug = 'tamhidi'): Student
 {

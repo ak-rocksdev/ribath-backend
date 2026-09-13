@@ -6,14 +6,14 @@ use App\Models\ClassTask;
 use App\Models\GradingFactor;
 use App\Models\Student;
 use App\Models\StudentTaskScore;
-use App\Services\Akademik\Calculation\TaskExpectationRule;
+use App\Services\Akademik\Calculation\EnrollmentDateRule;
 
 /**
  * Scores the "tugas" (manual_periodic) factor: per student, the average of
  * student_task_scores.score across the non-soft-deleted class_tasks of the
  * context's class × kitab × semester that are *expected* of that student —
  * a task dated before the student's entry_date is not expected of them
- * (TaskExpectationRule) and is excluded from both the average and the
+ * (EnrollmentDateRule) and is excluded from both the average and the
  * "any unscored task" check, exactly as if it did not exist for them.
  *
  * NULL (never 0), with a reason, when: no task is expected for the student
@@ -52,7 +52,7 @@ class TaskFactorScoreProvider implements FactorScoreProvider
             )->all();
         }
 
-        $taskExpectationRule = new TaskExpectationRule;
+        $enrollmentDateRule = new EnrollmentDateRule;
 
         $scoresByStudentId = StudentTaskScore::query()
             ->whereIn('class_task_id', $tasks->pluck('id'))
@@ -60,8 +60,8 @@ class TaskFactorScoreProvider implements FactorScoreProvider
             ->get(['student_id', 'class_task_id', 'score'])
             ->groupBy('student_id');
 
-        return $context->students->mapWithKeys(function (Student $student) use ($tasks, $scoresByStudentId, $taskExpectationRule) {
-            $expectedTasks = $tasks->filter(fn (ClassTask $task) => $taskExpectationRule->isExpectedFor($task, $student));
+        return $context->students->mapWithKeys(function (Student $student) use ($tasks, $scoresByStudentId, $enrollmentDateRule) {
+            $expectedTasks = $tasks->filter(fn (ClassTask $task) => $enrollmentDateRule->isExpectedOn($student, $task->task_date));
 
             if ($expectedTasks->isEmpty()) {
                 return [$student->id => new FactorScore(null, self::MESSAGE_NO_TASKS)];

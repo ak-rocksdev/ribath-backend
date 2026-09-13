@@ -7,7 +7,7 @@ use App\Models\ClassTask;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentTaskScore;
-use App\Services\Akademik\Calculation\TaskExpectationRule;
+use App\Services\Akademik\Calculation\EnrollmentDateRule;
 use App\Services\Akademik\Validation\PercentScoreValidator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -24,7 +24,7 @@ use Illuminate\Validation\ValidationException;
  * updated_by set) instead of being deleted.
  *
  * A task is not "expected" of a student who joined the class after it was
- * assigned (TaskExpectationRule: task_date before the student's
+ * assigned (EnrollmentDateRule: task_date before the student's
  * entry_date) — such a student is excluded from that task's
  * scored_count/student_count and their score cell is rejected by
  * upsertScores(); the frontend grid shows it as "Belum masuk" instead of
@@ -155,7 +155,7 @@ class ClassTaskService
      * id — enough for a scoring grid (santri × one score column).
      *
      * `not_yet_enrolled_student_ids` lists students who joined the class
-     * after this task's task_date (TaskExpectationRule) — the frontend
+     * after this task's task_date (EnrollmentDateRule) — the frontend
      * shows their cell as "Belum masuk" instead of an editable score, and
      * they are excluded from `class_task.scored_count`/`student_count`.
      */
@@ -174,9 +174,9 @@ class ClassTaskService
             ->filter(fn (StudentTaskScore $score) => $score->score !== null)
             ->keys();
 
-        $taskExpectationRule = new TaskExpectationRule;
+        $enrollmentDateRule = new EnrollmentDateRule;
         $notYetEnrolledStudentIds = $students
-            ->reject(fn (Student $student) => $taskExpectationRule->isExpectedFor($task, $student))
+            ->reject(fn (Student $student) => $enrollmentDateRule->isExpectedOn($student, $task->task_date))
             ->pluck('id')
             ->values();
 
@@ -203,9 +203,9 @@ class ClassTaskService
         $classStudents = $this->studentGradeService->listClassStudents($task->class_level_id);
         $classStudentIds = $classStudents->pluck('id')->flip();
 
-        $taskExpectationRule = new TaskExpectationRule;
+        $enrollmentDateRule = new EnrollmentDateRule;
         $expectedStudentIds = $classStudents
-            ->filter(fn (Student $student) => $taskExpectationRule->isExpectedFor($task, $student))
+            ->filter(fn (Student $student) => $enrollmentDateRule->isExpectedOn($student, $task->task_date))
             ->pluck('id')
             ->flip();
 
@@ -287,7 +287,7 @@ class ClassTaskService
     /**
      * @param  array<int, array{student_id: string, score: mixed}>  $rows
      * @param  Collection<string, int>  $classStudentIds  every student of the class
-     * @param  Collection<string, int>  $expectedStudentIds  students this task is expected of (TaskExpectationRule)
+     * @param  Collection<string, int>  $expectedStudentIds  students this task is expected of (EnrollmentDateRule)
      *
      * @throws ValidationException
      */
@@ -339,9 +339,9 @@ class ClassTaskService
     {
         $students ??= $this->studentGradeService->listClassStudents($task->class_level_id);
 
-        $taskExpectationRule = new TaskExpectationRule;
+        $enrollmentDateRule = new EnrollmentDateRule;
         $expectedStudentIds = $students
-            ->filter(fn (Student $student) => $taskExpectationRule->isExpectedFor($task, $student))
+            ->filter(fn (Student $student) => $enrollmentDateRule->isExpectedOn($student, $task->task_date))
             ->pluck('id');
 
         $scoredStudentIds ??= StudentTaskScore::query()
