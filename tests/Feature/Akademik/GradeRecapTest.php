@@ -141,8 +141,11 @@ function recapSaveManualScores($testCase, array $context, array $scoresByStudent
 }
 
 /**
- * Stores a level_1_4 factor score (Adab/Keaktifan) directly: its input page
- * arrives with Task 7, the recap only reads student_grades.score.
+ * Stores a level_1_4 factor score (Adab/Keaktifan) directly, bypassing the
+ * bulk endpoint's level→score conversion (Task 7) — useful when a test only
+ * cares about the recap math and wants an exact score. See the dedicated
+ * "saved through the real bulk endpoint" test below for the conversion
+ * itself.
  */
 function recapStoreLevelScore(array $context, Student $student, string $factorCode, int $scaleLevel, float $score): void
 {
@@ -307,6 +310,22 @@ test('class recap computes the final score once every counted factor is filled',
 
     $response->assertJsonPath('data.summary.complete_count', 2);
     expect(collect($response->json('data.factors'))->firstWhere('code', 'absensi')['is_active'])->toBeFalse();
+});
+
+test('a level saved through the real bulk endpoint (Task 7) shows up in the class recap with its converted score', function () {
+    $context = setUpGradeRecapContext();
+    $ali = recapCreateStudent($this, $context['user'], 'Ali');
+
+    // Adab & Keaktifan (Task 7): the bulk endpoint now stores the level's
+    // converted score, and the recap reads it from student_grades.score
+    // like any other manual factor — no recap-side change was needed.
+    recapSaveManualScores($this, $context, [$ali->id => ['adab' => 3, 'keaktifan' => 4]]);
+
+    $response = $this->actingAs($context['user'])->getJson(recapQuery($context))->assertOk();
+    $aliRow = recapRowFor($response->json('data.rows'), $ali);
+
+    expect(recapFactor($aliRow, 'adab'))->toMatchArray(['score' => 85.0, 'source' => 'manual', 'is_missing' => false]);
+    expect(recapFactor($aliRow, 'keaktifan'))->toMatchArray(['score' => 100.0, 'source' => 'manual', 'is_missing' => false]);
 });
 
 // ── Normalization (spec §4.2) ────────────────────────────────────────────
