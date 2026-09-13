@@ -5,7 +5,10 @@ namespace App\Services\Akademik;
 use App\Models\AcademicSemester;
 use App\Models\ClassTask;
 use App\Models\School;
+use App\Models\Student;
 use App\Models\StudentTaskScore;
+use App\Services\Akademik\Calculation\TaskExpectationRule;
+use App\Services\Akademik\Validation\PercentScoreValidator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +22,13 @@ use Illuminate\Validation\ValidationException;
  * every row is validated first (errors keyed "<student_id>"), then one
  * transaction writes the rows; a cleared score keeps its row (NULL,
  * updated_by set) instead of being deleted.
+ *
+ * A task is not "expected" of a student who joined the class after it was
+ * assigned (TaskExpectationRule: task_date before the student's
+ * entry_date) — such a student is excluded from that task's
+ * scored_count/student_count and their score cell is rejected by
+ * upsertScores(); the frontend grid shows it as "Belum masuk" instead of
+ * an editable cell.
  */
 class ClassTaskService
 {
@@ -26,13 +36,9 @@ class ClassTaskService
 
     public const MESSAGE_STUDENT_NOT_IN_CLASS = 'Santri tidak terdaftar di kelas ini.';
 
+    public const MESSAGE_STUDENT_NOT_YET_ENROLLED = 'Santri belum masuk kelas pada tanggal tugas ini.';
+
     public const MESSAGE_DUPLICATE_STUDENT = 'Santri tercantum lebih dari sekali.';
-
-    public const MESSAGE_SCORE_NOT_NUMERIC = 'Nilai harus berupa angka.';
-
-    public const MESSAGE_SCORE_OUT_OF_RANGE = 'Nilai harus antara 0 dan 100.';
-
-    public const MESSAGE_SCORE_TOO_MANY_DECIMALS = 'Nilai maksimal 2 angka desimal.';
 
     public function __construct(
         private StudentGradeService $studentGradeService,
@@ -48,7 +54,7 @@ class ClassTaskService
     {
         $this->studentGradeService->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
 
-        $studentCount = $this->studentGradeService->listClassStudents($classLevelId)->count();
+        $students = $this->studentGradeService->listClassStudents($classLevelId);
 
         $tasks = ClassTask::query()
             ->where('school_id', School::activeOrFail()->id)
@@ -56,13 +62,22 @@ class ClassTaskService
             ->where('semester', $semester)
             ->where('class_level_id', $classLevelId)
             ->where('subject_book_id', $subjectBookId)
-            ->withCount(['scores as scored_count' => fn ($query) => $query->whereNotNull('score')])
             ->orderByDesc('task_date')
             ->orderByDesc('created_at')
             ->get();
 
+        // One query for every task's scored student ids (not just a count),
+        // so present() can exclude students who joined after each task's
+        // own task_date — a per-task filter a single withCount() can't express.
+        $scoredStudentIdsByTaskId = StudentTaskScore::query()
+            ->whereIn('class_task_id', $tasks->pluck('id'))
+            ->whereNotNull('score')
+            ->get(['class_task_id', 'student_id'])
+            ->groupBy('class_task_id')
+            ->map(fn (Collection $scores) => $scores->pluck('student_id'));
+
         return $tasks
-            ->map(fn (ClassTask $task) => $this->present($task, $studentCount, $task->scored_count))
+            ->map(fn (ClassTask $task) => $this->present($task, $students, $scoredStudentIdsByTaskId->get($task->id) ?? collect()))
             ->all();
     }
 
@@ -95,9 +110,9 @@ class ClassTaskService
             'updated_by' => auth()->id(),
         ]);
 
-        $studentCount = $this->studentGradeService->listClassStudents($data['class_level_id'])->count();
+        $students = $this->studentGradeService->listClassStudents($data['class_level_id']);
 
-        return $this->present($task, $studentCount, 0);
+        return $this->present($task, $students, collect());
     }
 
     /**
@@ -123,9 +138,9 @@ class ClassTaskService
             $task->save();
         }
 
-        $studentCount = $this->studentGradeService->listClassStudents($task->class_level_id)->count();
+        $students = $this->studentGradeService->listClassStudents($task->class_level_id);
 
-        return $this->present($task, $studentCount);
+        return $this->present($task, $students);
     }
 
     public function delete(ClassTask $task): void
@@ -138,6 +153,11 @@ class ClassTaskService
     /**
      * The class's students and this task's stored scores, keyed by student
      * id — enough for a scoring grid (santri × one score column).
+     *
+     * `not_yet_enrolled_student_ids` lists students who joined the class
+     * after this task's task_date (TaskExpectationRule) — the frontend
+     * shows their cell as "Belum masuk" instead of an editable score, and
+     * they are excluded from `class_task.scored_count`/`student_count`.
      */
     public function getScores(ClassTask $task): array
     {
@@ -150,12 +170,23 @@ class ClassTaskService
             ->get()
             ->keyBy('student_id');
 
+        $scoredStudentIds = $scores
+            ->filter(fn (StudentTaskScore $score) => $score->score !== null)
+            ->keys();
+
+        $taskExpectationRule = new TaskExpectationRule;
+        $notYetEnrolledStudentIds = $students
+            ->reject(fn (Student $student) => $taskExpectationRule->isExpectedFor($task, $student))
+            ->pluck('id')
+            ->values();
+
         return [
-            'class_task' => $this->present($task, $students->count(), $scores->filter(fn (StudentTaskScore $score) => $score->score !== null)->count()),
+            'class_task' => $this->present($task, $students, $scoredStudentIds),
             'students' => $students->map(fn ($student) => $this->studentGradeService->presentClassStudent($student))->values()->all(),
             'scores' => $students->mapWithKeys(
                 fn ($student) => [$student->id => $scores->has($student->id) ? $this->presentScore($scores->get($student->id)) : null]
             )->all(),
+            'not_yet_enrolled_student_ids' => $notYetEnrolledStudentIds->all(),
         ];
     }
 
@@ -169,9 +200,16 @@ class ClassTaskService
      */
     public function upsertScores(ClassTask $task, array $rows): array
     {
-        $classStudentIds = $this->studentGradeService->listClassStudents($task->class_level_id)->pluck('id')->flip();
+        $classStudents = $this->studentGradeService->listClassStudents($task->class_level_id);
+        $classStudentIds = $classStudents->pluck('id')->flip();
 
-        $this->assertScoreRowsAreValid($rows, $classStudentIds);
+        $taskExpectationRule = new TaskExpectationRule;
+        $expectedStudentIds = $classStudents
+            ->filter(fn (Student $student) => $taskExpectationRule->isExpectedFor($task, $student))
+            ->pluck('id')
+            ->flip();
+
+        $this->assertScoreRowsAreValid($rows, $classStudentIds, $expectedStudentIds);
 
         $schoolId = School::activeOrFail()->id;
         $userId = auth()->id();
@@ -248,14 +286,16 @@ class ClassTaskService
 
     /**
      * @param  array<int, array{student_id: string, score: mixed}>  $rows
-     * @param  Collection<string, int>  $classStudentIds
+     * @param  Collection<string, int>  $classStudentIds  every student of the class
+     * @param  Collection<string, int>  $expectedStudentIds  students this task is expected of (TaskExpectationRule)
      *
      * @throws ValidationException
      */
-    private function assertScoreRowsAreValid(array $rows, Collection $classStudentIds): void
+    private function assertScoreRowsAreValid(array $rows, Collection $classStudentIds, Collection $expectedStudentIds): void
     {
         $errors = [];
         $seenStudentIds = [];
+        $percentScoreValidator = new PercentScoreValidator;
 
         foreach ($rows as $row) {
             $studentId = $row['student_id'];
@@ -273,7 +313,13 @@ class ClassTaskService
                 continue;
             }
 
-            $scoreError = $this->validateScore($row['score']);
+            if (! $expectedStudentIds->has($studentId)) {
+                $errors[$studentId] = self::MESSAGE_STUDENT_NOT_YET_ENROLLED;
+
+                continue;
+            }
+
+            $scoreError = $percentScoreValidator->validate($row['score']);
 
             if ($scoreError !== null) {
                 $errors[$studentId] = $scoreError;
@@ -285,34 +331,26 @@ class ClassTaskService
         }
     }
 
-    private function validateScore(mixed $score): ?string
-    {
-        if ($score === null) {
-            return null;
-        }
-
-        if (is_bool($score) || ! is_numeric($score)) {
-            return self::MESSAGE_SCORE_NOT_NUMERIC;
-        }
-
-        $numericScore = (float) $score;
-
-        if ($numericScore < 0 || $numericScore > 100) {
-            return self::MESSAGE_SCORE_OUT_OF_RANGE;
-        }
-
-        if (abs(round($numericScore, 2) - $numericScore) > 1e-9) {
-            return self::MESSAGE_SCORE_TOO_MANY_DECIMALS;
-        }
-
-        return null;
-    }
-
     /**
+     * @param  Collection<int, Student>|null  $students  the class's students; queried fresh when omitted (e.g. a single-task `show`)
      * @return array<string, mixed>
      */
-    public function present(ClassTask $task, ?int $studentCount = null, ?int $scoredCount = null): array
+    public function present(ClassTask $task, ?Collection $students = null, ?Collection $scoredStudentIds = null): array
     {
+        $students ??= $this->studentGradeService->listClassStudents($task->class_level_id);
+
+        $taskExpectationRule = new TaskExpectationRule;
+        $expectedStudentIds = $students
+            ->filter(fn (Student $student) => $taskExpectationRule->isExpectedFor($task, $student))
+            ->pluck('id');
+
+        $scoredStudentIds ??= StudentTaskScore::query()
+            ->where('class_task_id', $task->id)
+            ->whereNotNull('score')
+            ->pluck('student_id');
+
+        $scoredCount = $scoredStudentIds->intersect($expectedStudentIds)->count();
+
         return [
             'id' => $task->id,
             'class_level_id' => $task->class_level_id,
@@ -322,8 +360,8 @@ class ClassTaskService
             'title' => $task->title,
             'task_date' => $task->task_date?->toDateString(),
             'description' => $task->description,
-            'scored_count' => $scoredCount ?? $task->scores()->whereNotNull('score')->count(),
-            'student_count' => $studentCount ?? $this->studentGradeService->listClassStudents($task->class_level_id)->count(),
+            'scored_count' => $scoredCount,
+            'student_count' => $expectedStudentIds->count(),
             'created_by' => $task->created_by,
             'updated_by' => $task->updated_by,
             'updated_by_name' => $task->updater?->name,

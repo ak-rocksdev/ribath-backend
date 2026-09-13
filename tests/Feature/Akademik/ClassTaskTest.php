@@ -119,6 +119,28 @@ function classTaskCreateStudent($testCase, User $user, string $fullName, string 
     return Student::findOrFail($response->json('data.id'));
 }
 
+/**
+ * Same as classTaskCreateStudent(), with a caller-chosen entry_date — for
+ * "late" students who join the class after some tasks already exist
+ * (TaskExpectationRule).
+ */
+function classTaskCreateStudentWithEntryDate($testCase, User $user, string $fullName, string $entryDate, string $classLevelSlug = 'tamhidi'): Student
+{
+    $response = $testCase->actingAs($user)->postJson('/api/v1/students', [
+        'full_name' => $fullName,
+        'birth_date' => '2012-05-15',
+        'gender' => 'L',
+        'program' => 'regular',
+        'entry_date' => $entryDate,
+        'class_level' => $classLevelSlug,
+        'address' => 'Jl. Contoh No. 1',
+    ]);
+
+    $response->assertCreated();
+
+    return Student::findOrFail($response->json('data.id'));
+}
+
 function classTaskListQuery(array $context): string
 {
     return '/api/v1/class-tasks?'.http_build_query([
@@ -399,6 +421,43 @@ test('a tasks scores list the class students with any stored score', function ()
     expect($response->json('data.class_task.student_count'))->toBe(2);
 });
 
+test('a tasks scores marks a student who joined after task_date as not yet enrolled, excluded from the counts', function () {
+    $context = setUpClassTaskContext();
+    $ali = classTaskCreateStudent($this, $context['user'], 'Ali'); // entry_date 2025-07-01
+    $task = createClassTaskThroughEndpoint($this, $context['user'], $context, ['task_date' => '2025-08-01']);
+    // Joins after the task's date.
+    $lateStudent = classTaskCreateStudentWithEntryDate($this, $context['user'], 'Zaid Terlambat', '2025-08-15');
+
+    $this->actingAs($context['user'])->putJson("/api/v1/class-tasks/{$task->id}/scores/bulk", [
+        'rows' => [['student_id' => $ali->id, 'score' => 90]],
+    ])->assertOk();
+
+    $response = $this->actingAs($context['user'])->getJson("/api/v1/class-tasks/{$task->id}/scores");
+
+    $response->assertOk();
+    expect($response->json('data.not_yet_enrolled_student_ids'))->toBe([$lateStudent->id]);
+    // Ali counts; the late student does not, on either side of the ratio.
+    expect($response->json('data.class_task.scored_count'))->toBe(1);
+    expect($response->json('data.class_task.student_count'))->toBe(1);
+});
+
+test('class tasks list computes student_count per task, excluding students who join after that tasks date', function () {
+    $context = setUpClassTaskContext();
+    classTaskCreateStudent($this, $context['user'], 'Ali'); // entry_date 2025-07-01
+    $earlyTask = createClassTaskThroughEndpoint($this, $context['user'], $context, ['title' => 'Tugas Awal', 'task_date' => '2025-08-01']);
+    $lateTask = createClassTaskThroughEndpoint($this, $context['user'], $context, ['title' => 'Tugas Akhir', 'task_date' => '2025-11-01']);
+    // Joins between the two tasks.
+    classTaskCreateStudentWithEntryDate($this, $context['user'], 'Zaid Terlambat', '2025-09-01');
+
+    $response = $this->actingAs($context['user'])->getJson(classTaskListQuery($context));
+    $response->assertOk();
+
+    $tasks = collect($response->json('data'));
+    // Only Ali was enrolled for the early task; both are enrolled for the later one.
+    expect($tasks->firstWhere('title', 'Tugas Awal')['student_count'])->toBe(1);
+    expect($tasks->firstWhere('title', 'Tugas Akhir')['student_count'])->toBe(2);
+});
+
 // ── PUT /class-tasks/{classTask}/scores/bulk ──────────────────────────────
 
 test('bulk scores creates then a resubmit updates without duplicates', function () {
@@ -490,6 +549,25 @@ test('bulk scores rejects a student outside the class, a duplicate student, and 
     $errors = $response->json('errors');
     expect($errors)->toHaveKey($ali->id);
     expect($errors)->toHaveKey($otherClassStudent->id);
+    expect(StudentTaskScore::count())->toBe(0);
+});
+
+test('bulk scores rejects a score for a student who joined the class after the tasks date', function () {
+    $context = setUpClassTaskContext();
+    $ali = classTaskCreateStudent($this, $context['user'], 'Ali'); // entry_date 2025-07-01
+    $task = createClassTaskThroughEndpoint($this, $context['user'], $context, ['task_date' => '2025-08-01']);
+    $lateStudent = classTaskCreateStudentWithEntryDate($this, $context['user'], 'Zaid Terlambat', '2025-08-15');
+
+    $response = $this->actingAs($context['user'])->putJson("/api/v1/class-tasks/{$task->id}/scores/bulk", [
+        'rows' => [
+            ['student_id' => $ali->id, 'score' => 80],
+            ['student_id' => $lateStudent->id, 'score' => 90],
+        ],
+    ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors([$lateStudent->id => 'Santri belum masuk kelas pada tanggal tugas ini.']);
+    // All-or-nothing: Ali's valid row is not saved either.
     expect(StudentTaskScore::count())->toBe(0);
 });
 
@@ -605,4 +683,43 @@ test('a soft-deleted task is excluded from the Tugas average', function () {
     $factor = classTaskRecapFactor($response->json('data.rows'), $ali->id, 'tugas');
     // Only taskOne's 60 counts now that taskTwo is soft-deleted.
     expect($factor['score'])->toEqual(60.0);
+});
+
+test('the recap Tugas factor for a late student averages only the tasks expected after their entry_date', function () {
+    $context = setUpClassTaskContext();
+    $taskBeforeEntry = createClassTaskThroughEndpoint($this, $context['user'], $context, ['title' => 'Sebelum Masuk', 'task_date' => '2025-08-01']);
+    $taskAfterEntry = createClassTaskThroughEndpoint($this, $context['user'], $context, ['title' => 'Setelah Masuk', 'task_date' => '2025-09-10']);
+    // Joins after taskBeforeEntry but before taskAfterEntry.
+    $lateStudent = classTaskCreateStudentWithEntryDate($this, $context['user'], 'Zaid Terlambat', '2025-09-01');
+
+    // A score on the task before entry would be rejected by the bulk
+    // endpoint (see the dedicated 422 test) — only the expected task is scored.
+    $this->actingAs($context['user'])->putJson("/api/v1/class-tasks/{$taskAfterEntry->id}/scores/bulk", [
+        'rows' => [['student_id' => $lateStudent->id, 'score' => 90]],
+    ])->assertOk();
+
+    $response = $this->actingAs($context['user'])->getJson(classTaskRecapQuery($context));
+    $response->assertOk();
+
+    $factor = classTaskRecapFactor($response->json('data.rows'), $lateStudent->id, 'tugas');
+    // Complete and equal to the one expected task's score — taskBeforeEntry
+    // does not drag it down or count as unscored.
+    expect($factor['score'])->toEqual(90.0);
+    expect($factor['is_missing'])->toBeFalse();
+    expect($factor['missing_reason'])->toBeNull();
+});
+
+test('the recap Tugas factor is null (Belum ada tugas) for a late student when every task predates their entry', function () {
+    $context = setUpClassTaskContext();
+    createClassTaskThroughEndpoint($this, $context['user'], $context, ['title' => 'Tugas Lama', 'task_date' => '2025-08-01']);
+    // Joins after the only task that exists.
+    $lateStudent = classTaskCreateStudentWithEntryDate($this, $context['user'], 'Zaid Terlambat', '2025-09-01');
+
+    $response = $this->actingAs($context['user'])->getJson(classTaskRecapQuery($context));
+    $response->assertOk();
+
+    $factor = classTaskRecapFactor($response->json('data.rows'), $lateStudent->id, 'tugas');
+    expect($factor['score'])->toBeNull();
+    expect($factor['is_missing'])->toBeTrue();
+    expect($factor['missing_reason'])->toBe('Belum ada tugas');
 });

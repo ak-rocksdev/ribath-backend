@@ -10,6 +10,7 @@ use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
 use App\Models\SubjectBook;
+use App\Services\Akademik\Validation\PercentScoreValidator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -366,25 +367,7 @@ class StudentGradeService
             return $this->validateLevelCell($score);
         }
 
-        if ($score === null) {
-            return null;
-        }
-
-        if (is_bool($score) || ! is_numeric($score)) {
-            return 'Nilai harus berupa angka.';
-        }
-
-        $numericScore = (float) $score;
-
-        if ($numericScore < 0 || $numericScore > 100) {
-            return 'Nilai harus antara 0 dan 100.';
-        }
-
-        if (abs(round($numericScore, 2) - $numericScore) > 1e-9) {
-            return 'Nilai maksimal 2 angka desimal.';
-        }
-
-        return null;
+        return (new PercentScoreValidator)->validate($score);
     }
 
     private function validateLevelCell(mixed $level): ?string
