@@ -22,13 +22,18 @@ use Illuminate\Validation\ValidationException;
  *    and old sessions, with `requiresOverrideWarning()` telling the UI to
  *    warn.
  *
- * "Today" is Carbon::today() in the app timezone, so tests freeze it with
+ * "Today" is the pesantren's business date in WIB (Asia/Jakarta), not the
+ * app timezone (UTC): a Ba'da Subuh session at 05:45 WIB is still "today"
+ * although UTC is on the previous day (global constraint "Today in WIB";
+ * precedent: Keuangan requests, Bill model). Tests freeze it with
  * Carbon::setTestNow(). Pure: it only reads the attributes of the models
  * it is given, never queries.
  */
 final class SessionDatePolicy
 {
     public const ATTENDANCE_EDIT_WINDOW_DAYS = 14;
+
+    public const BUSINESS_TIMEZONE = 'Asia/Jakarta';
 
     public const MESSAGE_WEEKDAY_MISMATCH = 'Tanggal tidak sesuai hari jadwal.';
 
@@ -141,7 +146,7 @@ final class SessionDatePolicy
 
     public function isFutureDate(CarbonInterface $sessionDate): bool
     {
-        return $sessionDate->toDateString() > Carbon::today()->toDateString();
+        return $sessionDate->toDateString() > $this->businessToday();
     }
 
     /**
@@ -149,7 +154,16 @@ final class SessionDatePolicy
      */
     public function isInsideEditWindow(CarbonInterface $sessionDate): bool
     {
-        return $sessionDate->toDateString() >= Carbon::today()->subDays(self::ATTENDANCE_EDIT_WINDOW_DAYS)->toDateString();
+        return $sessionDate->toDateString() >= Carbon::now(self::BUSINESS_TIMEZONE)->subDays(self::ATTENDANCE_EDIT_WINDOW_DAYS)->toDateString();
+    }
+
+    /**
+     * Today's date in WIB, as 'Y-m-d'. Same as now('Asia/Jakarta') but via
+     * Carbon directly, so the policy also runs in container-less unit tests.
+     */
+    private function businessToday(): string
+    {
+        return Carbon::now(self::BUSINESS_TIMEZONE)->toDateString();
     }
 
     private function actorDateViolation(CarbonInterface $sessionDate, bool $actorIsSuperAdmin, bool $isEditingExistingSession): ?string

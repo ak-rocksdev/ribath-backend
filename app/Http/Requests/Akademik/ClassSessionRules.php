@@ -32,6 +32,23 @@ final class ClassSessionRules
     }
 
     /**
+     * Any schedule of this school, active or not — for cancelling: an
+     * existing session may be cancelled after its schedule was deactivated;
+     * ClassSessionService still requires an active schedule to create a
+     * new cancelled session.
+     *
+     * @return array<int, mixed>
+     */
+    public static function schoolTeachingScheduleRules(School $school): array
+    {
+        return [
+            'required',
+            'uuid',
+            Rule::exists('teaching_schedules', 'id')->where('school_id', $school->id),
+        ];
+    }
+
+    /**
      * @return array<int, string>
      */
     public static function sessionDateRules(): array

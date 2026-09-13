@@ -95,3 +95,22 @@ test('editing attendances checks only the actor limits, not the weekday or semes
     expect($policy->violationForAttendanceEdit(Carbon::parse('2025-08-25'), true))->toBeNull();
     expect($policy->violationForAttendanceEdit(Carbon::parse('2025-09-15'), true))->toBeNull();
 });
+
+test('day 14 back is the last editable day and day 15 is rejected', function () {
+    $policy = new SessionDatePolicy;
+
+    expect($policy->violationForAttendanceEdit(Carbon::parse('2025-08-27'), false))->toBeNull();
+    expect($policy->violationForAttendanceEdit(Carbon::parse('2025-08-26'), false))->toBe(SessionDatePolicy::MESSAGE_EDIT_WINDOW);
+});
+
+test('today is the WIB (Asia/Jakarta) date, not the UTC one', function () {
+    // 2025-09-09 23:30 UTC = Wednesday 2025-09-10 06:30 WIB.
+    Carbon::setTestNow(Carbon::parse('2025-09-09 23:30:00', 'UTC'));
+    $policy = new SessionDatePolicy;
+
+    expect($policy->isFutureDate(Carbon::parse('2025-09-10')))->toBeFalse();
+    expect($policy->isFutureDate(Carbon::parse('2025-09-11')))->toBeTrue();
+    expect($policy->isInsideEditWindow(Carbon::parse('2025-08-27')))->toBeTrue();
+    expect($policy->isInsideEditWindow(Carbon::parse('2025-08-26')))->toBeFalse();
+    expect($policy->requiresOverrideWarning(Carbon::parse('2025-09-10'), true, false))->toBeFalse();
+});

@@ -48,6 +48,8 @@ class ClassSessionService
 
     public const MESSAGE_ATTENDANCE_INCOMPLETE = 'Absensi belum lengkap untuk santri ini.';
 
+    public const MESSAGE_SCHEDULE_INACTIVE = 'Jadwal mengajar tidak ditemukan atau tidak aktif.';
+
     private const SESSION_RELATIONS = [
         'classLevel:id,slug,label',
         'subjectBook:id,title',
@@ -280,8 +282,13 @@ class ClassSessionService
     /**
      * Marks the schedule's date as a Pertemuan Dibatalkan: creates a
      * cancelled session, or converts the existing one (its attendance rows
-     * are kept; calculators ignore rows of cancelled sessions). Converting
-     * an existing session is an edit for the date rules.
+     * are kept; calculators ignore rows of cancelled sessions).
+     *
+     * A NEW cancelled session gets the full recording checks: an active
+     * schedule, its weekday, the semester range and the actor limits.
+     * Converting an EXISTING session is an edit of a fact recorded earlier,
+     * so — like editing its attendances — only the actor limits apply: the
+     * schedule may have changed day or been deactivated since.
      *
      * @return array{result: array{class_session: array<string, mixed>, attendances: array<int, array<string, mixed>>, requires_override_warning: bool}, created: bool}
      *
@@ -294,13 +301,21 @@ class ClassSessionService
         $existingSession = $this->findLiveSession($schedule, $sessionDateAsCarbon);
         $isEditingExistingSession = $existingSession !== null;
 
-        $this->sessionDatePolicy->assertAllowed(
-            $schedule,
-            $sessionDateAsCarbon,
-            $this->academicSemesterForScheduleOrFail($schedule),
-            $actorIsSuperAdmin,
-            $isEditingExistingSession,
-        );
+        if ($isEditingExistingSession) {
+            $this->sessionDatePolicy->assertAttendanceEditAllowed($existingSession->session_date, $actorIsSuperAdmin);
+        } else {
+            if (! $schedule->is_active) {
+                throw ValidationException::withMessages(['teaching_schedule_id' => self::MESSAGE_SCHEDULE_INACTIVE]);
+            }
+
+            $this->sessionDatePolicy->assertAllowed(
+                $schedule,
+                $sessionDateAsCarbon,
+                $this->academicSemesterForScheduleOrFail($schedule),
+                $actorIsSuperAdmin,
+                false,
+            );
+        }
 
         $userId = auth()->id();
 

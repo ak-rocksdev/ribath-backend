@@ -504,6 +504,57 @@ test('super_admin may edit a session older than 14 days, flagged with an overrid
         ->assertJsonPath('data.requires_override_warning', true);
 });
 
+// ── "Today" is the WIB (Asia/Jakarta) business date ──────────────────────
+
+test('today is the WIB date: at 06:30 WIB (23:30 UTC the day before) the WIB day can be recorded without a warning', function () {
+    $context = setUpClassSessionContext();
+    $ali = classSessionCreateStudent($this, $context['user'], 'Ali');
+    $firstWednesdaySchedule = classSessionCreateSchedule(
+        $context['school'], $context['academicYear'], $context['classLevel'], $context['subjectBook'], $context['teacher'], 'wednesday',
+    );
+    $secondWednesdaySchedule = classSessionCreateSchedule(
+        $context['school'], $context['academicYear'], $context['classLevel'], $context['subjectBook'], $context['teacher'], 'wednesday',
+    );
+
+    // 2025-09-09 23:30 UTC = Wednesday 2025-09-10 06:30 WIB (the Ba'da Subuh slot).
+    Carbon::setTestNow(Carbon::parse('2025-09-09 23:30:00', 'UTC'));
+
+    $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/class-sessions', classSessionRecordPayload($firstWednesdaySchedule, '2025-09-10', classSessionAttendanceRows([$ali])))
+        ->assertCreated()
+        ->assertJsonPath('data.requires_override_warning', false);
+
+    $this->actingAs($context['user'])
+        ->postJson('/api/v1/class-sessions', classSessionRecordPayload($secondWednesdaySchedule, '2025-09-10', classSessionAttendanceRows([$ali])))
+        ->assertCreated()
+        ->assertJsonPath('data.requires_override_warning', false);
+});
+
+test('the 14-day edit window is counted from the WIB date', function () {
+    $context = setUpClassSessionContext();
+    $ali = classSessionCreateStudent($this, $context['user'], 'Ali');
+    $tuesdaySchedule = classSessionCreateSchedule(
+        $context['school'], $context['academicYear'], $context['classLevel'], $context['subjectBook'], $context['teacher'], 'tuesday',
+    );
+    $wednesdaySchedule = classSessionCreateSchedule(
+        $context['school'], $context['academicYear'], $context['classLevel'], $context['subjectBook'], $context['teacher'], 'wednesday',
+    );
+    $dayFifteen = classSessionRecordThroughEndpoint($this, $context['pengurus'], $tuesdaySchedule, '2025-08-26', classSessionAttendanceRows([$ali]));
+    $dayFourteen = classSessionRecordThroughEndpoint($this, $context['pengurus'], $wednesdaySchedule, '2025-08-27', classSessionAttendanceRows([$ali]));
+
+    // WIB today = 2025-09-10 → window starts 2025-08-27 (in UTC it would still be 2025-09-09 → 2025-08-26).
+    Carbon::setTestNow(Carbon::parse('2025-09-09 23:30:00', 'UTC'));
+
+    $this->actingAs($context['pengurus'])
+        ->putJson("/api/v1/class-sessions/{$dayFifteen->id}/attendances", ['attendances' => classSessionAttendanceRows([$ali], 'absent')])
+        ->assertUnprocessable()
+        ->assertJsonPath('errors.session_date.0', 'Perubahan absensi hanya boleh sampai 14 hari ke belakang.');
+
+    $this->actingAs($context['pengurus'])
+        ->putJson("/api/v1/class-sessions/{$dayFourteen->id}/attendances", ['attendances' => classSessionAttendanceRows([$ali], 'absent')])
+        ->assertOk();
+});
+
 // ── Expected students (entry_date rule) ───────────────────────────────────
 
 test('a student who entered after the session date is not expected at that session', function () {
@@ -724,6 +775,57 @@ test('cancelling follows the same date rules', function () {
     $cancel($context['user'], '2025-09-15')
         ->assertCreated()
         ->assertJsonPath('data.requires_override_warning', true);
+});
+
+test('an existing session can be cancelled after its schedule changes day or is deactivated', function () {
+    $context = setUpClassSessionContext();
+    $ali = classSessionCreateStudent($this, $context['user'], 'Ali');
+    $mondaySession = classSessionRecordThroughEndpoint($this, $context['pengurus'], $context['schedule'], '2025-09-08', classSessionAttendanceRows([$ali]));
+    $earlierMondaySession = classSessionRecordThroughEndpoint($this, $context['pengurus'], $context['schedule'], '2025-09-01', classSessionAttendanceRows([$ali]));
+
+    $context['schedule']->update(['day_of_week' => 'tuesday']);
+
+    $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel', [
+        'teaching_schedule_id' => $context['schedule']->id,
+        'session_date' => '2025-09-08',
+        'reason' => 'Libur',
+    ])
+        ->assertOk()
+        ->assertJsonPath('data.class_session.id', $mondaySession->id)
+        ->assertJsonPath('data.class_session.status', 'cancelled');
+
+    $context['schedule']->update(['is_active' => false]);
+
+    $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel', [
+        'teaching_schedule_id' => $context['schedule']->id,
+        'session_date' => '2025-09-01',
+        'reason' => 'Libur',
+    ])
+        ->assertOk()
+        ->assertJsonPath('data.class_session.id', $earlierMondaySession->id)
+        ->assertJsonPath('data.class_session.status', 'cancelled');
+
+    // A NEW cancelled session still needs an active schedule on its weekday.
+    $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel', [
+        'teaching_schedule_id' => $context['schedule']->id,
+        'session_date' => '2025-09-09',
+        'reason' => 'Libur',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonPath('errors.teaching_schedule_id.0', 'Jadwal mengajar tidak ditemukan atau tidak aktif.');
+});
+
+test('a new cancelled session still checks the schedule weekday', function () {
+    $context = setUpClassSessionContext();
+    $context['schedule']->update(['day_of_week' => 'tuesday']);
+
+    $this->actingAs($context['pengurus'])->postJson('/api/v1/class-sessions/cancel', [
+        'teaching_schedule_id' => $context['schedule']->id,
+        'session_date' => '2025-09-08',
+        'reason' => 'Libur',
+    ])
+        ->assertUnprocessable()
+        ->assertJsonPath('errors.session_date.0', 'Tanggal tidak sesuai hari jadwal.');
 });
 
 test('cancelling requires a reason of at most 255 characters', function () {
