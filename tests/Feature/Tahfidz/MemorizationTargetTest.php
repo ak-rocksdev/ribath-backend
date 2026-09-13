@@ -12,11 +12,13 @@ use App\Models\Teacher;
 use App\Models\User;
 use App\Services\Akademik\AcademicSemesterService;
 use App\Services\Akademik\GradingDefaultsInstaller;
+use App\Services\Tahfidz\MemorizationTargetService;
 use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 use Database\Seeders\SubjectCategorySeeder;
 use Database\Seeders\TahfizhSubjectBookSeeder;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Seeds roles, the active school, its class levels, the grading defaults
@@ -314,6 +316,53 @@ test('after a Target Hafalan is deleted, a new one can be created for the same s
 
     $second->assertCreated();
     expect($second->json('data.target_pages'))->toEqual(50.0);
+});
+
+test('a concurrent insert that wins the race past assertNoExistingTarget() still gets the same 422, not a 500', function () {
+    $context = setUpMemorizationTargetContext();
+    $student = targetCreateStudent($this, $context['user'], 'Santri Race');
+
+    // Simulates a second, concurrent request that committed its INSERT
+    // between this request's assertNoExistingTarget() pre-check and its own
+    // INSERT — the partial unique index (uniq_active_memorization_target_per_semester)
+    // is what actually rejects the second insert; MemorizationTargetService's
+    // private createTargetOrFailAsDuplicate() is what must turn that DB
+    // exception into the same 422 the pre-check reports, instead of an
+    // uncaught 500. Called directly (bypassing assertNoExistingTarget(), which
+    // ran and passed for the "first" request before the race happened) so the
+    // test exercises the real catch(UniqueConstraintViolationException) block
+    // against a real unique-index violation, not a mocked one.
+    MemorizationTarget::create([
+        'school_id' => $context['school']->id,
+        'student_id' => $student->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'target_pages' => 30,
+        'teacher_id' => $context['teacher']->id,
+    ]);
+
+    $service = app(MemorizationTargetService::class);
+    $createTargetOrFailAsDuplicate = new ReflectionMethod($service, 'createTargetOrFailAsDuplicate');
+    $createTargetOrFailAsDuplicate->setAccessible(true);
+
+    $racingInsert = fn () => MemorizationTarget::create([
+        'school_id' => $context['school']->id,
+        'student_id' => $student->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'target_pages' => 40,
+        'teacher_id' => $context['teacher']->id,
+    ]);
+
+    try {
+        $createTargetOrFailAsDuplicate->invoke($service, $racingInsert);
+        $this->fail('Expected a ValidationException to be thrown.');
+    } catch (ValidationException $exception) {
+        expect($exception->errors())->toBe(['student_id' => [MemorizationTargetService::MESSAGE_DUPLICATE_TARGET]]);
+    }
+
+    // Only the pre-existing ("winning") row was persisted — the racing insert never committed.
+    expect(MemorizationTarget::where('student_id', $student->id)->count())->toBe(1);
 });
 
 // ── List filters ─────────────────────────────────────────────────────────

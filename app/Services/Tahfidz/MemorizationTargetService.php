@@ -6,6 +6,7 @@ use App\Models\AcademicSemester;
 use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Services\Akademik\StudentGradeService;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Validation\ValidationException;
 
@@ -69,7 +70,7 @@ class MemorizationTargetService
         $this->assertSemesterIsConfigured($academicYearId, $semester);
         $this->assertNoExistingTarget($data['student_id'], $academicYearId, $semester);
 
-        $target = MemorizationTarget::create([
+        $target = $this->createTargetOrFailAsDuplicate(fn () => MemorizationTarget::create([
             'school_id' => $school->id,
             'student_id' => $data['student_id'],
             'academic_year_id' => $academicYearId,
@@ -79,9 +80,28 @@ class MemorizationTargetService
             'notes' => $data['notes'] ?? null,
             'created_by' => auth()->id(),
             'updated_by' => auth()->id(),
-        ]);
+        ]));
 
         return $this->present($target->fresh(['student.classLevel', 'teacher', 'updater']));
+    }
+
+    /**
+     * A concurrent request can pass assertNoExistingTarget()'s pre-check at
+     * the same time; the partial unique index then rejects the second
+     * insert, which is reported as the same 422 instead of an uncaught 500
+     * (same pattern as ClassSessionService::createSessionOrFailAsDuplicate()).
+     *
+     * @param  callable(): MemorizationTarget  $createTarget
+     *
+     * @throws ValidationException
+     */
+    private function createTargetOrFailAsDuplicate(callable $createTarget): MemorizationTarget
+    {
+        try {
+            return $createTarget();
+        } catch (UniqueConstraintViolationException) {
+            throw ValidationException::withMessages(['student_id' => self::MESSAGE_DUPLICATE_TARGET]);
+        }
     }
 
     /**
@@ -190,6 +210,7 @@ class MemorizationTargetService
     private function assertNoExistingTarget(string $studentId, string $academicYearId, int $semester): void
     {
         $exists = MemorizationTarget::query()
+            ->where('school_id', School::activeOrFail()->id)
             ->where('student_id', $studentId)
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
