@@ -3,7 +3,6 @@
 namespace App\Services\Akademik;
 
 use App\Models\ClassLevel;
-use App\Models\GradingTemplate;
 use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Models\Student;
@@ -207,18 +206,19 @@ class GradableSubjectService
         return $this->classLevelsWithMemorizationTargets($academicYearId, $semester, $classLevelId)->isNotEmpty();
     }
 
+    public function __construct(
+        private TahfizhSubjectBookResolver $tahfizhSubjectBookResolver,
+    ) {}
+
     /**
      * The active school's subject book whose grading template code is
      * `tahfizh` (with the template eager-loaded), or null if the school
-     * has no such book yet.
+     * has no such book yet. Delegates to TahfizhSubjectBookResolver — the
+     * one place this lookup lives, also used by Tahfidz\MemorizationLogService.
      */
     private function tahfizhSubjectBook(): ?SubjectBook
     {
-        return SubjectBook::query()
-            ->where('school_id', School::activeOrFail()->id)
-            ->whereHas('gradingTemplate', fn (Builder $query) => $query->where('code', GradingTemplate::CODE_TAHFIZH))
-            ->with('gradingTemplate:id,code,name')
-            ->first();
+        return $this->tahfizhSubjectBookResolver->resolve();
     }
 
     /**

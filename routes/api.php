@@ -41,6 +41,7 @@ use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
 use App\Http\Controllers\Api\Public\StudentCompletionController;
+use App\Http\Controllers\Api\Tahfidz\MemorizationLogController;
 use App\Http\Controllers\Api\Tahfidz\MemorizationTargetController;
 use Illuminate\Support\Facades\Route;
 
@@ -103,6 +104,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/{student}/status', [StudentController::class, 'updateStatus'])->middleware('permission:edit-students');
         Route::post('/{student}/documents', [StudentController::class, 'uploadDocument'])->middleware('permission:edit-students');
         Route::delete('/{student}/documents/{documentType}', [StudentController::class, 'deleteDocument'])->middleware('permission:edit-students');
+        Route::get('/{student}/memorization-progress', [MemorizationLogController::class, 'progress'])
+            ->middleware('permission:view-memorization');
     });
 
     // Schools routes
@@ -248,6 +251,18 @@ Route::prefix('v1')->group(function () {
         Route::put('/{memorizationTarget}', [MemorizationTargetController::class, 'update'])
             ->middleware('permission:manage-memorization');
         Route::delete('/{memorizationTarget}', [MemorizationTargetController::class, 'destroy'])
+            ->middleware('permission:manage-memorization');
+    });
+
+    // Log Setoran dan Murajaah routes (Tahfidz: dated Halaman entries + Progres)
+    Route::prefix('memorization-logs')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [MemorizationLogController::class, 'index'])
+            ->middleware('permission:view-memorization');
+        Route::post('/', [MemorizationLogController::class, 'store'])
+            ->middleware('permission:manage-memorization');
+        Route::put('/{memorizationLog}', [MemorizationLogController::class, 'update'])
+            ->middleware('permission:manage-memorization');
+        Route::delete('/{memorizationLog}', [MemorizationLogController::class, 'destroy'])
             ->middleware('permission:manage-memorization');
     });
 
