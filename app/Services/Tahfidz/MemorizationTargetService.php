@@ -2,9 +2,11 @@
 
 namespace App\Services\Tahfidz;
 
+use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
 use App\Models\MemorizationTarget;
 use App\Models\School;
+use App\Services\Akademik\FinalizedReportCardGuard;
 use App\Services\Akademik\StudentGradeService;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -27,6 +29,10 @@ class MemorizationTargetService
     public const MESSAGE_DUPLICATE_TARGET = 'Santri ini sudah memiliki Target Hafalan semester ini.';
 
     public const DEFAULT_PER_PAGE = 15;
+
+    public function __construct(
+        private FinalizedReportCardGuard $finalizedReportCardGuard,
+    ) {}
 
     /**
      * @return LengthAwarePaginator<int, array<string, mixed>>
@@ -60,6 +66,7 @@ class MemorizationTargetService
      * @param  array{academic_year_id: string, semester: int, student_id: string, target_pages?: float|int|string|null, target_juz?: float|int|string|null, teacher_id: string, notes?: string|null}  $data
      *
      * @throws ValidationException
+     * @throws FinalizedReportCardException the santri's Rapor is final for the semester
      */
     public function create(array $data): array
     {
@@ -67,6 +74,7 @@ class MemorizationTargetService
         $academicYearId = $data['academic_year_id'];
         $semester = (int) $data['semester'];
 
+        $this->finalizedReportCardGuard->assertEditable($data['student_id'], $academicYearId, $semester);
         $this->assertSemesterIsConfigured($academicYearId, $semester);
         $this->assertNoExistingTarget($data['student_id'], $academicYearId, $semester);
 
@@ -110,9 +118,13 @@ class MemorizationTargetService
      * fixed at creation (same convention as ClassTask).
      *
      * @param  array{target_pages?: float|int|string|null, target_juz?: float|int|string|null, teacher_id?: string, notes?: string|null}  $data
+     *
+     * @throws FinalizedReportCardException the santri's Rapor is final for the target's semester
      */
     public function update(MemorizationTarget $target, array $data): array
     {
+        $this->finalizedReportCardGuard->assertEditable($target->student_id, $target->academic_year_id, $target->semester);
+
         $target->fill([
             'target_pages' => $this->hasTargetInput($data) ? $this->resolveTargetPages($data) : $target->target_pages,
             'teacher_id' => $data['teacher_id'] ?? $target->teacher_id,
@@ -131,9 +143,13 @@ class MemorizationTargetService
      * Soft-deletes the target. Allowed even if the student already has
      * Tahfizh grades that semester — the grades remain (audit trail), the
      * student simply drops out of the Tahfizh roster from now on.
+     *
+     * @throws FinalizedReportCardException the santri's Rapor is final for the target's semester
      */
     public function delete(MemorizationTarget $target): void
     {
+        $this->finalizedReportCardGuard->assertEditable($target->student_id, $target->academic_year_id, $target->semester);
+
         $target->updated_by = auth()->id();
         $target->save();
         $target->delete();

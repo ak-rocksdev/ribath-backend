@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\Akademik\GradeRecapController;
 use App\Http\Controllers\Api\Akademik\GradingFactorController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
+use App\Http\Controllers\Api\Akademik\ReportCardController;
 use App\Http\Controllers\Api\Akademik\StudentGradeController;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\BillController;
@@ -194,6 +195,18 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-grades');
         Route::get('/student/{student}', [GradeRecapController::class, 'student'])
             ->middleware('permission:view-grades');
+    });
+
+    // Rapor routes (Penilaian: finalization snapshot and its cancellation — ADR 0001)
+    Route::prefix('report-cards')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [ReportCardController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::post('/finalize', [ReportCardController::class, 'finalize'])
+            ->middleware('permission:manage-grades');
+        Route::get('/{reportCard}', [ReportCardController::class, 'show'])
+            ->middleware('permission:view-grades');
+        Route::post('/{reportCard}/unfinalize', [ReportCardController::class, 'unfinalize'])
+            ->middleware('permission:manage-grades');
     });
 
     // Class task routes (Penilaian: Tugas per Kelas × Kitab)

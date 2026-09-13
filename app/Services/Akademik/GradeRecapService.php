@@ -8,6 +8,7 @@ use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
 use App\Models\MemorizationTarget;
+use App\Models\ReportCard;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
@@ -48,10 +49,14 @@ class GradeRecapService
         private MidtermExclusionRule $midtermExclusionRule,
         private GradeWeightNormalizer $gradeWeightNormalizer,
         private FinalGradeCalculator $finalGradeCalculator,
+        private ReportCardSnapshot $reportCardSnapshot,
     ) {}
 
     /**
-     * Recap of one Kelas × Kitab in one semester akademik.
+     * Recap of one Kelas × Kitab in one semester akademik. A santri whose
+     * Rapor is final gets the frozen row instead of the live one
+     * (substituteFinalizedRows); every row carries `is_finalized`,
+     * `is_snapshot` and `finalized_at`.
      *
      * @return array<string, mixed> see the "recap response shape" in the Task 6 report
      *
@@ -74,7 +79,12 @@ class GradeRecapService
             subjectBookId: $subjectBookId,
             students: $students,
         );
-        $rows = $this->buildFactorRows($academicSemester, $templateFactors, $factorScoreContext);
+        $rows = $this->substituteFinalizedRows(
+            $this->buildFactorRows($academicSemester, $templateFactors, $factorScoreContext),
+            $academicYearId,
+            $semester,
+            $subjectBookId,
+        );
 
         $semesterNormalizedWeights = $this->gradeWeightNormalizer->normalize(
             $this->weightInputs($templateFactors),
@@ -116,32 +126,104 @@ class GradeRecapService
     }
 
     /**
-     * Recap of every gradable kitab of one santri's class, in one semester
-     * akademik: for each Kelas × Kitab pair the class is scheduled for
-     * (GradableSubjectService), the same per-factor breakdown as the class
-     * recap restricted to this one santri, plus an overall `is_complete`
-     * (every gradable subject complete, and at least one exists).
+     * Recap of every gradable kitab of one santri in one semester akademik.
+     *
+     * A santri whose Rapor is final for the semester gets the snapshot
+     * (ADR 0001, spec US90): same shape, `subjects` built from the frozen
+     * report_card_entries, `is_finalized: true` with `finalized_at` and
+     * `finalized_by_name`. Everyone else gets the live recap
+     * (liveRecapForStudent) with `is_finalized: false`; `report_card_id` is
+     * the rapor's id whenever one exists (final or draft), else null.
+     *
+     * @return array<string, mixed>
+     *
+     * @throws ValidationException see liveRecapForStudent()
+     */
+    public function recapForStudent(Student $student, string $academicYearId, int $semester): array
+    {
+        $reportCard = ReportCard::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('student_id', $student->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->first();
+
+        if ($reportCard?->isFinal()) {
+            $reportCard->load(['entries', 'finalizer:id,name']);
+
+            return [
+                'student' => $this->presentRecapStudent($student),
+                'academic_year_id' => $academicYearId,
+                'semester' => $semester,
+                'uts_enabled' => (bool) $this->reportCardSnapshot->utsEnabled($reportCard),
+                'subjects' => $this->reportCardSnapshot->subjects($reportCard),
+                'is_complete' => true,
+                'is_finalized' => true,
+                'report_card_id' => $reportCard->id,
+                'finalized_at' => $reportCard->finalized_at?->toJSON(),
+                'finalized_by_name' => $reportCard->finalizer?->name,
+            ];
+        }
+
+        return array_merge($this->liveRecapForStudent($student, $academicYearId, $semester), [
+            'is_finalized' => false,
+            'report_card_id' => $reportCard?->id,
+            'finalized_at' => null,
+            'finalized_by_name' => null,
+        ]);
+    }
+
+    /**
+     * The LIVE recap of every gradable kitab of one santri's class, in one
+     * semester akademik, whatever the santri's Rapor status: for each
+     * Kelas × Kitab pair the class is gradable for (GradableSubjectService),
+     * the same per-factor breakdown as the class recap restricted to this
+     * one santri, plus an overall `is_complete` (every gradable subject
+     * complete, and at least one exists). This is what finalization freezes.
      *
      * A kitab without a grading template is still listed (`is_gradable:
      * false`, no factors) rather than failing the whole recap.
      *
-     * @return array<string, mixed> see the "recapForStudent" shape in the Task 9 report
+     * @return array{student: array<string, mixed>, academic_year_id: string, semester: int, uts_enabled: bool, subjects: array<int, array<string, mixed>>, is_complete: bool}
      *
      * @throws ValidationException MESSAGE_STUDENT_WITHOUT_CLASS, or the same rejections as recapForClassSubject
      */
-    public function recapForStudent(Student $student, string $academicYearId, int $semester): array
+    public function liveRecapForStudent(Student $student, string $academicYearId, int $semester): array
     {
         if ($student->class_level_id === null) {
             throw ValidationException::withMessages(['class_level_id' => self::MESSAGE_STUDENT_WITHOUT_CLASS]);
         }
 
-        $pairs = $this->filterTahfizhPairForStudent(
-            $this->gradableSubjectService->listForSemester($academicYearId, $semester, $student->class_level_id),
-            $student,
-            $academicYearId,
-            $semester,
-        );
-        $gradablePairs = collect($pairs)->where('is_gradable', true);
+        $classRecap = $this->liveSubjectsForClassStudents(collect([$student]), $student->class_level_id, $academicYearId, $semester);
+
+        return [
+            'student' => $this->presentRecapStudent($student),
+            'academic_year_id' => $academicYearId,
+            'semester' => $semester,
+            'uts_enabled' => $classRecap['uts_enabled'],
+            'subjects' => $classRecap['subjects_by_student_id'][$student->id],
+            'is_complete' => $classRecap['is_complete_by_student_id'][$student->id],
+        ];
+    }
+
+    /**
+     * liveRecapForStudent()'s `subjects` and `is_complete` for several santri
+     * of ONE class at once, batched per kitab: every factor score is fetched
+     * once per kitab for all of them (one FactorScoreContext per kitab), so
+     * the query count grows with the number of kitab, not of santri.
+     *
+     * The Tahfizh pair (ADR 0003) only belongs to santri with a
+     * non-deleted Target Hafalan for the semester; the others don't get it.
+     *
+     * @param  Collection<int, Student>  $students  santri of $classLevelId
+     * @return array{uts_enabled: bool, subjects_by_student_id: array<string, array<int, array<string, mixed>>>, is_complete_by_student_id: array<string, bool>}
+     *
+     * @throws ValidationException MESSAGE_SEMESTER_NOT_CONFIGURED
+     */
+    public function liveSubjectsForClassStudents(Collection $students, string $classLevelId, string $academicYearId, int $semester): array
+    {
+        $pairs = $this->gradableSubjectService->listForSemester($academicYearId, $semester, $classLevelId);
+        $rostersByPairIndex = $this->gradedRostersByPairIndex($pairs, $students, $academicYearId, $semester);
 
         // Resolved once for the whole class, then handed to every kitab
         // below — resolveClassSubjectContext() would otherwise re-fetch the
@@ -151,7 +233,7 @@ class GradeRecapService
         $academicSemester = null;
         $templateFactorsByTemplateId = [];
 
-        if ($gradablePairs->isNotEmpty()) {
+        if ($rostersByPairIndex !== []) {
             $academicSemester = AcademicSemester::findByPair($academicYearId, $semester);
 
             if ($academicSemester === null) {
@@ -164,78 +246,136 @@ class GradeRecapService
             $templateFactorsByTemplateId = $this->loadTemplateFactorsByTemplateId(
                 $academicYearId,
                 $semester,
-                $gradablePairs->pluck('grading_template.id')->unique()->values()->all(),
+                collect($rostersByPairIndex)->keys()->map(fn (int $pairIndex) => $pairs[$pairIndex]['grading_template']['id'])->unique()->values()->all(),
             );
         }
 
-        $subjects = collect($pairs)
-            ->map(fn (array $pair) => $this->buildStudentSubjectRow($student, $semester, $pair, $academicSemester, $templateFactorsByTemplateId))
-            ->values()
-            ->all();
+        $rowsByPairIndex = [];
+        foreach ($rostersByPairIndex as $pairIndex => $roster) {
+            $pair = $pairs[$pairIndex];
 
-        $gradableSubjects = collect($subjects)->where('is_gradable', true);
+            /** @var Collection<int, GradingTemplateFactor> $templateFactors */
+            $templateFactors = $templateFactorsByTemplateId[$pair['grading_template']['id']] ?? collect();
+
+            if ($templateFactors->isEmpty()) {
+                throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
+            }
+
+            $factorScoreContext = new FactorScoreContext(
+                academicSemester: $academicSemester,
+                academicYearId: $academicYearId,
+                semester: $semester,
+                classLevelId: $pair['class_level_id'],
+                subjectBookId: $pair['subject_book_id'],
+                students: $roster,
+            );
+
+            $rowsByPairIndex[$pairIndex] = collect($this->buildFactorRows($academicSemester, $templateFactors, $factorScoreContext))
+                ->keyBy(fn (array $row) => $row['student']['id']);
+        }
+
+        $subjectsByStudentId = [];
+        $isCompleteByStudentId = [];
+
+        foreach ($students as $student) {
+            $subjects = [];
+
+            foreach ($pairs as $pairIndex => $pair) {
+                if (! $pair['is_gradable']) {
+                    $subjects[] = $this->presentUngradableSubject($pair);
+
+                    continue;
+                }
+
+                $row = isset($rowsByPairIndex[$pairIndex]) ? $rowsByPairIndex[$pairIndex]->get($student->id) : null;
+
+                if ($row !== null) {
+                    $subjects[] = $this->presentGradableSubject($pair, $row);
+                }
+            }
+
+            $gradableSubjects = collect($subjects)->where('is_gradable', true);
+            $subjectsByStudentId[$student->id] = $subjects;
+            $isCompleteByStudentId[$student->id] = $gradableSubjects->isNotEmpty()
+                && $gradableSubjects->every(fn (array $subject) => $subject['is_complete']);
+        }
 
         return [
-            'student' => $this->presentRecapStudent($student),
-            'academic_year_id' => $academicYearId,
-            'semester' => $semester,
             'uts_enabled' => (bool) $academicSemester?->uts_enabled,
-            'subjects' => $subjects,
-            'is_complete' => $gradableSubjects->isNotEmpty() && $gradableSubjects->every(fn (array $subject) => $subject['is_complete']),
+            'subjects_by_student_id' => $subjectsByStudentId,
+            'is_complete_by_student_id' => $isCompleteByStudentId,
         ];
     }
 
     /**
-     * One row of recapForStudent's `subjects`: a gradable pair reuses the
-     * class recap's own factor-row builder restricted to this one santri,
-     * from the semester/template-factors already resolved once by the
-     * caller; an ungradable pair (kitab without a template) is presented
-     * empty rather than failing the whole recap.
+     * Who is graded for each gradable pair among $students: every one of
+     * them for a regular kitab; for the Tahfizh kitab only those with a
+     * non-deleted Target Hafalan for the semester (ADR 0003 — the class may
+     * be gradable via a classmate's target). Pairs nobody is graded for are
+     * left out. A class with no Tahfizh pair skips the target query.
      *
-     * @param  array<string, mixed>  $pair  one GradableSubjectService::listForSemester() entry
-     * @param  array<string, Collection<int, GradingTemplateFactor>>  $templateFactorsByTemplateId
-     * @return array<string, mixed>
-     *
-     * @throws ValidationException MESSAGE_SEMESTER_NOT_CONFIGURED when this kitab's template has no weight rows for the semester
+     * @param  array<int, array<string, mixed>>  $pairs
+     * @param  Collection<int, Student>  $students
+     * @return array<int, Collection<int, Student>> pair index => roster
      */
-    private function buildStudentSubjectRow(Student $student, int $semester, array $pair, ?AcademicSemester $academicSemester, array $templateFactorsByTemplateId): array
+    private function gradedRostersByPairIndex(array $pairs, Collection $students, string $academicYearId, int $semester): array
     {
-        if (! $pair['is_gradable']) {
-            return [
-                'subject_book' => $pair['subject_book'],
-                'grading_template' => null,
-                'is_gradable' => false,
-                'factors' => [],
-                'final_score' => null,
-                'missing_factor_codes' => [],
-                'is_complete' => false,
-                'midterm_excluded' => false,
-            ];
+        $isTahfizhPair = fn (array $pair) => ($pair['grading_template']['code'] ?? null) === GradingTemplate::CODE_TAHFIZH;
+        $studentIdsWithTarget = collect();
+
+        if ($students->isNotEmpty() && collect($pairs)->contains($isTahfizhPair)) {
+            $studentIdsWithTarget = MemorizationTarget::query()
+                ->where('school_id', School::activeOrFail()->id)
+                ->whereIn('student_id', $students->pluck('id'))
+                ->where('academic_year_id', $academicYearId)
+                ->where('semester', $semester)
+                ->pluck('student_id')
+                ->flip();
         }
 
-        if ($academicSemester === null) {
-            // Unreachable: recapForStudent() resolves $academicSemester whenever any pair is gradable, before this is called.
-            throw new \LogicException('Academic semester must be resolved for a gradable pair.');
+        $rostersByPairIndex = [];
+        foreach ($pairs as $pairIndex => $pair) {
+            if (! $pair['is_gradable']) {
+                continue;
+            }
+
+            $roster = $isTahfizhPair($pair)
+                ? $students->filter(fn (Student $student) => $studentIdsWithTarget->has($student->id))->values()
+                : $students->values();
+
+            if ($roster->isNotEmpty()) {
+                $rostersByPairIndex[$pairIndex] = $roster;
+            }
         }
 
-        /** @var Collection<int, GradingTemplateFactor> $templateFactors */
-        $templateFactors = $templateFactorsByTemplateId[$pair['grading_template']['id']] ?? collect();
+        return $rostersByPairIndex;
+    }
 
-        if ($templateFactors->isEmpty()) {
-            throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
-        }
+    /**
+     * @param  array<string, mixed>  $pair  one GradableSubjectService::listForSemester() entry
+     * @return array<string, mixed>
+     */
+    private function presentUngradableSubject(array $pair): array
+    {
+        return [
+            'subject_book' => $pair['subject_book'],
+            'grading_template' => null,
+            'is_gradable' => false,
+            'factors' => [],
+            'final_score' => null,
+            'missing_factor_codes' => [],
+            'is_complete' => false,
+            'midterm_excluded' => false,
+        ];
+    }
 
-        $factorScoreContext = new FactorScoreContext(
-            academicSemester: $academicSemester,
-            academicYearId: $academicSemester->academic_year_id,
-            semester: $semester,
-            classLevelId: $pair['class_level_id'],
-            subjectBookId: $pair['subject_book_id'],
-            students: collect([$student]),
-        );
-
-        $row = $this->buildFactorRows($academicSemester, $templateFactors, $factorScoreContext)[0];
-
+    /**
+     * @param  array<string, mixed>  $pair  one GradableSubjectService::listForSemester() entry
+     * @param  array<string, mixed>  $row  one buildFactorRows() row
+     * @return array<string, mixed>
+     */
+    private function presentGradableSubject(array $pair, array $row): array
+    {
         return [
             'subject_book' => $pair['subject_book'],
             'grading_template' => $pair['grading_template'],
@@ -249,38 +389,45 @@ class GradeRecapService
     }
 
     /**
-     * Drops the Tahfizh pair from a santri's gradable-pair list when this
-     * particular santri has no non-deleted Target Hafalan for the semester
-     * (ADR 0003) — the class may be gradable via a classmate's target, but
-     * Tahfizh only belongs in *this* santri's own recap if *they* have one.
-     * A class with no Tahfizh pair at all skips the extra query entirely.
+     * Class recap rows with each finalized santri's row read from its Rapor
+     * snapshot (ADR 0001, spec US90). Every row gets `is_finalized` (the
+     * santri's rapor is final), `is_snapshot` (the row comes from the
+     * snapshot) and `finalized_at`. A finalized santri whose snapshot has no
+     * entry for this kitab (e.g. the kitab was scheduled after
+     * finalization) keeps the live row, flagged `is_finalized: true,
+     * is_snapshot: false`. One query for all santri.
      *
-     * @param  array<int, array<string, mixed>>  $pairs
+     * @param  array<int, array<string, mixed>>  $rows
      * @return array<int, array<string, mixed>>
      */
-    private function filterTahfizhPairForStudent(array $pairs, Student $student, string $academicYearId, int $semester): array
+    private function substituteFinalizedRows(array $rows, string $academicYearId, int $semester, string $subjectBookId): array
     {
-        $hasTahfizhPair = collect($pairs)->contains(
-            fn (array $pair) => ($pair['grading_template']['code'] ?? null) === GradingTemplate::CODE_TAHFIZH
-        );
-
-        if (! $hasTahfizhPair) {
-            return $pairs;
-        }
-
-        $studentHasTarget = MemorizationTarget::query()
+        $finalReportCardsByStudentId = ReportCard::query()
             ->where('school_id', School::activeOrFail()->id)
-            ->where('student_id', $student->id)
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
-            ->exists();
+            ->where('status', ReportCard::STATUS_FINAL)
+            ->whereIn('student_id', collect($rows)->pluck('student.id'))
+            ->with(['entries' => fn ($query) => $query->where('subject_book_id', $subjectBookId)])
+            ->get()
+            ->keyBy('student_id');
 
-        if ($studentHasTarget) {
-            return $pairs;
-        }
+        return collect($rows)
+            ->map(function (array $row) use ($finalReportCardsByStudentId) {
+                /** @var ReportCard|null $reportCard */
+                $reportCard = $finalReportCardsByStudentId->get($row['student']['id']);
+                $entry = $reportCard?->entries->first();
 
-        return collect($pairs)
-            ->reject(fn (array $pair) => ($pair['grading_template']['code'] ?? null) === GradingTemplate::CODE_TAHFIZH)
+                if ($reportCard !== null && $entry !== null) {
+                    return $this->reportCardSnapshot->classRowFromEntry($row['student'], $entry, $reportCard);
+                }
+
+                return array_merge($row, [
+                    'is_finalized' => $reportCard !== null,
+                    'is_snapshot' => false,
+                    'finalized_at' => $reportCard?->finalized_at?->toJSON(),
+                ]);
+            })
             ->values()
             ->all();
     }

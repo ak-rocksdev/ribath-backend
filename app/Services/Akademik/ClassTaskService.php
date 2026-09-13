@@ -2,6 +2,7 @@
 
 namespace App\Services\Akademik;
 
+use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
 use App\Models\ClassTask;
 use App\Models\School;
@@ -42,6 +43,7 @@ class ClassTaskService
 
     public function __construct(
         private StudentGradeService $studentGradeService,
+        private FinalizedReportCardGuard $finalizedReportCardGuard,
     ) {}
 
     /**
@@ -197,6 +199,7 @@ class ClassTaskService
      * @return array<int, array<string, mixed>> the stored rows of every submitted score
      *
      * @throws ValidationException
+     * @throws FinalizedReportCardException a submitted santri's Rapor is final for the semester (keyed by student id)
      */
     public function upsertScores(ClassTask $task, array $rows): array
     {
@@ -210,6 +213,8 @@ class ClassTaskService
             ->flip();
 
         $this->assertScoreRowsAreValid($rows, $classStudentIds, $expectedStudentIds);
+        // A finalized santri's rows are rejected (ADR 0001); Tugas CRUD itself stays allowed.
+        $this->finalizedReportCardGuard->assertEditableForStudents(collect($rows)->pluck('student_id'), $task->academic_year_id, $task->semester);
 
         $schoolId = School::activeOrFail()->id;
         $userId = auth()->id();

@@ -2,6 +2,7 @@
 
 namespace App\Services\Akademik;
 
+use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
@@ -46,6 +47,7 @@ class StudentGradeService
 
     public function __construct(
         private GradableSubjectService $gradableSubjectService,
+        private FinalizedReportCardGuard $finalizedReportCardGuard,
     ) {}
 
     /**
@@ -136,6 +138,7 @@ class StudentGradeService
      * @return array<int, array<string, mixed>> the stored rows of every submitted cell
      *
      * @throws ValidationException
+     * @throws FinalizedReportCardException a submitted santri's Rapor is final for the semester (keyed by student id)
      */
     public function upsertGrid(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId, array $rows): array
     {
@@ -146,6 +149,8 @@ class StudentGradeService
         $isTahfizhTemplate = $gridContext->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH;
 
         $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $gradedStudentIds, $isTahfizhTemplate);
+        // A finalized santri's rows are rejected (ADR 0001); nothing is written.
+        $this->finalizedReportCardGuard->assertEditableForStudents(collect($rows)->pluck('student_id'), $academicYearId, $semester);
 
         $schoolId = School::activeOrFail()->id;
         $userId = auth()->id();

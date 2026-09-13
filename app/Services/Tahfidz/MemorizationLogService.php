@@ -2,6 +2,7 @@
 
 namespace App\Services\Tahfidz;
 
+use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
 use App\Models\MemorizationLog;
 use App\Models\MemorizationTarget;
@@ -9,6 +10,7 @@ use App\Models\School;
 use App\Models\Student;
 use App\Models\SubjectBook;
 use App\Services\Akademik\Calculation\MemorizationFactorCalculator;
+use App\Services\Akademik\FinalizedReportCardGuard;
 use App\Services\Akademik\StudentGradeService;
 use App\Services\Akademik\TahfizhSubjectBookResolver;
 use App\Support\BusinessDate;
@@ -51,6 +53,7 @@ class MemorizationLogService
 
     public function __construct(
         private TahfizhSubjectBookResolver $tahfizhSubjectBookResolver,
+        private FinalizedReportCardGuard $finalizedReportCardGuard,
     ) {}
 
     /**
@@ -83,6 +86,7 @@ class MemorizationLogService
      * @param  array{academic_year_id: string, semester: int|string, student_id: string, teacher_id: string, log_date: string, type: string, juz?: int|null, start_page?: int|null, end_page?: int|null, pages?: float|int|string|null, material_note?: string|null, quality_score: int, notes?: string|null}  $data
      *
      * @throws ValidationException
+     * @throws FinalizedReportCardException the santri's Rapor is final for the semester
      */
     public function create(array $data): array
     {
@@ -90,6 +94,7 @@ class MemorizationLogService
         $academicYearId = $data['academic_year_id'];
         $semester = (int) $data['semester'];
 
+        $this->finalizedReportCardGuard->assertEditable($data['student_id'], $academicYearId, $semester);
         $tahfizhBook = $this->tahfizhSubjectBookOrFail();
         $this->assertSemesterIsConfigured($academicYearId, $semester, $data['log_date']);
 
@@ -122,9 +127,12 @@ class MemorizationLogService
      * @param  array{teacher_id?: string, log_date?: string, type?: string, juz?: int|null, start_page?: int|null, end_page?: int|null, pages?: float|int|string|null, material_note?: string|null, quality_score?: int, notes?: string|null}  $data
      *
      * @throws ValidationException
+     * @throws FinalizedReportCardException the santri's Rapor is final for the log's semester
      */
     public function update(MemorizationLog $log, array $data): array
     {
+        $this->finalizedReportCardGuard->assertEditable($log->student_id, $log->academic_year_id, $log->semester);
+
         if (array_key_exists('log_date', $data)) {
             $this->assertSemesterIsConfigured($log->academic_year_id, $log->semester, $data['log_date']);
         }
@@ -160,8 +168,13 @@ class MemorizationLogService
         return $this->present($log->fresh(self::LOG_RELATIONS));
     }
 
+    /**
+     * @throws FinalizedReportCardException the santri's Rapor is final for the log's semester
+     */
     public function delete(MemorizationLog $log): void
     {
+        $this->finalizedReportCardGuard->assertEditable($log->student_id, $log->academic_year_id, $log->semester);
+
         $log->updated_by = auth()->id();
         $log->save();
         $log->delete();

@@ -2,6 +2,7 @@
 
 namespace App\Services\Akademik;
 
+use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
 use App\Models\AcademicYear;
 use App\Models\ClassSession;
@@ -66,6 +67,7 @@ class ClassSessionService
     public function __construct(
         private StudentGradeService $studentGradeService,
         private SessionDatePolicy $sessionDatePolicy,
+        private FinalizedReportCardGuard $finalizedReportCardGuard,
     ) {}
 
     /**
@@ -216,6 +218,7 @@ class ClassSessionService
      * @return array{class_session: array<string, mixed>, attendances: array<int, array<string, mixed>>, requires_override_warning: bool}
      *
      * @throws ValidationException
+     * @throws FinalizedReportCardException a posted row changes an existing row of a santri whose Rapor is final (keyed by student id)
      */
     public function updateAttendances(ClassSession $session, array $attendanceRows): array
     {
@@ -226,11 +229,13 @@ class ClassSessionService
         $actorIsSuperAdmin = $this->actorIsSuperAdmin();
         $this->sessionDatePolicy->assertAttendanceEditAllowed($session->session_date, $actorIsSuperAdmin);
 
-        $recordedStudentIds = StudentAttendance::query()
+        $recordedAttendancesByStudentId = StudentAttendance::query()
             ->where('class_session_id', $session->id)
-            ->pluck('student_id');
+            ->get(['student_id', 'status', 'notes'])
+            ->keyBy('student_id');
 
-        $this->assertAttendanceRowsAreValid($attendanceRows, $session->class_level_id, $session->session_date, $recordedStudentIds);
+        $this->assertAttendanceRowsAreValid($attendanceRows, $session->class_level_id, $session->session_date, $recordedAttendancesByStudentId->keys());
+        $this->assertNoChangeForFinalizedStudents($session, $attendanceRows, $recordedAttendancesByStudentId);
 
         $userId = auth()->id();
 
@@ -574,6 +579,33 @@ class ClassSessionService
         if ($errors !== []) {
             throw ValidationException::withMessages($errors);
         }
+    }
+
+    /**
+     * Changing an EXISTING attendance row of a santri whose Rapor is final
+     * for the session's semester is a per-santri source write and is
+     * rejected (ADR 0001). Adding a missing row, or re-posting a row
+     * unchanged, is not a change and stays allowed — like recording a new
+     * Pertemuan, which is a class-level action.
+     *
+     * @param  array<int, array{student_id: string, status: mixed, notes?: mixed}>  $attendanceRows  already validated
+     * @param  Collection<string, StudentAttendance>  $recordedAttendancesByStudentId
+     *
+     * @throws FinalizedReportCardException keyed by student id
+     */
+    private function assertNoChangeForFinalizedStudents(ClassSession $session, array $attendanceRows, Collection $recordedAttendancesByStudentId): void
+    {
+        $changedStudentIds = collect($attendanceRows)
+            ->filter(function (array $attendanceRow) use ($recordedAttendancesByStudentId) {
+                $recordedAttendance = $recordedAttendancesByStudentId->get($attendanceRow['student_id']);
+
+                return $recordedAttendance !== null
+                    && ($recordedAttendance->status !== $attendanceRow['status']
+                        || $recordedAttendance->notes !== $this->normalizeNotes($attendanceRow['notes'] ?? null));
+            })
+            ->pluck('student_id');
+
+        $this->finalizedReportCardGuard->assertEditableForStudents($changedStudentIds, $session->academic_year_id, $session->semester);
     }
 
     /**
