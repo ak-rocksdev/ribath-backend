@@ -593,3 +593,139 @@ test('class recap never lists another schools students or their grades', functio
     expect(collect($response->json('data.rows'))->pluck('student.id')->all())->toBe([$ali->id]);
     expect(recapFactor($response->json('data.rows.0'), 'uts')['score'])->toBeNull();
 });
+
+// ── Rekap per santri (Task 9) ─────────────────────────────────────────────
+
+function studentRecapQuery(array $context, Student $student, array $overrides = []): string
+{
+    return "/api/v1/grade-recaps/student/{$student->id}?".http_build_query(array_merge([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+    ], $overrides));
+}
+
+test('student recap lists only the books scheduled for the students class, with the class recaps factor breakdown', function () {
+    $context = setUpGradeRecapContext();
+    $ali = recapCreateStudent($this, $context['user'], 'Ali');
+    recapSaveManualScores($this, $context, [$ali->id => ['uts' => 80, 'uas' => 90]]);
+
+    // A book without a grading template, scheduled for the same class: shown but not gradable.
+    $untemplatedBook = recapCreateSubjectBook($context['school'], 'Kitab Tanpa Template', null);
+    recapScheduleSubjectBook($context['school'], $context['academicYear'], 1, $context['classLevel'], $untemplatedBook, $context['teacher']);
+
+    // A book scheduled for a DIFFERENT class: must not appear for Ali.
+    $otherClassLevel = ClassLevel::where('school_id', $context['school']->id)->where('slug', 'ibtida_1')->firstOrFail();
+    $otherClassBook = recapCreateSubjectBook($context['school'], 'Kitab Kelas Lain', $context['templatesByCode'][GradingTemplate::CODE_TEORI_KITAB]->id);
+    recapScheduleSubjectBook($context['school'], $context['academicYear'], 1, $otherClassLevel, $otherClassBook, $context['teacher']);
+
+    $response = $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $ali));
+
+    $response->assertOk()
+        ->assertJsonPath('data.student.id', $ali->id)
+        ->assertJsonPath('data.student.full_name', 'Ali')
+        ->assertJsonPath('data.student.class_level.label', 'Tamhidi')
+        ->assertJsonPath('data.student.entry_date', '2025-07-01')
+        ->assertJsonPath('data.student.is_active_student', true)
+        ->assertJsonPath('data.academic_year_id', $context['academicYear']->id)
+        ->assertJsonPath('data.semester', 1)
+        ->assertJsonPath('data.uts_enabled', true);
+
+    $subjects = $response->json('data.subjects');
+    // GradableSubjectService::listForSemester orders pairs by subject_book title.
+    expect(collect($subjects)->pluck('subject_book.title')->all())->toBe(['Kitab Tanpa Template', 'Safinatun Najah']);
+
+    $gradableSubject = collect($subjects)->firstWhere('subject_book.title', 'Safinatun Najah');
+    expect($gradableSubject['is_gradable'])->toBeTrue();
+    expect($gradableSubject['grading_template']['code'])->toBe('teori_kitab');
+    expect(collect($gradableSubject['factors'])->pluck('code')->all())->toBe(['uts', 'uas', 'tugas', 'keaktifan', 'adab', 'absensi']);
+    expect(collect($gradableSubject['factors'])->firstWhere('code', 'uts')['score'])->toBe(80);
+    expect($gradableSubject['missing_factor_codes'])->toBe(['tugas', 'keaktifan', 'adab', 'absensi']);
+    expect($gradableSubject['is_complete'])->toBeFalse();
+    expect($gradableSubject['midterm_excluded'])->toBeFalse();
+
+    $untemplatedSubject = collect($subjects)->firstWhere('subject_book.title', 'Kitab Tanpa Template');
+    expect($untemplatedSubject['is_gradable'])->toBeFalse();
+    expect($untemplatedSubject['grading_template'])->toBeNull();
+    expect($untemplatedSubject['factors'])->toBe([]);
+    expect($untemplatedSubject['final_score'])->toBeNull();
+    expect($untemplatedSubject['is_complete'])->toBeFalse();
+});
+
+test('student recap is_complete requires every gradable subject to be complete', function () {
+    $context = setUpGradeRecapContext();
+    $ali = recapCreateStudent($this, $context['user'], 'Ali');
+
+    $incomplete = $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $ali))->assertOk();
+    expect($incomplete->json('data.is_complete'))->toBeFalse();
+
+    recapReplaceWeights($this, $context, 'teori_kitab', 1, [
+        'uts' => [50, true],
+        'uas' => [50, true],
+        'tugas' => [0, false],
+        'keaktifan' => [0, false],
+        'adab' => [0, false],
+        'absensi' => [0, false],
+    ]);
+    recapSaveManualScores($this, $context, [$ali->id => ['uts' => 80, 'uas' => 90]]);
+
+    $complete = $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $ali))->assertOk();
+    expect($complete->json('data.is_complete'))->toBeTrue();
+    expect($complete->json('data.subjects.0.is_complete'))->toBeTrue();
+
+    // A second, still-incomplete gradable book flips the overall flag back to false.
+    $secondBook = recapCreateSubjectBook($context['school'], 'Kitab Kedua', $context['templatesByCode'][GradingTemplate::CODE_TEORI_KITAB]->id);
+    recapScheduleSubjectBook($context['school'], $context['academicYear'], 1, $context['classLevel'], $secondBook, $context['teacher']);
+
+    $mixed = $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $ali))->assertOk();
+    expect($mixed->json('data.is_complete'))->toBeFalse();
+});
+
+test('student recap is_complete is false and subjects is empty when the student has no gradable subjects', function () {
+    $context = setUpGradeRecapContext();
+    $student = recapCreateStudent($this, $context['user'], 'Kosong', '2025-07-01', 'ibtida_1');
+
+    $response = $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $student))->assertOk();
+
+    expect($response->json('data.subjects'))->toBe([]);
+    expect($response->json('data.is_complete'))->toBeFalse();
+});
+
+test('student recap rejects a student without a class', function () {
+    $context = setUpGradeRecapContext();
+    $student = Student::factory()->create(['school_id' => $context['school']->id]);
+
+    $this->actingAs($context['user'])
+        ->getJson(studentRecapQuery($context, $student))
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Santri belum memiliki kelas.');
+});
+
+test('student recap requires academic_year_id and semester', function () {
+    $context = setUpGradeRecapContext();
+    $ali = recapCreateStudent($this, $context['user'], 'Ali');
+
+    $this->actingAs($context['user'])
+        ->getJson("/api/v1/grade-recaps/student/{$ali->id}")
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['academic_year_id', 'semester']);
+});
+
+test('student recap requires view-grades permission', function () {
+    $context = setUpGradeRecapContext();
+    $ali = recapCreateStudent($this, $context['user'], 'Ali');
+
+    $this->actingAs(User::factory()->create())
+        ->getJson(studentRecapQuery($context, $ali))
+        ->assertForbidden();
+});
+
+test('student recap rejects a student from another school', function () {
+    $context = setUpGradeRecapContext();
+
+    $otherSchool = School::factory()->create();
+    $foreignStudent = Student::factory()->create(['school_id' => $otherSchool->id]);
+
+    $this->actingAs($context['user'])
+        ->getJson(studentRecapQuery($context, $foreignStudent))
+        ->assertNotFound();
+});

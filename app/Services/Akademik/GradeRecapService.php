@@ -2,6 +2,7 @@
 
 namespace App\Services\Akademik;
 
+use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
 use App\Models\GradingTemplateFactor;
@@ -36,8 +37,11 @@ class GradeRecapService
     /** Normalized weights are kept unrounded internally and rounded only here, in the payload. */
     public const NORMALIZED_WEIGHT_DECIMALS = 2;
 
+    public const MESSAGE_STUDENT_WITHOUT_CLASS = 'Santri belum memiliki kelas.';
+
     public function __construct(
         private StudentGradeService $studentGradeService,
+        private GradableSubjectService $gradableSubjectService,
         private FactorScoreProviderRegistry $factorScoreProviderRegistry,
         private MidtermExclusionRule $midtermExclusionRule,
         private GradeWeightNormalizer $gradeWeightNormalizer,
@@ -68,12 +72,7 @@ class GradeRecapService
             subjectBookId: $subjectBookId,
             students: $students,
         );
-        $factorScoresByCode = $this->collectFactorScores($templateFactors, $factorScoreContext);
-
-        $rows = $students
-            ->map(fn (Student $student) => $this->buildStudentRow($student, $gradingContext, $factorScoresByCode))
-            ->values()
-            ->all();
+        $rows = $this->buildFactorRows($gradingContext, $factorScoreContext);
 
         $semesterNormalizedWeights = $this->gradeWeightNormalizer->normalize(
             $this->weightInputs($templateFactors),
@@ -112,6 +111,115 @@ class GradeRecapService
                 'complete_count' => collect($rows)->where('is_complete', true)->count(),
             ],
         ];
+    }
+
+    /**
+     * Recap of every gradable kitab of one santri's class, in one semester
+     * akademik: for each Kelas × Kitab pair the class is scheduled for
+     * (GradableSubjectService), the same per-factor breakdown as the class
+     * recap restricted to this one santri, plus an overall `is_complete`
+     * (every gradable subject complete, and at least one exists).
+     *
+     * A kitab without a grading template is still listed (`is_gradable:
+     * false`, no factors) rather than failing the whole recap.
+     *
+     * @return array<string, mixed> see the "recapForStudent" shape in the Task 9 report
+     *
+     * @throws ValidationException MESSAGE_STUDENT_WITHOUT_CLASS, or the same rejections as recapForClassSubject
+     */
+    public function recapForStudent(Student $student, string $academicYearId, int $semester): array
+    {
+        if ($student->class_level_id === null) {
+            throw ValidationException::withMessages(['class_level_id' => self::MESSAGE_STUDENT_WITHOUT_CLASS]);
+        }
+
+        $pairs = $this->gradableSubjectService->listForSemester($academicYearId, $semester, $student->class_level_id);
+
+        $subjects = collect($pairs)
+            ->map(fn (array $pair) => $this->buildStudentSubjectRow($student, $academicYearId, $semester, $pair))
+            ->values()
+            ->all();
+
+        $gradableSubjects = collect($subjects)->where('is_gradable', true);
+
+        return [
+            'student' => $this->presentRecapStudent($student),
+            'academic_year_id' => $academicYearId,
+            'semester' => $semester,
+            'uts_enabled' => (bool) (AcademicSemester::findByPair($academicYearId, $semester)?->uts_enabled),
+            'subjects' => $subjects,
+            'is_complete' => $gradableSubjects->isNotEmpty() && $gradableSubjects->every(fn (array $subject) => $subject['is_complete']),
+        ];
+    }
+
+    /**
+     * One row of recapForStudent's `subjects`: a gradable pair reuses the
+     * class recap's own factor-row builder restricted to this one santri;
+     * an ungradable pair (kitab without a template) is presented empty
+     * rather than failing the whole recap.
+     *
+     * @param  array<string, mixed>  $pair  one GradableSubjectService::listForSemester() entry
+     * @return array<string, mixed>
+     */
+    private function buildStudentSubjectRow(Student $student, string $academicYearId, int $semester, array $pair): array
+    {
+        if (! $pair['is_gradable']) {
+            return [
+                'subject_book' => $pair['subject_book'],
+                'grading_template' => null,
+                'is_gradable' => false,
+                'factors' => [],
+                'final_score' => null,
+                'missing_factor_codes' => [],
+                'is_complete' => false,
+                'midterm_excluded' => false,
+            ];
+        }
+
+        $gradingContext = $this->studentGradeService->resolveClassSubjectContext(
+            $academicYearId,
+            $semester,
+            $pair['class_level_id'],
+            $pair['subject_book_id'],
+        );
+
+        $factorScoreContext = new FactorScoreContext(
+            academicSemester: $gradingContext->academicSemester,
+            academicYearId: $academicYearId,
+            semester: $semester,
+            classLevelId: $pair['class_level_id'],
+            subjectBookId: $pair['subject_book_id'],
+            students: collect([$student]),
+        );
+
+        $row = $this->buildFactorRows($gradingContext, $factorScoreContext)[0];
+
+        return [
+            'subject_book' => $pair['subject_book'],
+            'grading_template' => $pair['grading_template'],
+            'is_gradable' => true,
+            'factors' => $row['factors'],
+            'final_score' => $row['final_score'],
+            'missing_factor_codes' => $row['missing_factor_codes'],
+            'is_complete' => $row['is_complete'],
+            'midterm_excluded' => $row['midterm_excluded'],
+        ];
+    }
+
+    /**
+     * Every student row of one Kelas × Kitab context — the class recap for
+     * its whole class, a per-santri recap for a one-student context.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildFactorRows(ClassSubjectGradingContext $gradingContext, FactorScoreContext $factorScoreContext): array
+    {
+        $factorScoresByCode = $this->collectFactorScores($gradingContext->templateFactors, $factorScoreContext);
+
+        return $factorScoreContext->students
+            ->map(fn (Student $student) => $this->buildStudentRow($student, $gradingContext, $factorScoresByCode))
+            ->values()
+            ->all();
     }
 
     /**
@@ -270,5 +378,26 @@ class GradeRecapService
     private function roundNormalizedWeight(?float $normalizedWeight): ?float
     {
         return $normalizedWeight === null ? null : round($normalizedWeight, self::NORMALIZED_WEIGHT_DECIMALS);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function presentRecapStudent(Student $student): array
+    {
+        $classLevel = $student->class_level_id === null
+            ? null
+            : ClassLevel::where('school_id', School::activeOrFail()->id)->find($student->class_level_id);
+
+        return [
+            'id' => $student->id,
+            'full_name' => $student->full_name,
+            'class_level' => $classLevel === null ? null : [
+                'id' => $classLevel->id,
+                'label' => $classLevel->label,
+            ],
+            'entry_date' => $student->entry_date?->toDateString(),
+            'is_active_student' => $student->status === Student::STATUS_ACTIVE,
+        ];
     }
 }

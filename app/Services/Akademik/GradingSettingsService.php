@@ -8,6 +8,7 @@ use App\Models\GradingTemplateFactor;
 use App\Models\School;
 use App\Models\StudentGrade;
 use App\Models\SubjectBook;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -121,7 +122,10 @@ class GradingSettingsService
             }
         });
 
-        return $this->buildTemplateWeightsPayload($template, $school->id, $academicYearId, $semester);
+        $payload = $this->buildTemplateWeightsPayload($template, $school->id, $academicYearId, $semester);
+        $payload['recalculated_grades_count'] = $this->recordedGradesQuery($school->id, $template->id, $academicYearId, $semester)->count();
+
+        return $payload;
     }
 
     /**
@@ -170,6 +174,16 @@ class GradingSettingsService
      */
     private function semesterHasRecordedGrades(string $schoolId, string $gradingTemplateId, string $academicYearId, int $semester): bool
     {
+        return $this->recordedGradesQuery($schoolId, $gradingTemplateId, $academicYearId, $semester)->exists();
+    }
+
+    /**
+     * student_grades rows with a non-NULL score, in this semester, for a
+     * kitab using this template — shared by the has_grades check and the
+     * weight-replacement response's recalculated_grades_count.
+     */
+    private function recordedGradesQuery(string $schoolId, string $gradingTemplateId, string $academicYearId, int $semester): Builder
+    {
         return StudentGrade::query()
             ->where('school_id', $schoolId)
             ->where('academic_year_id', $academicYearId)
@@ -178,7 +192,6 @@ class GradingSettingsService
             ->whereIn('subject_book_id', SubjectBook::query()
                 ->select('id')
                 ->where('school_id', $schoolId)
-                ->where('grading_template_id', $gradingTemplateId))
-            ->exists();
+                ->where('grading_template_id', $gradingTemplateId));
     }
 }

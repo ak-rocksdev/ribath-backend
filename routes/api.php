@@ -185,6 +185,8 @@ Route::prefix('v1')->group(function () {
     Route::prefix('grade-recaps')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/class', [GradeRecapController::class, 'classSubject'])
             ->middleware('permission:view-grades');
+        Route::get('/student/{student}', [GradeRecapController::class, 'student'])
+            ->middleware('permission:view-grades');
     });
 
     // Class task routes (Penilaian: Tugas per Kelas × Kitab)

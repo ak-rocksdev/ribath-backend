@@ -1,10 +1,13 @@
 <?php
 
 use App\Models\AcademicYear;
+use App\Models\ClassLevel;
 use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
 use App\Models\School;
+use App\Models\Student;
+use App\Models\StudentGrade;
 use App\Models\SubjectBook;
 use App\Models\SubjectCategory;
 use App\Models\User;
@@ -643,6 +646,69 @@ test('replacing semester weights for another schools academic year is rejected',
     ]);
 
     $response->assertUnprocessable()->assertJsonValidationErrors(['academic_year_id']);
+});
+
+test('replacing semester weights returns the count of already-recorded grades it recalculates', function () {
+    [$user, $school] = createSchoolAndUserForGrading();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+    $academicYear = createAcademicYearWithSemesters($school, '2025/2026', '2025-07-01', '2026-06-30');
+
+    $template = GradingTemplate::where('school_id', $school->id)->where('code', 'teori_kitab')->first();
+    $factorsByCode = GradingFactor::where('school_id', $school->id)->get()->keyBy('code');
+
+    $subjectBook = SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $school->id])->id,
+        'grading_template_id' => $template->id,
+    ]);
+    $classLevel = ClassLevel::factory()->create(['school_id' => $school->id]);
+    $student = Student::factory()->create(['school_id' => $school->id, 'class_level_id' => $classLevel->id]);
+
+    StudentGrade::create([
+        'school_id' => $school->id,
+        'student_id' => $student->id,
+        'subject_book_id' => $subjectBook->id,
+        'grading_factor_id' => $factorsByCode['uts']->id,
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+        'score' => 80,
+    ]);
+    // A NULL score is "belum diinput" and must not count.
+    StudentGrade::create([
+        'school_id' => $school->id,
+        'student_id' => $student->id,
+        'subject_book_id' => $subjectBook->id,
+        'grading_factor_id' => $factorsByCode['uas']->id,
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+        'score' => null,
+    ]);
+    // A different semester's recorded grade must not count either.
+    StudentGrade::create([
+        'school_id' => $school->id,
+        'student_id' => $student->id,
+        'subject_book_id' => $subjectBook->id,
+        'grading_factor_id' => $factorsByCode['uts']->id,
+        'academic_year_id' => $academicYear->id,
+        'semester' => 2,
+        'score' => 70,
+    ]);
+
+    $response = $this->actingAs($user)->putJson('/api/v1/grading-template-factors', [
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+        'grading_template_id' => $template->id,
+        'factors' => [
+            ['grading_factor_id' => $factorsByCode['uts']->id, 'weight' => 25, 'is_active' => true],
+            ['grading_factor_id' => $factorsByCode['uas']->id, 'weight' => 25, 'is_active' => true],
+            ['grading_factor_id' => $factorsByCode['tugas']->id, 'weight' => 20, 'is_active' => true],
+            ['grading_factor_id' => $factorsByCode['keaktifan']->id, 'weight' => 10, 'is_active' => true],
+            ['grading_factor_id' => $factorsByCode['adab']->id, 'weight' => 10, 'is_active' => true],
+            ['grading_factor_id' => $factorsByCode['absensi']->id, 'weight' => 10, 'is_active' => true],
+        ],
+    ]);
+
+    $response->assertOk()->assertJsonPath('data.recalculated_grades_count', 1);
 });
 
 test('replacing semester weights requires manage-grading-settings permission', function () {
