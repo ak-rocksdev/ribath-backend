@@ -41,6 +41,7 @@ use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
 use App\Http\Controllers\Api\Public\StudentCompletionController;
+use App\Http\Controllers\Api\Tahfidz\MemorizationTargetController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -236,6 +237,18 @@ Route::prefix('v1')->group(function () {
     Route::prefix('attendance-recaps')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [AttendanceRecapController::class, 'index'])
             ->middleware('permission:view-attendance');
+    });
+
+    // Target Hafalan routes (Tahfidz: siapa yang ikut penilaian Tahfizh semester ini — ADR 0003)
+    Route::prefix('memorization-targets')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [MemorizationTargetController::class, 'index'])
+            ->middleware('permission:view-memorization');
+        Route::post('/', [MemorizationTargetController::class, 'store'])
+            ->middleware('permission:manage-memorization');
+        Route::put('/{memorizationTarget}', [MemorizationTargetController::class, 'update'])
+            ->middleware('permission:manage-memorization');
+        Route::delete('/{memorizationTarget}', [MemorizationTargetController::class, 'destroy'])
+            ->middleware('permission:manage-memorization');
     });
 
     // Time Slots routes

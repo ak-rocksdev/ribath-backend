@@ -22,5 +22,6 @@ final readonly class ClassSubjectGradingContext
         public SubjectBook $subjectBook,
         public AcademicSemester $academicSemester,
         public Collection $templateFactors,
+        public string $classLevelId,
     ) {}
 }

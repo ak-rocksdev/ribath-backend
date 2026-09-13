@@ -5,7 +5,9 @@ namespace App\Services\Akademik;
 use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
+use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
+use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
@@ -62,7 +64,7 @@ class GradeRecapService
         $templateFactors = $gradingContext->templateFactors;
         $gradingFactors = $templateFactors->map(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor);
 
-        $students = $this->studentGradeService->listClassStudents($classLevelId);
+        $students = $this->studentGradeService->listGradedStudents($gradingContext);
 
         $factorScoreContext = new FactorScoreContext(
             academicSemester: $academicSemester,
@@ -133,7 +135,12 @@ class GradeRecapService
             throw ValidationException::withMessages(['class_level_id' => self::MESSAGE_STUDENT_WITHOUT_CLASS]);
         }
 
-        $pairs = $this->gradableSubjectService->listForSemester($academicYearId, $semester, $student->class_level_id);
+        $pairs = $this->filterTahfizhPairForStudent(
+            $this->gradableSubjectService->listForSemester($academicYearId, $semester, $student->class_level_id),
+            $student,
+            $academicYearId,
+            $semester,
+        );
         $gradablePairs = collect($pairs)->where('is_gradable', true);
 
         // Resolved once for the whole class, then handed to every kitab
@@ -239,6 +246,43 @@ class GradeRecapService
             'is_complete' => $row['is_complete'],
             'midterm_excluded' => $row['midterm_excluded'],
         ];
+    }
+
+    /**
+     * Drops the Tahfizh pair from a santri's gradable-pair list when this
+     * particular santri has no non-deleted Target Hafalan for the semester
+     * (ADR 0003) — the class may be gradable via a classmate's target, but
+     * Tahfizh only belongs in *this* santri's own recap if *they* have one.
+     * A class with no Tahfizh pair at all skips the extra query entirely.
+     *
+     * @param  array<int, array<string, mixed>>  $pairs
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterTahfizhPairForStudent(array $pairs, Student $student, string $academicYearId, int $semester): array
+    {
+        $hasTahfizhPair = collect($pairs)->contains(
+            fn (array $pair) => ($pair['grading_template']['code'] ?? null) === GradingTemplate::CODE_TAHFIZH
+        );
+
+        if (! $hasTahfizhPair) {
+            return $pairs;
+        }
+
+        $studentHasTarget = MemorizationTarget::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('student_id', $student->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->exists();
+
+        if ($studentHasTarget) {
+            return $pairs;
+        }
+
+        return collect($pairs)
+            ->reject(fn (array $pair) => ($pair['grading_template']['code'] ?? null) === GradingTemplate::CODE_TAHFIZH)
+            ->values()
+            ->all();
     }
 
     /**

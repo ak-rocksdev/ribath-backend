@@ -2,7 +2,12 @@
 
 namespace App\Services\Akademik;
 
+use App\Models\ClassLevel;
+use App\Models\GradingTemplate;
+use App\Models\MemorizationTarget;
 use App\Models\School;
+use App\Models\Student;
+use App\Models\SubjectBook;
 use App\Models\TeachingSchedule;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -10,12 +15,15 @@ use Illuminate\Support\Collection;
 /**
  * The Kelas × Kitab pairs that can be graded in a semester akademik: the
  * unique (class_level, subject_book) pairs of the active school's active
- * teaching_schedules for that (academic_year_id, semester). The JSON
- * class_levels on subject_books is deliberately not used.
+ * teaching_schedules for that (academic_year_id, semester), PLUS — per ADR
+ * 0003 — one (class_level, Tahfizh kitab) pair for every class that has at
+ * least one santri with a non-deleted Target Hafalan for that semester
+ * (Tahfizh has no teaching_schedules row; the JSON class_levels on
+ * subject_books is deliberately not used either).
  *
- * listForSemester() and isGradablePair() share one source of pairs
- * (activeSchedulesQuery), so a later rule — e.g. the Tahfizh kitab for
- * students with a memorization target (Task 13) — is added in one place.
+ * listForSemester() and isGradablePair() share both sources of pairs
+ * (activeSchedulesQuery + tahfizhTargetPairs), so any later rule is added
+ * in one place.
  */
 class GradableSubjectService
 {
@@ -42,9 +50,17 @@ class GradableSubjectService
             ])
             ->get();
 
-        return $schedules
+        $schedulePairs = $schedules
             ->groupBy(fn (TeachingSchedule $schedule) => $schedule->class_level_id.'|'.$schedule->subject_book_id)
-            ->map(fn (Collection $pairSchedules) => $this->buildPairPayload($pairSchedules))
+            ->map(fn (Collection $pairSchedules) => $this->buildPairPayload($pairSchedules));
+
+        // Schedule-based pairs win on a key clash (they carry real teacher
+        // info); tahfizhTargetPairs() only adds classes not already covered.
+        $allPairs = $schedulePairs->union(
+            $this->tahfizhTargetPairs($academicYearId, $semester, $classLevelId)
+        );
+
+        return $allPairs
             ->sortBy([
                 ['class_level_sort_order', 'asc'],
                 ['subject_book_title', 'asc'],
@@ -60,15 +76,23 @@ class GradableSubjectService
 
     /**
      * Whether (class_level, subject_book) is gradable in the semester —
-     * i.e. scheduled by an active teaching_schedule of the active school.
+     * scheduled by an active teaching_schedule of the active school, OR
+     * (per ADR 0003) the pair is the Tahfizh kitab and the class has at
+     * least one santri with a non-deleted Target Hafalan for the semester.
      * Used to validate grade grid reads and writes.
      */
     public function isGradablePair(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): bool
     {
-        return $this->activeSchedulesQuery($academicYearId, $semester)
+        $isScheduled = $this->activeSchedulesQuery($academicYearId, $semester)
             ->where('class_level_id', $classLevelId)
             ->where('subject_book_id', $subjectBookId)
             ->exists();
+
+        if ($isScheduled) {
+            return true;
+        }
+
+        return $this->isTahfizhTargetPair($academicYearId, $semester, $classLevelId, $subjectBookId);
     }
 
     private function activeSchedulesQuery(string $academicYearId, int $semester): Builder
@@ -121,5 +145,122 @@ class GradableSubjectService
             'class_level_sort_order' => $classLevel?->sort_order ?? 0,
             'subject_book_title' => $subjectBook?->title ?? '',
         ];
+    }
+
+    /**
+     * One (class_level, Tahfizh kitab) pair for every class of the active
+     * school that has at least one santri with a non-deleted Target
+     * Hafalan for the semester (ADR 0003) — keyed the same way as the
+     * schedule-based pairs ("<class_level_id>|<subject_book_id>") so the
+     * caller can union() the two collections.
+     *
+     * @return Collection<string, array<string, mixed>>
+     */
+    private function tahfizhTargetPairs(string $academicYearId, int $semester, ?string $onlyClassLevelId): Collection
+    {
+        $tahfizhBook = $this->tahfizhSubjectBook();
+
+        if ($tahfizhBook === null) {
+            return collect();
+        }
+
+        $classLevels = $this->classLevelsWithMemorizationTargets($academicYearId, $semester, $onlyClassLevelId);
+
+        return $classLevels
+            ->mapWithKeys(fn (ClassLevel $classLevel) => [
+                $classLevel->id.'|'.$tahfizhBook->id => [
+                    'class_level_id' => $classLevel->id,
+                    'subject_book_id' => $tahfizhBook->id,
+                    'class_level' => [
+                        'id' => $classLevel->id,
+                        'slug' => $classLevel->slug,
+                        'label' => $classLevel->label,
+                    ],
+                    'subject_book' => [
+                        'id' => $tahfizhBook->id,
+                        'title' => $tahfizhBook->title,
+                    ],
+                    'grading_template' => [
+                        'id' => $tahfizhBook->gradingTemplate->id,
+                        'code' => $tahfizhBook->gradingTemplate->code,
+                        'name' => $tahfizhBook->gradingTemplate->name,
+                    ],
+                    'is_gradable' => true,
+                    // No teaching_schedules row backs a target-derived pair, so
+                    // there is no single "scheduled teacher" to report here —
+                    // each target already carries its own teacher_id.
+                    'teachers' => [],
+                    'class_level_sort_order' => $classLevel->sort_order ?? 0,
+                    'subject_book_title' => $tahfizhBook->title,
+                ],
+            ]);
+    }
+
+    private function isTahfizhTargetPair(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): bool
+    {
+        $tahfizhBook = $this->tahfizhSubjectBook();
+
+        if ($tahfizhBook === null || $tahfizhBook->id !== $subjectBookId) {
+            return false;
+        }
+
+        return $this->classLevelsWithMemorizationTargets($academicYearId, $semester, $classLevelId)->isNotEmpty();
+    }
+
+    /**
+     * The active school's subject book whose grading template code is
+     * `tahfizh` (with the template eager-loaded), or null if the school
+     * has no such book yet.
+     */
+    private function tahfizhSubjectBook(): ?SubjectBook
+    {
+        return SubjectBook::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->whereHas('gradingTemplate', fn (Builder $query) => $query->where('code', GradingTemplate::CODE_TAHFIZH))
+            ->with('gradingTemplate:id,code,name')
+            ->first();
+    }
+
+    /**
+     * Class levels of the active school that have at least one santri
+     * (not soft-deleted) with a non-deleted Target Hafalan for the
+     * (academic_year_id, semester) pair — optionally restricted to one
+     * class_level_id.
+     *
+     * @return Collection<int, ClassLevel>
+     */
+    private function classLevelsWithMemorizationTargets(string $academicYearId, int $semester, ?string $onlyClassLevelId): Collection
+    {
+        $school = School::activeOrFail();
+
+        $targetStudentIds = MemorizationTarget::query()
+            ->where('school_id', $school->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->pluck('student_id');
+
+        if ($targetStudentIds->isEmpty()) {
+            return collect();
+        }
+
+        $classLevelIdsQuery = Student::query()
+            ->where('school_id', $school->id)
+            ->whereIn('id', $targetStudentIds)
+            ->whereNotNull('class_level_id');
+
+        if ($onlyClassLevelId !== null) {
+            $classLevelIdsQuery->where('class_level_id', $onlyClassLevelId);
+        }
+
+        $classLevelIds = $classLevelIdsQuery->distinct()->pluck('class_level_id');
+
+        if ($classLevelIds->isEmpty()) {
+            return collect();
+        }
+
+        return ClassLevel::query()
+            ->where('school_id', $school->id)
+            ->whereIn('id', $classLevelIds)
+            ->get();
     }
 }

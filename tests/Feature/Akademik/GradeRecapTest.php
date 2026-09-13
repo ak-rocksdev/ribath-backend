@@ -4,6 +4,7 @@ use App\Models\AcademicYear;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
+use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
@@ -383,8 +384,18 @@ test('a student who entered after the midterm date is normalized the same way an
     expect($lateRow['missing_factor_codes'])->not->toContain('uts');
 
     // Tahfizh has no midterm factor, so the late student keeps 20/20/20/40.
+    // Per ADR 0003, a santri only shows up in a Tahfizh recap once they have
+    // a Target Hafalan for the semester (Task 13).
     $tahfizhBook = recapCreateSubjectBook($context['school'], "Tahfizh Al-Qur'an", $context['templatesByCode'][GradingTemplate::CODE_TAHFIZH]->id);
     recapScheduleSubjectBook($context['school'], $context['academicYear'], 1, $context['classLevel'], $tahfizhBook, $context['teacher']);
+    MemorizationTarget::create([
+        'school_id' => $context['school']->id,
+        'student_id' => $late->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'target_pages' => 40,
+        'teacher_id' => $context['teacher']->id,
+    ]);
 
     $tahfizhResponse = $this->actingAs($context['user'])
         ->getJson(recapQuery($context, ['subject_book_id' => $tahfizhBook->id]))

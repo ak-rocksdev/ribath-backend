@@ -5,7 +5,9 @@ namespace App\Services\Akademik;
 use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
+use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
+use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
@@ -40,6 +42,8 @@ class StudentGradeService
 
     public const MESSAGE_INVALID_LEVEL = 'Level harus bilangan bulat 1–4.';
 
+    public const MESSAGE_STUDENT_WITHOUT_TARGET = 'Santri ini belum punya Target Hafalan semester ini.';
+
     public function __construct(
         private GradableSubjectService $gradableSubjectService,
     ) {}
@@ -65,7 +69,7 @@ class StudentGradeService
             ->filter(fn (GradingTemplateFactor $templateFactor) => in_array($templateFactor->gradingFactor->input_type, self::MANUAL_INPUT_TYPES, true))
             ->values();
 
-        $students = $this->listClassStudents($classLevelId);
+        $students = $this->listGradedStudents($gridContext);
 
         $grades = StudentGrade::query()
             ->where('school_id', School::activeOrFail()->id)
@@ -138,9 +142,10 @@ class StudentGradeService
         $gridContext = $this->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $templateFactorsByCode = $gridContext->templateFactors->keyBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->code);
-        $classStudentIds = $this->listClassStudents($classLevelId)->pluck('id')->flip();
+        $gradedStudentIds = $this->listGradedStudents($gridContext)->pluck('id')->flip();
+        $isTahfizhTemplate = $gridContext->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH;
 
-        $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $classStudentIds);
+        $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $gradedStudentIds, $isTahfizhTemplate);
 
         $schoolId = School::activeOrFail()->id;
         $userId = auth()->id();
@@ -233,6 +238,53 @@ class StudentGradeService
     }
 
     /**
+     * The roster graded for one Kelas × Kitab context: for a Tahfizh-
+     * template kitab (ADR 0003) — the class's santri who have a
+     * non-deleted Target Hafalan for that semester; for every other kitab
+     * — every santri of the class (listClassStudents()). The single place
+     * the grade grid, the class recap and the bulk-upsert validation get
+     * "who is graded for this kitab" from, so all three can never disagree.
+     *
+     * @return Collection<int, Student>
+     */
+    public function listGradedStudents(ClassSubjectGradingContext $context): Collection
+    {
+        if ($context->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH) {
+            return $this->listStudentsWithMemorizationTarget(
+                $context->classLevelId,
+                $context->academicSemester->academic_year_id,
+                $context->academicSemester->semester,
+            );
+        }
+
+        return $this->listClassStudents($context->classLevelId);
+    }
+
+    /**
+     * Santri of a class (active school, not soft-deleted) who have a
+     * non-deleted memorization_targets row for the (academic_year_id,
+     * semester) pair — same ordering as listClassStudents().
+     *
+     * @return Collection<int, Student>
+     */
+    private function listStudentsWithMemorizationTarget(string $classLevelId, string $academicYearId, int $semester): Collection
+    {
+        $studentIdsWithTarget = MemorizationTarget::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->pluck('student_id');
+
+        return Student::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('class_level_id', $classLevelId)
+            ->whereIn('id', $studentIdsWithTarget)
+            ->orderByRaw('CASE WHEN status = ? THEN 0 ELSE 1 END', [Student::STATUS_ACTIVE])
+            ->orderBy('full_name')
+            ->get(['id', 'full_name', 'status', 'entry_date', 'class_level_id']);
+    }
+
+    /**
      * One stored grade as returned by the grid and bulk endpoints.
      * Expects gradingFactor and updater to be eager-loaded.
      *
@@ -304,20 +356,21 @@ class StudentGradeService
             throw ValidationException::withMessages(['semester' => self::MESSAGE_SEMESTER_NOT_CONFIGURED]);
         }
 
-        return new ClassSubjectGradingContext($subjectBook, $academicSemester, $templateFactors);
+        return new ClassSubjectGradingContext($subjectBook, $academicSemester, $templateFactors, $classLevelId);
     }
 
     /**
      * @param  array<int, array{student_id: string, scores: array<string, mixed>}>  $rows
      * @param  Collection<string, GradingTemplateFactor>  $templateFactorsByCode
-     * @param  Collection<string, int>  $classStudentIds  student ids of the class (as keys)
+     * @param  Collection<string, int>  $gradedStudentIds  student ids graded for this kitab (as keys) — listGradedStudents()
      *
      * @throws ValidationException
      */
-    private function assertGridRowsAreValid(array $rows, Collection $templateFactorsByCode, Collection $classStudentIds): void
+    private function assertGridRowsAreValid(array $rows, Collection $templateFactorsByCode, Collection $gradedStudentIds, bool $isTahfizhTemplate = false): void
     {
         $errors = [];
         $seenStudentIds = [];
+        $notInRosterMessage = $isTahfizhTemplate ? self::MESSAGE_STUDENT_WITHOUT_TARGET : 'Santri tidak terdaftar di kelas ini.';
 
         foreach ($rows as $row) {
             $studentId = $row['student_id'];
@@ -329,8 +382,8 @@ class StudentGradeService
             }
             $seenStudentIds[$studentId] = true;
 
-            if (! $classStudentIds->has($studentId)) {
-                $errors[$studentId] = 'Santri tidak terdaftar di kelas ini.';
+            if (! $gradedStudentIds->has($studentId)) {
+                $errors[$studentId] = $notInRosterMessage;
 
                 continue;
             }
