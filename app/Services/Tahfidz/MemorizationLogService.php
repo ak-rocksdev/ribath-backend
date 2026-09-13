@@ -14,7 +14,6 @@ use App\Services\Akademik\TahfizhSubjectBookResolver;
 use App\Support\BusinessDate;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -212,15 +211,22 @@ class MemorizationLogService
         $reviewLogs = $logs->where('type', MemorizationLog::TYPE_REVIEW);
         $totalNewPages = round((float) $newLogs->sum(fn (MemorizationLog $log) => (float) $log->pages), 1);
 
+        $factorResult = (new MemorizationFactorCalculator)->calculate(
+            $targetPages,
+            $totalNewPages,
+            $newLogs->map(fn (MemorizationLog $log) => (float) $log->quality_score)->all(),
+            $reviewLogs->map(fn (MemorizationLog $log) => (float) $log->quality_score)->all(),
+        );
+
         return [
             'target_pages' => $targetPages,
             'target_juz' => $target !== null ? round($targetPages / MemorizationTarget::PAGES_PER_JUZ, 2) : null,
             'total_new_pages' => $totalNewPages,
-            'achievement_percent' => (new MemorizationFactorCalculator)->calculateTargetAchievement($targetPages, $totalNewPages),
+            'achievement_percent' => $factorResult->targetAchievement,
             'new_count' => $newLogs->count(),
             'review_count' => $reviewLogs->count(),
-            'average_new_quality' => $this->averageQualityOf($newLogs),
-            'average_review_quality' => $this->averageQualityOf($reviewLogs),
+            'average_new_quality' => $factorResult->submissionQuality,
+            'average_review_quality' => $factorResult->reviewQuality,
             'recent_logs' => $logs->take(10)->map(fn (MemorizationLog $log) => $this->present($log))->values()->all(),
         ];
     }
@@ -261,15 +267,6 @@ class MemorizationLogService
             'created_at' => $log->created_at?->toJSON(),
             'updated_at' => $log->updated_at?->toJSON(),
         ];
-    }
-
-    private function averageQualityOf(Collection $logs): ?float
-    {
-        if ($logs->isEmpty()) {
-            return null;
-        }
-
-        return round((float) $logs->avg(fn (MemorizationLog $log) => (float) $log->quality_score), 2);
     }
 
     private function hasPagesInput(array $data): bool
