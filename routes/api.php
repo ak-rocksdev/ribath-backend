@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
+use App\Http\Controllers\Api\Akademik\ClassSessionController;
 use App\Http\Controllers\Api\Akademik\ClassTaskController;
 use App\Http\Controllers\Api\Akademik\GradableSubjectController;
 use App\Http\Controllers\Api\Akademik\GradeRecapController;
@@ -207,6 +208,20 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-grades');
     });
 
+    // Class session routes (Absensi: Pertemuan & Absensi per jadwal mengajar)
+    Route::prefix('class-sessions')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [ClassSessionController::class, 'index'])
+            ->middleware('permission:view-attendance');
+        Route::post('/', [ClassSessionController::class, 'store'])
+            ->middleware('permission:manage-attendance');
+        Route::post('/cancel', [ClassSessionController::class, 'cancel'])
+            ->middleware('permission:manage-attendance');
+        Route::get('/{classSession}', [ClassSessionController::class, 'show'])
+            ->middleware('permission:view-attendance');
+        Route::put('/{classSession}/attendances', [ClassSessionController::class, 'updateAttendances'])
+            ->middleware('permission:manage-attendance');
+    });
+
     // Time Slots routes
     Route::prefix('time-slots')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [TimeSlotController::class, 'index'])
@@ -261,6 +276,8 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-schedules');
         Route::post('/', [TeachingScheduleController::class, 'store'])
             ->middleware('permission:manage-schedules');
+        Route::get('/{teachingSchedule}/expected-students', [ClassSessionController::class, 'expectedStudents'])
+            ->middleware('permission:view-attendance');
         Route::get('/{teachingSchedule}', [TeachingScheduleController::class, 'show'])
             ->middleware('permission:view-schedules');
         Route::put('/{teachingSchedule}', [TeachingScheduleController::class, 'update'])
