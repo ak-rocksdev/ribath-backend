@@ -356,6 +356,19 @@ test('academic_year_id and semester may be given explicitly to check a different
         ->assertJsonPath('data.total_missing', 0);
 });
 
+test('another schools academic_year_id is rejected, not leaked as configured', function () {
+    $context = setUpAttendanceAlertContext();
+    Carbon::setTestNow('2025-09-10 10:00:00');
+
+    $otherSchool = School::factory()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id, 'is_active' => true, 'active_semester' => 1]);
+
+    test()->actingAs($context['user'])
+        ->getJson(attendanceAlertQuery(['academic_year_id' => $otherAcademicYear->id, 'semester' => 1]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['academic_year_id']);
+});
+
 test('reading the alert requires view-attendance', function () {
     $context = setUpAttendanceAlertContext();
     Carbon::setTestNow('2025-09-10 10:00:00');
