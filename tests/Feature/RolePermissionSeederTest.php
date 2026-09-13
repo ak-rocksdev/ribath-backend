@@ -1,11 +1,12 @@
 <?php
 
 use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
 test('seeder creates roles and permissions', function () {
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 
     expect(Role::where('name', 'super_admin')->exists())->toBeTrue()
         ->and(Role::where('name', 'pengurus_pesantren')->exists())->toBeTrue()
@@ -48,11 +49,18 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'manage-student-fees')->exists())->toBeTrue()
         ->and(Permission::where('name', 'view-student-fees')->exists())->toBeTrue()
         ->and(Permission::where('name', 'record-payments')->exists())->toBeTrue()
-        ->and(Permission::count())->toBe(37);
+        ->and(Permission::where('name', 'manage-grading-settings')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-grades')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-grades')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-attendance')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-attendance')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-memorization')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-memorization')->exists())->toBeTrue()
+        ->and(Permission::count())->toBe(44);
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 
     $pengurusPesantren = Role::findByName('pengurus_pesantren');
 
@@ -89,11 +97,18 @@ test('seeder assigns permissions to pengurus_pesantren', function () {
         ->and($pengurusPesantren->hasPermissionTo('manage-student-fees'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('view-student-fees'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('record-payments'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-grading-settings'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-grades'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-grades'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-attendance'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-attendance'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('view-memorization'))->toBeTrue()
+        ->and($pengurusPesantren->hasPermissionTo('manage-memorization'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse();
 });
 
 test('seeder creates admin user with super_admin role', function () {
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 
     $adminUser = User::where('email', 'akhabsy110@gmail.com')->first();
 
@@ -103,8 +118,8 @@ test('seeder creates admin user with super_admin role', function () {
 });
 
 test('seeder is idempotent', function () {
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 
     expect(Role::count())->toBe(2)
         ->and(User::where('email', 'akhabsy110@gmail.com')->count())->toBe(1);

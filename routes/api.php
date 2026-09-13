@@ -15,6 +15,9 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
+use App\Http\Controllers\Api\Akademik\GradingFactorController;
+use App\Http\Controllers\Api\Akademik\GradingTemplateController;
+use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
@@ -141,6 +144,26 @@ Route::prefix('v1')->group(function () {
         Route::put('/{academicYear}/semesters/{semester}', [AcademicSemesterController::class, 'update'])
             ->middleware('permission:manage-academic-years')
             ->whereIn('semester', ['1', '2']);
+    });
+
+    // Grading Settings routes (Penilaian: template, faktor, bobot per semester)
+    Route::prefix('grading-templates')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [GradingTemplateController::class, 'index'])
+            ->middleware('permission:view-grades');
+    });
+
+    Route::prefix('grading-factors')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [GradingFactorController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::put('/{gradingFactor}', [GradingFactorController::class, 'update'])
+            ->middleware('permission:manage-grading-settings');
+    });
+
+    Route::prefix('grading-template-factors')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [GradingTemplateFactorController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::put('/', [GradingTemplateFactorController::class, 'update'])
+            ->middleware('permission:manage-grading-settings');
     });
 
     // Time Slots routes

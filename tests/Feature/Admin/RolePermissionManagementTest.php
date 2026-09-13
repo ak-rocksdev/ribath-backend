@@ -1,11 +1,11 @@
 <?php
 
 use App\Models\User;
-use Spatie\Permission\Models\Permission;
+use Database\Seeders\RolePermissionSeeder;
 use Spatie\Permission\Models\Role;
 
 beforeEach(function () {
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
 });
 
 function createPermissionAdmin(): User
@@ -40,13 +40,15 @@ test('list permissions returns all seeded permissions', function () {
         ->assertJsonPath('success', true);
 
     $permissions = $response->json('data');
-    expect(count($permissions))->toBe(37);
+    expect(count($permissions))->toBe(44);
 
     $permissionNames = collect($permissions)->pluck('name')->toArray();
     expect($permissionNames)->toContain('view-users')
         ->toContain('manage-roles')
         ->toContain('view-registrations')
-        ->toContain('manage-class-levels');
+        ->toContain('manage-class-levels')
+        ->toContain('view-grades')
+        ->toContain('manage-grading-settings');
 });
 
 test('permissions are ordered by name', function () {

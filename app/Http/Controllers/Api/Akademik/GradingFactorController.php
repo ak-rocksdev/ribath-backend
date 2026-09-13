@@ -1,0 +1,35 @@
+<?php
+
+namespace App\Http\Controllers\Api\Akademik;
+
+use App\Http\Controllers\Controller;
+use App\Http\Requests\Akademik\UpdateGradingFactorRequest;
+use App\Models\GradingFactor;
+use App\Services\Akademik\GradingSettingsService;
+use App\Traits\EnsuresActiveSchoolTenancy;
+use Illuminate\Http\JsonResponse;
+
+class GradingFactorController extends Controller
+{
+    use EnsuresActiveSchoolTenancy;
+
+    public function __construct(
+        private GradingSettingsService $gradingSettingsService,
+    ) {}
+
+    public function index(): JsonResponse
+    {
+        $factors = $this->gradingSettingsService->listFactors();
+
+        return $this->successResponse($factors, 'Faktor penilaian berhasil diambil');
+    }
+
+    public function update(UpdateGradingFactorRequest $request, GradingFactor $gradingFactor): JsonResponse
+    {
+        $this->ensureBelongsToActiveSchool($gradingFactor);
+
+        $updatedFactor = $this->gradingSettingsService->updateFactor($gradingFactor, $request->validated());
+
+        return $this->successResponse($updatedFactor, 'Faktor penilaian berhasil diperbarui');
+    }
+}
