@@ -6,6 +6,8 @@ use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
 use App\Models\School;
+use App\Models\StudentGrade;
+use App\Models\SubjectBook;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -140,7 +142,7 @@ class GradingSettingsService
             'id' => $template->id,
             'code' => $template->code,
             'name' => $template->name,
-            'has_grades' => $this->semesterHasRecordedGrades($academicYearId, $semester),
+            'has_grades' => $this->semesterHasRecordedGrades($schoolId, $template->id, $academicYearId, $semester),
             'factors' => $rows->map(function (GradingTemplateFactor $row) {
                 $factor = $row->gradingFactor;
 
@@ -161,14 +163,22 @@ class GradingSettingsService
     }
 
     /**
-     * Whether this semester already has recorded student grades for this
+     * Whether this semester already has recorded student grades (a
+     * student_grades row with a non-NULL score) for a kitab using this
      * template — used to warn the user that changing weights recalculates
-     * existing recaps. Always false until Task 5 introduces
-     * student_grades, which will replace this method's body with a real
-     * query (R1).
+     * existing recaps (R1).
      */
-    private function semesterHasRecordedGrades(string $academicYearId, int $semester): bool
+    private function semesterHasRecordedGrades(string $schoolId, string $gradingTemplateId, string $academicYearId, int $semester): bool
     {
-        return false;
+        return StudentGrade::query()
+            ->where('school_id', $schoolId)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->whereNotNull('score')
+            ->whereIn('subject_book_id', SubjectBook::query()
+                ->select('id')
+                ->where('school_id', $schoolId)
+                ->where('grading_template_id', $gradingTemplateId))
+            ->exists();
     }
 }

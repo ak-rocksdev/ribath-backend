@@ -15,9 +15,11 @@ use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
+use App\Http\Controllers\Api\Akademik\GradableSubjectController;
 use App\Http\Controllers\Api\Akademik\GradingFactorController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
+use App\Http\Controllers\Api\Akademik\StudentGradeController;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
@@ -164,6 +166,17 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-grades');
         Route::put('/', [GradingTemplateFactorController::class, 'update'])
             ->middleware('permission:manage-grading-settings');
+    });
+
+    // Grade grid routes (Penilaian: Input Nilai per Kelas × Kitab)
+    Route::get('/gradable-subjects', [GradableSubjectController::class, 'index'])
+        ->middleware(['auth:sanctum', 'permission:view-grades']);
+
+    Route::prefix('student-grades')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [StudentGradeController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::put('/bulk', [StudentGradeController::class, 'bulkUpsert'])
+            ->middleware('permission:manage-grades');
     });
 
     // Time Slots routes

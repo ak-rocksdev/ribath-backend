@@ -53,4 +53,9 @@ class SubjectBook extends Model
     {
         return $this->hasMany(TeachingSchedule::class);
     }
+
+    public function studentGrades(): HasMany
+    {
+        return $this->hasMany(StudentGrade::class);
+    }
 }

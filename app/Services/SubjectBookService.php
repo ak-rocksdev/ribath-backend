@@ -83,6 +83,12 @@ class SubjectBookService
             }
         }
 
+        if ($subjectBook->studentGrades()->exists()) {
+            throw new HasDependentsException(
+                'Cannot delete subject book with recorded student grades'
+            );
+        }
+
         $subjectBook->delete();
     }
 }
