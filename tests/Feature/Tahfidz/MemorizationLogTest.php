@@ -459,6 +459,14 @@ test('the list is ordered by log_date desc then created_at desc', function () {
     expect(collect($response->json('data'))->pluck('log_date')->all())->toBe(['2025-09-12', '2025-09-08', '2025-09-05']);
 });
 
+test('listing logs without academic_year_id or semester is rejected', function () {
+    $context = setUpMemorizationLogContext();
+
+    $response = $this->actingAs($context['user'])->getJson('/api/v1/memorization-logs');
+
+    $response->assertStatus(422)->assertJsonValidationErrors(['academic_year_id', 'semester']);
+});
+
 // ── Permissions ──────────────────────────────────────────────────────────
 
 test('viewing the log list requires view-memorization permission', function () {
@@ -485,6 +493,32 @@ test('creating a log requires manage-memorization permission', function () {
     $response->assertStatus(403);
 });
 
+test('updating a log requires manage-memorization permission', function () {
+    $context = setUpMemorizationLogContext();
+    $student = logCreateStudent($this, $context['user'], 'Santri Izin Update');
+    $created = $this->actingAs($context['user'])->postJson('/api/v1/memorization-logs', logStorePayload($context, $student))->assertCreated();
+
+    $viewOnlyUser = User::factory()->create();
+    $viewOnlyUser->givePermissionTo('view-memorization');
+
+    $response = $this->actingAs($viewOnlyUser)->putJson('/api/v1/memorization-logs/'.$created->json('data.id'), ['notes' => 'x']);
+
+    $response->assertStatus(403);
+});
+
+test('deleting a log requires manage-memorization permission', function () {
+    $context = setUpMemorizationLogContext();
+    $student = logCreateStudent($this, $context['user'], 'Santri Izin Hapus');
+    $created = $this->actingAs($context['user'])->postJson('/api/v1/memorization-logs', logStorePayload($context, $student))->assertCreated();
+
+    $viewOnlyUser = User::factory()->create();
+    $viewOnlyUser->givePermissionTo('view-memorization');
+
+    $response = $this->actingAs($viewOnlyUser)->deleteJson('/api/v1/memorization-logs/'.$created->json('data.id'));
+
+    $response->assertStatus(403);
+});
+
 test('viewing memorization progress requires view-memorization permission', function () {
     $context = setUpMemorizationLogContext();
     $student = logCreateStudent($this, $context['user'], 'Santri Progres Izin');
@@ -500,9 +534,9 @@ test('viewing memorization progress requires view-memorization permission', func
 
 // ── Tenancy ──────────────────────────────────────────────────────────────
 
-test('a log from another school 404s on update and delete', function () {
+test('a log from another school 404s on update', function () {
     $context = setUpMemorizationLogContext();
-    $student = logCreateStudent($this, $context['user'], 'Santri Tenancy');
+    $student = logCreateStudent($this, $context['user'], 'Santri Tenancy Update');
     $created = $this->actingAs($context['user'])->postJson('/api/v1/memorization-logs', logStorePayload($context, $student))->assertCreated();
     $logId = $created->json('data.id');
 
@@ -512,6 +546,19 @@ test('a log from another school 404s on update and delete', function () {
     $log->save();
 
     $this->actingAs($context['user'])->putJson("/api/v1/memorization-logs/{$logId}", ['notes' => 'x'])->assertNotFound();
+});
+
+test('a log from another school 404s on delete', function () {
+    $context = setUpMemorizationLogContext();
+    $student = logCreateStudent($this, $context['user'], 'Santri Tenancy Hapus');
+    $created = $this->actingAs($context['user'])->postJson('/api/v1/memorization-logs', logStorePayload($context, $student))->assertCreated();
+    $logId = $created->json('data.id');
+
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    $log = MemorizationLog::findOrFail($logId);
+    $log->school_id = $otherSchool->id;
+    $log->save();
+
     $this->actingAs($context['user'])->deleteJson("/api/v1/memorization-logs/{$logId}")->assertNotFound();
 });
 
