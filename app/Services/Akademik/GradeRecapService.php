@@ -72,7 +72,7 @@ class GradeRecapService
             subjectBookId: $subjectBookId,
             students: $students,
         );
-        $rows = $this->buildFactorRows($gradingContext, $factorScoreContext);
+        $rows = $this->buildFactorRows($academicSemester, $templateFactors, $factorScoreContext);
 
         $semesterNormalizedWeights = $this->gradeWeightNormalizer->normalize(
             $this->weightInputs($templateFactors),
@@ -134,9 +134,35 @@ class GradeRecapService
         }
 
         $pairs = $this->gradableSubjectService->listForSemester($academicYearId, $semester, $student->class_level_id);
+        $gradablePairs = collect($pairs)->where('is_gradable', true);
+
+        // Resolved once for the whole class, then handed to every kitab
+        // below — resolveClassSubjectContext() would otherwise re-fetch the
+        // same academic_semesters row and re-run a redundant isGradablePair()
+        // check (pairs already came from the same active-schedules source)
+        // once per kitab.
+        $academicSemester = null;
+        $templateFactorsByTemplateId = [];
+
+        if ($gradablePairs->isNotEmpty()) {
+            $academicSemester = AcademicSemester::findByPair($academicYearId, $semester);
+
+            if ($academicSemester === null) {
+                throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
+            }
+
+            // One query for every distinct template among this class's
+            // kitab (almost always 1-2: teori_kitab, tahfizh) instead of
+            // one query per kitab.
+            $templateFactorsByTemplateId = $this->loadTemplateFactorsByTemplateId(
+                $academicYearId,
+                $semester,
+                $gradablePairs->pluck('grading_template.id')->unique()->values()->all(),
+            );
+        }
 
         $subjects = collect($pairs)
-            ->map(fn (array $pair) => $this->buildStudentSubjectRow($student, $academicYearId, $semester, $pair))
+            ->map(fn (array $pair) => $this->buildStudentSubjectRow($student, $semester, $pair, $academicSemester, $templateFactorsByTemplateId))
             ->values()
             ->all();
 
@@ -146,7 +172,7 @@ class GradeRecapService
             'student' => $this->presentRecapStudent($student),
             'academic_year_id' => $academicYearId,
             'semester' => $semester,
-            'uts_enabled' => (bool) (AcademicSemester::findByPair($academicYearId, $semester)?->uts_enabled),
+            'uts_enabled' => (bool) $academicSemester?->uts_enabled,
             'subjects' => $subjects,
             'is_complete' => $gradableSubjects->isNotEmpty() && $gradableSubjects->every(fn (array $subject) => $subject['is_complete']),
         ];
@@ -154,14 +180,18 @@ class GradeRecapService
 
     /**
      * One row of recapForStudent's `subjects`: a gradable pair reuses the
-     * class recap's own factor-row builder restricted to this one santri;
-     * an ungradable pair (kitab without a template) is presented empty
-     * rather than failing the whole recap.
+     * class recap's own factor-row builder restricted to this one santri,
+     * from the semester/template-factors already resolved once by the
+     * caller; an ungradable pair (kitab without a template) is presented
+     * empty rather than failing the whole recap.
      *
      * @param  array<string, mixed>  $pair  one GradableSubjectService::listForSemester() entry
+     * @param  array<string, Collection<int, GradingTemplateFactor>>  $templateFactorsByTemplateId
      * @return array<string, mixed>
+     *
+     * @throws ValidationException MESSAGE_SEMESTER_NOT_CONFIGURED when this kitab's template has no weight rows for the semester
      */
-    private function buildStudentSubjectRow(Student $student, string $academicYearId, int $semester, array $pair): array
+    private function buildStudentSubjectRow(Student $student, int $semester, array $pair, ?AcademicSemester $academicSemester, array $templateFactorsByTemplateId): array
     {
         if (! $pair['is_gradable']) {
             return [
@@ -176,23 +206,28 @@ class GradeRecapService
             ];
         }
 
-        $gradingContext = $this->studentGradeService->resolveClassSubjectContext(
-            $academicYearId,
-            $semester,
-            $pair['class_level_id'],
-            $pair['subject_book_id'],
-        );
+        if ($academicSemester === null) {
+            // Unreachable: recapForStudent() resolves $academicSemester whenever any pair is gradable, before this is called.
+            throw new \LogicException('Academic semester must be resolved for a gradable pair.');
+        }
+
+        /** @var Collection<int, GradingTemplateFactor> $templateFactors */
+        $templateFactors = $templateFactorsByTemplateId[$pair['grading_template']['id']] ?? collect();
+
+        if ($templateFactors->isEmpty()) {
+            throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
+        }
 
         $factorScoreContext = new FactorScoreContext(
-            academicSemester: $gradingContext->academicSemester,
-            academicYearId: $academicYearId,
+            academicSemester: $academicSemester,
+            academicYearId: $academicSemester->academic_year_id,
             semester: $semester,
             classLevelId: $pair['class_level_id'],
             subjectBookId: $pair['subject_book_id'],
             students: collect([$student]),
         );
 
-        $row = $this->buildFactorRows($gradingContext, $factorScoreContext)[0];
+        $row = $this->buildFactorRows($academicSemester, $templateFactors, $factorScoreContext)[0];
 
         return [
             'subject_book' => $pair['subject_book'],
@@ -207,17 +242,47 @@ class GradeRecapService
     }
 
     /**
+     * GradingTemplateFactor (+ gradingFactor) rows for several templates in
+     * one (academic_year_id, semester), grouped by grading_template_id and
+     * sorted by sort_order — one query for every distinct template a
+     * per-santri recap's kitab use, instead of one per kitab.
+     *
+     * @param  array<int, string>  $gradingTemplateIds
+     * @return array<string, Collection<int, GradingTemplateFactor>>
+     */
+    private function loadTemplateFactorsByTemplateId(string $academicYearId, int $semester, array $gradingTemplateIds): array
+    {
+        if ($gradingTemplateIds === []) {
+            return [];
+        }
+
+        return GradingTemplateFactor::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->whereIn('grading_template_id', $gradingTemplateIds)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->with('gradingFactor')
+            ->get()
+            ->groupBy('grading_template_id')
+            ->map(fn (Collection $templateFactors) => $templateFactors
+                ->sortBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->sort_order)
+                ->values())
+            ->all();
+    }
+
+    /**
      * Every student row of one Kelas × Kitab context — the class recap for
      * its whole class, a per-santri recap for a one-student context.
      *
+     * @param  Collection<int, GradingTemplateFactor>  $templateFactors
      * @return array<int, array<string, mixed>>
      */
-    private function buildFactorRows(ClassSubjectGradingContext $gradingContext, FactorScoreContext $factorScoreContext): array
+    private function buildFactorRows(AcademicSemester $academicSemester, Collection $templateFactors, FactorScoreContext $factorScoreContext): array
     {
-        $factorScoresByCode = $this->collectFactorScores($gradingContext->templateFactors, $factorScoreContext);
+        $factorScoresByCode = $this->collectFactorScores($templateFactors, $factorScoreContext);
 
         return $factorScoreContext->students
-            ->map(fn (Student $student) => $this->buildStudentRow($student, $gradingContext, $factorScoresByCode))
+            ->map(fn (Student $student) => $this->buildStudentRow($student, $academicSemester, $templateFactors, $factorScoresByCode))
             ->values()
             ->all();
     }
@@ -267,15 +332,14 @@ class GradeRecapService
     }
 
     /**
+     * @param  Collection<int, GradingTemplateFactor>  $templateFactors
      * @param  array<string, array<string, FactorScore>>  $factorScoresByCode
      * @return array<string, mixed>
      */
-    private function buildStudentRow(Student $student, ClassSubjectGradingContext $gradingContext, array $factorScoresByCode): array
+    private function buildStudentRow(Student $student, AcademicSemester $academicSemester, Collection $templateFactors, array $factorScoresByCode): array
     {
-        $templateFactors = $gradingContext->templateFactors;
-
         $disabledFactorCodes = $this->midtermExclusionRule->disabledFactorCodesFor(
-            $gradingContext->academicSemester,
+            $academicSemester,
             $student,
             $templateFactors->map(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor),
         );
@@ -343,6 +407,7 @@ class GradeRecapService
             'name' => $factor->name,
             'score' => $factorScore->score,
             'source' => FactorScoreSource::forInputType($factor->input_type)->value,
+            'is_midterm_exam' => $factor->is_midterm_exam,
             'weight' => (float) $templateFactor->weight,
             'normalized_weight' => $this->roundNormalizedWeight($normalizedWeight),
             'is_active' => $normalizedWeight !== null,

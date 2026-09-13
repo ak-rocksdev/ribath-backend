@@ -24,6 +24,7 @@ use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Seeds roles, the active school, class levels and grading defaults,
@@ -728,4 +729,45 @@ test('student recap rejects a student from another school', function () {
     $this->actingAs($context['user'])
         ->getJson(studentRecapQuery($context, $foreignStudent))
         ->assertNotFound();
+});
+
+test('student recap query count does not scale with the number of kitab (no N+1)', function () {
+    $context = setUpGradeRecapContext();
+
+    // One santri with only the context's single scheduled kitab.
+    $zaid = recapCreateStudent($this, $context['user'], 'Zaid');
+
+    DB::enableQueryLog();
+    $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $zaid))->assertOk();
+    $queryCountWithOneKitab = count(DB::getQueryLog());
+    DB::flushQueryLog();
+    DB::disableQueryLog();
+
+    // A second santri whose class has four more teori_kitab kitab scheduled
+    // (same template as the original, so grading_template_factors batches
+    // into one query regardless of how many kitab share it).
+    for ($i = 1; $i <= 4; $i++) {
+        $extraBook = recapCreateSubjectBook($context['school'], "Kitab Tambahan {$i}", $context['templatesByCode'][GradingTemplate::CODE_TEORI_KITAB]->id);
+        recapScheduleSubjectBook($context['school'], $context['academicYear'], 1, $context['classLevel'], $extraBook, $context['teacher']);
+    }
+    $ali = recapCreateStudent($this, $context['user'], 'Ali');
+
+    DB::enableQueryLog();
+    $response = $this->actingAs($context['user'])->getJson(studentRecapQuery($context, $ali))->assertOk();
+    $queryCountWithFiveKitab = count(DB::getQueryLog());
+    DB::flushQueryLog();
+    DB::disableQueryLog();
+
+    expect($response->json('data.subjects'))->toHaveCount(5);
+
+    // Each extra kitab still needs its own real, kitab-specific queries
+    // (its student_grades manual scores, and the Tugas factor score
+    // provider's own per-kitab lookup — batching those is out of scope
+    // here) — currently 3 per extra kitab. What must NOT come back is the
+    // fixed N+1 (a SubjectBook fetch + a redundant isGradablePair() check +
+    // a GradingTemplateFactor query + an AcademicSemester re-fetch per
+    // kitab, ~8-9 queries each — 4 extra kitab would add 32+). The bound
+    // below leaves headroom above the current 3/kitab while staying far
+    // below that regression.
+    expect($queryCountWithFiveKitab - $queryCountWithOneKitab)->toBeLessThanOrEqual(24);
 });
