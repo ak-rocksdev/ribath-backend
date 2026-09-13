@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
 use App\Http\Controllers\Api\Akademik\AttendanceAlertController;
+use App\Http\Controllers\Api\Akademik\AttendanceRecapController;
 use App\Http\Controllers\Api\Akademik\ClassSessionController;
 use App\Http\Controllers\Api\Akademik\ClassTaskController;
 use App\Http\Controllers\Api\Akademik\GradableSubjectController;
@@ -228,6 +229,12 @@ Route::prefix('v1')->group(function () {
     // Attendance alerts (Pertemuan Bolong)
     Route::prefix('attendance-alerts')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [AttendanceAlertController::class, 'index'])
+            ->middleware('permission:view-attendance');
+    });
+
+    // Attendance recap (Absensi: Rekap Kehadiran per Kelas × Kitab)
+    Route::prefix('attendance-recaps')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [AttendanceRecapController::class, 'index'])
             ->middleware('permission:view-attendance');
     });
 
