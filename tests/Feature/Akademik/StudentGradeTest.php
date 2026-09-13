@@ -573,11 +573,131 @@ test('bulk upsert returns per-student and per-factor error keys and saves nothin
         "{$zaid->id}.unknown_code",
         $umar->id,
     ]);
-    expect($errors["{$zaid->id}.adab"][0])->toBe('Faktor ini diinput lewat halaman Adab & Keaktifan.');
+    expect($errors["{$zaid->id}.adab"][0])->toBe('Level harus bilangan bulat 1–4.');
     expect($errors[$umar->id][0])->toBe('Santri tidak terdaftar di kelas ini.');
 
     // All-or-nothing: Ali's valid UAS was not saved either.
     expect(StudentGrade::count())->toBe(0);
+});
+
+// ── level_1_4 handling (Adab, Keaktifan) ─────────────────────────────────
+
+test('bulk upsert stores a level_1_4 factors level and converts it to a score via scale_levels', function () {
+    $context = setUpStudentGradeContext();
+    $ali = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+
+    $response = $this->actingAs($context['user'])
+        ->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+            ['student_id' => $ali->id, 'scores' => ['adab' => 3, 'keaktifan' => 4]],
+        ]))
+        ->assertOk();
+
+    $rows = collect($response->json('data'))->keyBy('code');
+    expect($rows['adab']['scale_level'])->toBe(3);
+    expect($rows['adab']['score'])->toEqual(85.0);
+    expect($rows['keaktifan']['scale_level'])->toBe(4);
+    expect($rows['keaktifan']['score'])->toEqual(100.0);
+
+    $adabGrade = StudentGrade::where('student_id', $ali->id)->where('grading_factor_id', $context['factorsByCode']['adab']->id)->firstOrFail();
+    expect($adabGrade->scale_level)->toBe(3);
+    expect((float) $adabGrade->score)->toBe(85.0);
+});
+
+test('bulk upsert clears both score and scale_level when a level_1_4 factor is set to null', function () {
+    $context = setUpStudentGradeContext();
+    $ali = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+
+    $this->actingAs($context['user'])->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+        ['student_id' => $ali->id, 'scores' => ['adab' => 2]],
+    ]))->assertOk();
+
+    $this->actingAs($context['user'])->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+        ['student_id' => $ali->id, 'scores' => ['adab' => null]],
+    ]))->assertOk();
+
+    $adabGrade = StudentGrade::where('student_id', $ali->id)->where('grading_factor_id', $context['factorsByCode']['adab']->id)->firstOrFail();
+    expect($adabGrade->score)->toBeNull();
+    expect($adabGrade->scale_level)->toBeNull();
+});
+
+test('bulk upsert rejects an out-of-range or non-integer level for a level_1_4 factor', function () {
+    $context = setUpStudentGradeContext();
+    $ali = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+
+    $response = $this->actingAs($context['user'])
+        ->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+            ['student_id' => $ali->id, 'scores' => ['adab' => 5, 'keaktifan' => 2.5]],
+        ]))
+        ->assertUnprocessable();
+
+    $errors = $response->json('errors');
+    expect($errors["{$ali->id}.adab"][0])->toBe('Level harus bilangan bulat 1–4.');
+    expect($errors["{$ali->id}.keaktifan"][0])->toBe('Level harus bilangan bulat 1–4.');
+    expect(StudentGrade::count())->toBe(0);
+});
+
+test('bulk upsert rejects a level_1_4 level sent as a string', function () {
+    $context = setUpStudentGradeContext();
+    $ali = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+
+    $response = $this->actingAs($context['user'])
+        ->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+            ['student_id' => $ali->id, 'scores' => ['adab' => '3']],
+        ]))
+        ->assertUnprocessable();
+
+    expect($response->json('errors')["{$ali->id}.adab"][0])->toBe('Level harus bilangan bulat 1–4.');
+    expect(StudentGrade::count())->toBe(0);
+});
+
+test('grid returns the scale_level and converted score of a saved level_1_4 grade', function () {
+    $context = setUpStudentGradeContext();
+    $ali = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+
+    $this->actingAs($context['user'])->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+        ['student_id' => $ali->id, 'scores' => ['adab' => 1]],
+    ]))->assertOk();
+
+    $response = $this->actingAs($context['user'])->getJson(studentGradeGridQuery($context));
+    $grade = $response->json("data.grades.{$ali->id}.adab");
+
+    expect($grade['scale_level'])->toBe(1);
+    expect($grade['score'])->toEqual(60.0);
+});
+
+test('editing a factors scale_levels changes conversion for new saves but old rows keep their stored score', function () {
+    $context = setUpStudentGradeContext();
+    $ali = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+    $zaid = createStudentThroughEndpointForGrading($this, $context['user'], 'Zaid');
+    $adabFactor = $context['factorsByCode']['adab'];
+
+    $this->actingAs($context['user'])->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+        ['student_id' => $ali->id, 'scores' => ['adab' => 3]],
+    ]))->assertOk();
+
+    $newScaleLevels = collect($adabFactor->scale_levels)
+        ->map(function (array $levelDefinition) {
+            if ($levelDefinition['level'] === 3) {
+                $levelDefinition['score'] = 92;
+            }
+
+            return $levelDefinition;
+        })
+        ->all();
+
+    $this->actingAs($context['user'])
+        ->putJson("/api/v1/grading-factors/{$adabFactor->id}", ['scale_levels' => $newScaleLevels])
+        ->assertOk();
+
+    $this->actingAs($context['user'])->putJson('/api/v1/student-grades/bulk', studentGradeBulkPayload($context, [
+        ['student_id' => $zaid->id, 'scores' => ['adab' => 3]],
+    ]))->assertOk();
+
+    $zaidGrade = StudentGrade::where('student_id', $zaid->id)->where('grading_factor_id', $adabFactor->id)->firstOrFail();
+    expect((float) $zaidGrade->score)->toBe(92.0);
+
+    $aliGrade = StudentGrade::where('student_id', $ali->id)->where('grading_factor_id', $adabFactor->id)->firstOrFail();
+    expect((float) $aliGrade->score)->toBe(85.0);
 });
 
 test('bulk upsert rejects a student listed twice', function () {

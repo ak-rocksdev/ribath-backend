@@ -37,7 +37,7 @@ class StudentGradeService
 
     public const MESSAGE_PAIR_NOT_SCHEDULED = 'Kitab ini tidak dijadwalkan untuk kelas tersebut pada semester ini.';
 
-    public const MESSAGE_LEVEL_FACTOR_ELSEWHERE = 'Faktor ini diinput lewat halaman Adab & Keaktifan.';
+    public const MESSAGE_INVALID_LEVEL = 'Level harus bilangan bulat 1–4.';
 
     public function __construct(
         private GradableSubjectService $gradableSubjectService,
@@ -120,6 +120,13 @@ class StudentGradeService
      * NULL, updated_by set); a code absent from `scores` leaves that grade
      * untouched; a null for a cell with no stored row creates nothing.
      *
+     * For a `level_1_4` factor (Adab, Keaktifan) the submitted value is the
+     * integer level (1-4), not a score: it is converted through the
+     * factor's current `scale_levels[level].score` and both `scale_level`
+     * and the converted `score` are stored. Editing a factor's scale_levels
+     * only changes the conversion used by later saves — rows saved earlier
+     * keep whatever score they were converted to at the time.
+     *
      * @param  array<int, array{student_id: string, scores: array<string, int|float|string|null>}>  $rows
      * @return array<int, array<string, mixed>> the stored rows of every submitted cell
      *
@@ -150,11 +157,13 @@ class StudentGradeService
             $savedGradeIds = [];
 
             foreach ($rows as $row) {
-                foreach ($row['scores'] as $factorCode => $score) {
-                    $gradingFactorId = $templateFactorsByCode->get($factorCode)->grading_factor_id;
+                foreach ($row['scores'] as $factorCode => $rawValue) {
+                    $templateFactor = $templateFactorsByCode->get($factorCode);
+                    $gradingFactorId = $templateFactor->grading_factor_id;
+                    $resolved = $this->resolveScoreAndScaleLevel($templateFactor->gradingFactor, $rawValue);
                     $existingGrade = $existingGradesByCell->get($row['student_id'].'|'.$gradingFactorId);
 
-                    if ($existingGrade === null && $score === null) {
+                    if ($existingGrade === null && $resolved['score'] === null && $resolved['scale_level'] === null) {
                         continue;
                     }
 
@@ -167,7 +176,8 @@ class StudentGradeService
                             'academic_year_id' => $academicYearId,
                             'semester' => $semester,
                             'class_level_id' => $classLevelId,
-                            'score' => $score,
+                            'score' => $resolved['score'],
+                            'scale_level' => $resolved['scale_level'],
                             'created_by' => $userId,
                             'updated_by' => $userId,
                         ])->id;
@@ -176,7 +186,8 @@ class StudentGradeService
                     }
 
                     $existingGrade->fill([
-                        'score' => $score,
+                        'score' => $resolved['score'],
+                        'scale_level' => $resolved['scale_level'],
                         'class_level_id' => $classLevelId,
                     ]);
 
@@ -349,9 +360,10 @@ class StudentGradeService
             return 'Faktor ini tidak diinput manual.';
         }
 
-        // R2: level_1_4 factors (Adab, Keaktifan) are entered on their own page.
+        // level_1_4 factors (Adab, Keaktifan): the submitted value is the
+        // level (1-4), converted to a score via resolveScoreAndScaleLevel().
         if ($factor->score_scale === GradingFactor::SCORE_SCALE_LEVEL_1_4) {
-            return self::MESSAGE_LEVEL_FACTOR_ELSEWHERE;
+            return $this->validateLevelCell($score);
         }
 
         if ($score === null) {
@@ -370,6 +382,61 @@ class StudentGradeService
 
         if (abs(round($numericScore, 2) - $numericScore) > 1e-9) {
             return 'Nilai maksimal 2 angka desimal.';
+        }
+
+        return null;
+    }
+
+    private function validateLevelCell(mixed $level): ?string
+    {
+        if ($level === null) {
+            return null;
+        }
+
+        if (! is_int($level) || $level < 1 || $level > 4) {
+            return self::MESSAGE_INVALID_LEVEL;
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolves the (score, scale_level) pair to store for one cell.
+     *
+     * For a level_1_4 factor, $rawValue is the level (already validated as
+     * an int 1-4, or null); it is converted through the factor's current
+     * scale_levels. For every other factor $rawValue is stored as-is and
+     * scale_level is always null.
+     *
+     * @return array{score: float|int|string|null, scale_level: int|null}
+     */
+    private function resolveScoreAndScaleLevel(GradingFactor $factor, mixed $rawValue): array
+    {
+        if ($factor->score_scale !== GradingFactor::SCORE_SCALE_LEVEL_1_4) {
+            return ['score' => $rawValue, 'scale_level' => null];
+        }
+
+        if ($rawValue === null) {
+            return ['score' => null, 'scale_level' => null];
+        }
+
+        $level = (int) $rawValue;
+
+        return ['score' => $this->convertLevelToScore($factor, $level), 'scale_level' => $level];
+    }
+
+    /**
+     * Looks up a level_1_4 factor's converted score for one level in its
+     * current scale_levels JSON. Returns null if the level is not defined
+     * (should not happen for a validated 1-4 level with the seeded 4-level
+     * default, but kept defensive against a corrupted configuration).
+     */
+    private function convertLevelToScore(GradingFactor $factor, int $level): ?float
+    {
+        foreach ((array) $factor->scale_levels as $scaleLevel) {
+            if ((int) ($scaleLevel['level'] ?? null) === $level) {
+                return isset($scaleLevel['score']) ? (float) $scaleLevel['score'] : null;
+            }
         }
 
         return null;
