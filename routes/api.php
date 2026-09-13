@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
 use App\Http\Controllers\Api\Akademik\GradableSubjectController;
+use App\Http\Controllers\Api\Akademik\GradeRecapController;
 use App\Http\Controllers\Api\Akademik\GradingFactorController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
@@ -177,6 +178,12 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-grades');
         Route::put('/bulk', [StudentGradeController::class, 'bulkUpsert'])
             ->middleware('permission:manage-grades');
+    });
+
+    // Grade recap routes (Penilaian: Rekap Nilai, computed live)
+    Route::prefix('grade-recaps')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/class', [GradeRecapController::class, 'classSubject'])
+            ->middleware('permission:view-grades');
     });
 
     // Time Slots routes

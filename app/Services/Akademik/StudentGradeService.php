@@ -57,11 +57,10 @@ class StudentGradeService
      */
     public function getGrid(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
     {
-        $gridContext = $this->resolveGridContext($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $gridContext = $this->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
 
-        /** @var SubjectBook $subjectBook */
-        $subjectBook = $gridContext['subjectBook'];
-        $manualTemplateFactors = $gridContext['templateFactors']
+        $subjectBook = $gridContext->subjectBook;
+        $manualTemplateFactors = $gridContext->templateFactors
             ->filter(fn (GradingTemplateFactor $templateFactor) => in_array($templateFactor->gradingFactor->input_type, self::MANUAL_INPUT_TYPES, true))
             ->values();
 
@@ -106,7 +105,7 @@ class StudentGradeService
                 ->map(fn (GradingTemplateFactor $templateFactor) => $this->presentGridFactor($templateFactor))
                 ->all(),
             'students' => $students
-                ->map(fn (Student $student) => $this->presentGridStudent($student))
+                ->map(fn (Student $student) => $this->presentClassStudent($student))
                 ->values()
                 ->all(),
             // Object (not list) even when empty so clients can always index by student id.
@@ -128,9 +127,9 @@ class StudentGradeService
      */
     public function upsertGrid(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId, array $rows): array
     {
-        $gridContext = $this->resolveGridContext($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $gridContext = $this->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
 
-        $templateFactorsByCode = $gridContext['templateFactors']->keyBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->code);
+        $templateFactorsByCode = $gridContext->templateFactors->keyBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->code);
         $classStudentIds = $this->listClassStudents($classLevelId)->pluck('id')->flip();
 
         $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $classStudentIds);
@@ -250,16 +249,18 @@ class StudentGradeService
     }
 
     /**
-     * Checks the kitab has a template, the pair is scheduled and the
-     * semester is configured; returns the kitab (with its template) and the
-     * template's factor rows for the semester (with gradingFactor), ordered
-     * by the factor's sort_order.
+     * Validates a Kelas × Kitab selection for a semester akademik — the kitab
+     * has a template, the pair is scheduled (GradableSubjectService) and the
+     * semester is configured, checked in that order — and returns the kitab
+     * (with its template), the academic_semesters row and the template's
+     * weight rows for the semester (with gradingFactor, by sort_order).
      *
-     * @return array{subjectBook: SubjectBook, templateFactors: Collection<int, GradingTemplateFactor>}
+     * Shared by the grade grid and the grade recap so both reject the same
+     * selections with the same messages.
      *
      * @throws ValidationException
      */
-    private function resolveGridContext(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
+    public function resolveClassSubjectContext(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): ClassSubjectGradingContext
     {
         $school = School::activeOrFail();
 
@@ -285,11 +286,13 @@ class StudentGradeService
             ->sortBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->sort_order)
             ->values();
 
-        if (AcademicSemester::findByPair($academicYearId, $semester) === null || $templateFactors->isEmpty()) {
+        $academicSemester = AcademicSemester::findByPair($academicYearId, $semester);
+
+        if ($academicSemester === null || $templateFactors->isEmpty()) {
             throw ValidationException::withMessages(['semester' => self::MESSAGE_SEMESTER_NOT_CONFIGURED]);
         }
 
-        return ['subjectBook' => $subjectBook, 'templateFactors' => $templateFactors];
+        return new ClassSubjectGradingContext($subjectBook, $academicSemester, $templateFactors);
     }
 
     /**
@@ -394,9 +397,11 @@ class StudentGradeService
     }
 
     /**
-     * @return array<string, mixed>
+     * One class student as listed by the grid and the recap.
+     *
+     * @return array{id: string, full_name: string, status: string, is_active_student: bool, entry_date: string|null}
      */
-    private function presentGridStudent(Student $student): array
+    public function presentClassStudent(Student $student): array
     {
         return [
             'id' => $student->id,
