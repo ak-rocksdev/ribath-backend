@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\ClassLevel;
+use App\Models\GradingTemplate;
 use App\Models\School;
 use App\Models\SubjectBook;
 use App\Models\SubjectCategory;
@@ -15,8 +16,12 @@ class TahfizhSubjectBookSeeder extends Seeder
      * under the `tahfizh` fann seeded by SubjectCategorySeeder. It applies
      * to every class level of the school, both semesters, 6 sessions/week.
      *
-     * grading_template_id is intentionally left unset here — Task 4's
-     * backfill sets it once the grading_templates table exists.
+     * Sets grading_template_id to the school's "tahfizh" template when one
+     * already exists (DatabaseSeeder runs GradingDefaultsSeeder first, so
+     * on a fresh seed it always does). Otherwise it's left null —
+     * GradingDefaultsInstaller::assignDefaultTemplateToSubjectBooks()
+     * (called from GradingDefaultsSeeder) backfills it once templates are
+     * installed.
      */
     public function run(): void
     {
@@ -34,6 +39,10 @@ class TahfizhSubjectBookSeeder extends Seeder
             ->pluck('slug')
             ->all();
 
+        $tahfizhTemplate = GradingTemplate::where('school_id', $school->id)
+            ->where('code', GradingTemplate::CODE_TAHFIZH)
+            ->first();
+
         SubjectBook::firstOrCreate(
             ['school_id' => $school->id, 'title' => "Tahfizh Al-Qur'an"],
             [
@@ -41,6 +50,7 @@ class TahfizhSubjectBookSeeder extends Seeder
                 'class_levels' => $allClassLevelSlugs,
                 'semesters' => [1, 2],
                 'sessions_per_week' => 6,
+                'grading_template_id' => $tahfizhTemplate?->id,
             ]
         );
     }

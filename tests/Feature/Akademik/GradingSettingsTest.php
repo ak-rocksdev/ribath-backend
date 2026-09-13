@@ -5,6 +5,8 @@ use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
 use App\Models\School;
+use App\Models\SubjectBook;
+use App\Models\SubjectCategory;
 use App\Models\User;
 use App\Services\Akademik\AcademicSemesterService;
 use App\Services\Akademik\GradingDefaultsInstaller;
@@ -173,6 +175,66 @@ test('ensureWeightsForAllSemesters seeds every existing semester of the school',
     $installer->ensureWeightsForAllSemesters($school);
 
     expect(GradingTemplateFactor::where('school_id', $school->id)->count())->toBe(4 * 10);
+});
+
+test('assignDefaultTemplateToSubjectBooks assigns teori_kitab to a book without a template', function () {
+    [, $school] = createSchoolAndUserForGrading();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+
+    $category = SubjectCategory::factory()->create(['school_id' => $school->id, 'slug' => 'nahwu']);
+    $book = SubjectBook::factory()->create(['school_id' => $school->id, 'subject_category_id' => $category->id]);
+
+    app(GradingDefaultsInstaller::class)->assignDefaultTemplateToSubjectBooks($school);
+
+    $teoriKitab = GradingTemplate::where('school_id', $school->id)->where('code', 'teori_kitab')->firstOrFail();
+
+    expect($book->fresh()->grading_template_id)->toBe($teoriKitab->id);
+});
+
+test('assignDefaultTemplateToSubjectBooks assigns tahfizh to the tahfizh fanns book', function () {
+    [, $school] = createSchoolAndUserForGrading();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+
+    $tahfizhCategory = SubjectCategory::factory()->create(['school_id' => $school->id, 'slug' => 'tahfizh']);
+    $book = SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => $tahfizhCategory->id,
+        'title' => "Tahfizh Al-Qur'an",
+    ]);
+
+    app(GradingDefaultsInstaller::class)->assignDefaultTemplateToSubjectBooks($school);
+
+    $tahfizhTemplate = GradingTemplate::where('school_id', $school->id)->where('code', 'tahfizh')->firstOrFail();
+
+    expect($book->fresh()->grading_template_id)->toBe($tahfizhTemplate->id);
+});
+
+test('assignDefaultTemplateToSubjectBooks does nothing when no templates are installed', function () {
+    [, $school] = createSchoolAndUserForGrading();
+
+    $category = SubjectCategory::factory()->create(['school_id' => $school->id]);
+    $book = SubjectBook::factory()->create(['school_id' => $school->id, 'subject_category_id' => $category->id]);
+
+    app(GradingDefaultsInstaller::class)->assignDefaultTemplateToSubjectBooks($school);
+
+    expect($book->fresh()->grading_template_id)->toBeNull();
+});
+
+test('assignDefaultTemplateToSubjectBooks does not overwrite a books existing template', function () {
+    [, $school] = createSchoolAndUserForGrading();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+
+    $tahfizhTemplate = GradingTemplate::where('school_id', $school->id)->where('code', 'tahfizh')->firstOrFail();
+    $category = SubjectCategory::factory()->create(['school_id' => $school->id, 'slug' => 'nahwu']);
+    $book = SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => $category->id,
+        'grading_template_id' => $tahfizhTemplate->id,
+    ]);
+
+    app(GradingDefaultsInstaller::class)->assignDefaultTemplateToSubjectBooks($school);
+
+    expect($book->fresh()->grading_template_id)->toBe($tahfizhTemplate->id);
 });
 
 // ── GET /grading-templates ────────────────────────────────────────────────

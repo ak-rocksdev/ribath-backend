@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\School;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreSubjectBookRequest extends FormRequest
 {
@@ -13,9 +15,16 @@ class StoreSubjectBookRequest extends FormRequest
 
     public function rules(): array
     {
+        $school = School::activeOrFail();
+
         return [
             'title' => ['required', 'string', 'max:100'],
             'subject_category_id' => ['required', 'exists:subject_categories,id'],
+            'grading_template_id' => [
+                'nullable',
+                'uuid',
+                Rule::exists('grading_templates', 'id')->where('school_id', $school->id),
+            ],
             'class_levels' => ['required', 'array', 'min:1'],
             'class_levels.*' => ['string', 'exists:class_levels,slug'],
             'semesters' => ['required', 'array', 'min:1'],
@@ -23,6 +32,13 @@ class StoreSubjectBookRequest extends FormRequest
             'sessions_per_week' => ['sometimes', 'integer', 'min:1', 'max:7'],
             'description' => ['nullable', 'string', 'max:500'],
             'is_active' => ['sometimes', 'boolean'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'grading_template_id.exists' => 'Template penilaian tidak ditemukan untuk pesantren ini.',
         ];
     }
 }

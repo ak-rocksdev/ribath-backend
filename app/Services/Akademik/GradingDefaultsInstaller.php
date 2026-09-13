@@ -7,6 +7,8 @@ use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
 use App\Models\School;
+use App\Models\SubjectBook;
+use App\Models\SubjectCategory;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -195,6 +197,48 @@ class GradingDefaultsInstaller
 
         foreach ($semesters as $semester) {
             $this->ensureWeightsForSemester($semester);
+        }
+    }
+
+    /**
+     * Backfills subject_books.grading_template_id for the school: every
+     * book still missing one gets "teori_kitab", except books under the
+     * tahfizh fann (subject_categories.slug = 'tahfizh') or literally
+     * titled "Tahfizh Al-Qur'an", which get "tahfizh". Idempotent — never
+     * overwrites a book that already has a template. No-op if the school
+     * has no grading_templates installed yet.
+     */
+    public function assignDefaultTemplateToSubjectBooks(School $school): void
+    {
+        $templatesByCode = GradingTemplate::where('school_id', $school->id)->get()->keyBy('code');
+
+        if ($templatesByCode->isEmpty()) {
+            return;
+        }
+
+        $tahfizhTemplate = $templatesByCode->get(GradingTemplate::CODE_TAHFIZH);
+        $teoriKitabTemplate = $templatesByCode->get(GradingTemplate::CODE_TEORI_KITAB);
+
+        if ($tahfizhTemplate) {
+            $tahfizhCategoryIds = SubjectCategory::where('school_id', $school->id)
+                ->where('slug', 'tahfizh')
+                ->pluck('id');
+
+            SubjectBook::where('school_id', $school->id)
+                ->whereNull('grading_template_id')
+                ->where(function ($query) use ($tahfizhCategoryIds) {
+                    $query->where('title', "Tahfizh Al-Qur'an");
+                    if ($tahfizhCategoryIds->isNotEmpty()) {
+                        $query->orWhereIn('subject_category_id', $tahfizhCategoryIds);
+                    }
+                })
+                ->update(['grading_template_id' => $tahfizhTemplate->id]);
+        }
+
+        if ($teoriKitabTemplate) {
+            SubjectBook::where('school_id', $school->id)
+                ->whereNull('grading_template_id')
+                ->update(['grading_template_id' => $teoriKitabTemplate->id]);
         }
     }
 

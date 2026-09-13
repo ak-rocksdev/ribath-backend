@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Exceptions\HasDependentsException;
 use App\Models\School;
 use App\Models\SubjectBook;
+use App\Models\TeachingSchedule;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -16,9 +17,9 @@ class SubjectBookService
         $school = School::activeOrFail();
 
         $query = SubjectBook::where('school_id', $school->id)
-            ->with('subjectCategory:id,name,color');
+            ->with(['subjectCategory:id,name,color', 'gradingTemplate:id,code,name']);
 
-        if (class_exists(\App\Models\TeachingSchedule::class)) {
+        if (class_exists(TeachingSchedule::class)) {
             $query->withCount('teachingSchedules');
         }
 
@@ -45,9 +46,9 @@ class SubjectBookService
 
         $query = SubjectBook::where('school_id', $school->id)
             ->where('is_active', true)
-            ->with('subjectCategory:id,name,color');
+            ->with(['subjectCategory:id,name,color', 'gradingTemplate:id,code,name']);
 
-        if (class_exists(\App\Models\TeachingSchedule::class)) {
+        if (class_exists(TeachingSchedule::class)) {
             $query->withCount('teachingSchedules');
         }
 
@@ -62,19 +63,19 @@ class SubjectBookService
 
         $book = SubjectBook::create($data);
 
-        return $book->load('subjectCategory:id,name,color');
+        return $book->load(['subjectCategory:id,name,color', 'gradingTemplate:id,code,name']);
     }
 
     public function updateBook(SubjectBook $subjectBook, array $data): SubjectBook
     {
         $subjectBook->update($data);
 
-        return $subjectBook->fresh()->load('subjectCategory:id,name,color');
+        return $subjectBook->fresh()->load(['subjectCategory:id,name,color', 'gradingTemplate:id,code,name']);
     }
 
     public function deleteBook(SubjectBook $subjectBook): void
     {
-        if (class_exists(\App\Models\TeachingSchedule::class)) {
+        if (class_exists(TeachingSchedule::class)) {
             if ($subjectBook->teachingSchedules()->exists()) {
                 throw new HasDependentsException(
                     'Cannot delete subject book with existing teaching schedules'

@@ -36,7 +36,7 @@ class SubjectBookController extends Controller
 
     public function show(SubjectBook $subjectBook): JsonResponse
     {
-        $subjectBook->load('subjectCategory:id,name,color');
+        $subjectBook->load(['subjectCategory:id,name,color', 'gradingTemplate:id,code,name']);
 
         return $this->successResponse($subjectBook, 'Subject book retrieved');
     }

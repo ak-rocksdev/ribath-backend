@@ -1,10 +1,12 @@
 <?php
 
 use App\Models\ClassLevel;
+use App\Models\GradingTemplate;
 use App\Models\School;
 use App\Models\SubjectBook;
 use App\Models\SubjectCategory;
 use App\Models\User;
+use App\Services\Akademik\GradingDefaultsInstaller;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 
@@ -511,6 +513,147 @@ test('create subject book fails with sessions_per_week zero', function () {
 
     $response->assertUnprocessable()
         ->assertJsonValidationErrors(['sessions_per_week']);
+});
+
+// ── Grading template tests ───────────────────────────────────────────────
+
+test('can create a subject book with a grading_template_id', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+    $teoriKitab = GradingTemplate::where('school_id', $school->id)->where('code', 'teori_kitab')->firstOrFail();
+
+    $response = $this->actingAs($user)
+        ->postJson('/api/v1/subject-books', [
+            'title' => 'Jurumiyyah',
+            'subject_category_id' => $category->id,
+            'grading_template_id' => $teoriKitab->id,
+            'class_levels' => ['tamhidi'],
+            'semesters' => [1],
+        ]);
+
+    $response->assertCreated()
+        ->assertJsonPath('data.grading_template_id', $teoriKitab->id)
+        ->assertJsonPath('data.grading_template.code', 'teori_kitab');
+
+    $this->assertDatabaseHas('subject_books', [
+        'title' => 'Jurumiyyah',
+        'grading_template_id' => $teoriKitab->id,
+    ]);
+});
+
+test('creating a subject book without a grading_template_id leaves it null', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+
+    $response = $this->actingAs($user)
+        ->postJson('/api/v1/subject-books', [
+            'title' => 'Jurumiyyah',
+            'subject_category_id' => $category->id,
+            'class_levels' => ['tamhidi'],
+            'semesters' => [1],
+        ]);
+
+    $response->assertCreated()
+        ->assertJsonPath('data.grading_template_id', null);
+});
+
+test('create subject book fails with a grading_template_id that does not exist', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+
+    $response = $this->actingAs($user)
+        ->postJson('/api/v1/subject-books', [
+            'title' => 'Jurumiyyah',
+            'subject_category_id' => $category->id,
+            'grading_template_id' => '00000000-0000-0000-0000-000000000000',
+            'class_levels' => ['tamhidi'],
+            'semesters' => [1],
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['grading_template_id']);
+});
+
+test('create subject book fails with another schools grading_template_id', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    app(GradingDefaultsInstaller::class)->installForSchool($otherSchool);
+    $otherSchoolTemplate = GradingTemplate::where('school_id', $otherSchool->id)->where('code', 'teori_kitab')->firstOrFail();
+
+    $response = $this->actingAs($user)
+        ->postJson('/api/v1/subject-books', [
+            'title' => 'Jurumiyyah',
+            'subject_category_id' => $category->id,
+            'grading_template_id' => $otherSchoolTemplate->id,
+            'class_levels' => ['tamhidi'],
+            'semesters' => [1],
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['grading_template_id']);
+});
+
+test('can update a subject books grading_template_id', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+    $tahfizhTemplate = GradingTemplate::where('school_id', $school->id)->where('code', 'tahfizh')->firstOrFail();
+
+    $book = SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => $category->id,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/subject-books/{$book->id}", [
+            'grading_template_id' => $tahfizhTemplate->id,
+        ]);
+
+    $response->assertOk()
+        ->assertJsonPath('data.grading_template_id', $tahfizhTemplate->id)
+        ->assertJsonPath('data.grading_template.code', 'tahfizh');
+});
+
+test('update subject book fails with another schools grading_template_id', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    app(GradingDefaultsInstaller::class)->installForSchool($otherSchool);
+    $otherSchoolTemplate = GradingTemplate::where('school_id', $otherSchool->id)->where('code', 'teori_kitab')->firstOrFail();
+
+    $book = SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => $category->id,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/subject-books/{$book->id}", [
+            'grading_template_id' => $otherSchoolTemplate->id,
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['grading_template_id']);
+});
+
+test('subject book list response includes grading_template relation', function () {
+    [$user, $school, $category] = createSubjectBookTestUser();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+    $teoriKitab = GradingTemplate::where('school_id', $school->id)->where('code', 'teori_kitab')->firstOrFail();
+
+    SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => $category->id,
+        'grading_template_id' => $teoriKitab->id,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/subject-books');
+
+    $response->assertOk()
+        ->assertJsonStructure([
+            'data' => [
+                '*' => ['id', 'grading_template_id', 'grading_template' => ['id', 'code', 'name']],
+            ],
+        ])
+        ->assertJsonPath('data.0.grading_template.code', 'teori_kitab');
 });
 
 // ── Update tests ───────────────────────────────────────────────────────
