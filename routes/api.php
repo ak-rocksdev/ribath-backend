@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\Akademik\GradingFactorController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
 use App\Http\Controllers\Api\Akademik\ReportCardController;
+use App\Http\Controllers\Api\Akademik\ReportCardPdfController;
 use App\Http\Controllers\Api\Akademik\StudentGradeController;
 use App\Http\Controllers\Api\Auth\AuthController;
 use App\Http\Controllers\Api\Keuangan\BillController;
@@ -204,6 +205,8 @@ Route::prefix('v1')->group(function () {
         Route::post('/finalize', [ReportCardController::class, 'finalize'])
             ->middleware('permission:manage-grades');
         Route::get('/{reportCard}', [ReportCardController::class, 'show'])
+            ->middleware('permission:view-grades');
+        Route::get('/{reportCard}/pdf', [ReportCardPdfController::class, 'show'])
             ->middleware('permission:view-grades');
         Route::post('/{reportCard}/unfinalize', [ReportCardController::class, 'unfinalize'])
             ->middleware('permission:manage-grades');

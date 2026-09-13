@@ -14,13 +14,13 @@ use Illuminate\Validation\ValidationException;
 class TeachingScheduleService
 {
     private const DAY_LABELS = [
-        'monday'    => 'Senin',
-        'tuesday'   => 'Selasa',
+        'monday' => 'Senin',
+        'tuesday' => 'Selasa',
         'wednesday' => 'Rabu',
-        'thursday'  => 'Kamis',
-        'friday'    => 'Jumat',
-        'saturday'  => 'Sabtu',
-        'sunday'    => 'Ahad',
+        'thursday' => 'Kamis',
+        'friday' => 'Jumat',
+        'saturday' => 'Sabtu',
+        'sunday' => 'Ahad',
     ];
 
     private const DAY_ORDER = [
@@ -28,9 +28,12 @@ class TeachingScheduleService
         'friday' => 4, 'saturday' => 5, 'sunday' => 6,
     ];
 
-    /** Per-process cache for the default logo so we don't re-read the PNG on every export. */
-    private static ?string $cachedDefaultLogoDataUri = null;
-    private static bool $defaultLogoLoaded = false;
+    private SchoolLogoResolver $schoolLogoResolver;
+
+    public function __construct(?SchoolLogoResolver $schoolLogoResolver = null)
+    {
+        $this->schoolLogoResolver = $schoolLogoResolver ?? new SchoolLogoResolver;
+    }
 
     public function listSchedules(array $filters): Collection
     {
@@ -384,30 +387,30 @@ class TeachingScheduleService
 
         return [
             'school' => [
-                'name'    => $teacher->school?->name,
+                'name' => $teacher->school?->name,
                 'address' => $teacher->school?->address,
-                'phone'   => $teacher->school?->phone,
-                'email'   => $teacher->school?->email,
+                'phone' => $teacher->school?->phone,
+                'email' => $teacher->school?->email,
             ],
             'teacher' => [
                 'full_name' => $teacher->full_name,
-                'code'      => $teacher->code,
+                'code' => $teacher->code,
             ],
             'academic_year' => [
                 'name' => $academicYearName,
             ],
-            'semester'         => $semester,
+            'semester' => $semester,
             'schedules_sorted' => $sortedSchedules->all(),
             'schedules_by_day' => $schedulesByDay,
-            'time_slots'       => $timeSlots,
-            'totals'           => [
-                'sesi'  => $sortedSchedules->count(),
+            'time_slots' => $timeSlots,
+            'totals' => [
+                'sesi' => $sortedSchedules->count(),
                 'kitab' => $sortedSchedules->pluck('subject_book_id')->unique()->count(),
                 'kelas' => $sortedSchedules->pluck('class_level_id')->unique()->count(),
             ],
-            'logo_data_uri' => $this->resolveSchoolLogoDataUri($teacher->school),
-            'day_labels'    => self::DAY_LABELS,
-            'generated_at'  => Carbon::now('Asia/Jakarta'),
+            'logo_data_uri' => $this->schoolLogoResolver->dataUri($teacher->school),
+            'day_labels' => self::DAY_LABELS,
+            'generated_at' => Carbon::now('Asia/Jakarta'),
         ];
     }
 
@@ -422,48 +425,6 @@ class TeachingScheduleService
         $year = str_replace('/', '-', $viewModel['academic_year']['name'] ?? 'TA');
 
         return "Jadwal-{$code}-Sem{$semester}-{$year}.pdf";
-    }
-
-    /**
-     * Read the default school logo from disk and return a base64 data URI.
-     * Returns null if the file is missing so the Blade can render without a logo.
-     * Memoised at the PHP-process level — the file is fixed at build time and
-     * never changes between requests served by the same FPM worker.
-     */
-    private function resolveDefaultLogoDataUri(): ?string
-    {
-        if (! self::$defaultLogoLoaded) {
-            $path = public_path('images/default-school-logo.png');
-            self::$cachedDefaultLogoDataUri = file_exists($path)
-                ? 'data:image/png;base64,' . base64_encode(file_get_contents($path))
-                : null;
-            self::$defaultLogoLoaded = true;
-        }
-
-        return self::$cachedDefaultLogoDataUri;
-    }
-
-    /**
-     * Resolve the logo data URI to embed in the PDF for the given school.
-     * Prefers the school's uploaded logo (schools.logo_path) when present;
-     * falls back to the bundled default logo when the school has none or the
-     * file is missing on disk.
-     */
-    private function resolveSchoolLogoDataUri(?School $school): ?string
-    {
-        if (! $school?->logo_path) {
-            return $this->resolveDefaultLogoDataUri();
-        }
-
-        $absolutePath = \Illuminate\Support\Facades\Storage::disk('public')->path($school->logo_path);
-
-        if (! file_exists($absolutePath)) {
-            return $this->resolveDefaultLogoDataUri();
-        }
-
-        $mime = mime_content_type($absolutePath) ?: 'image/png';
-
-        return 'data:'.$mime.';base64,'.base64_encode(file_get_contents($absolutePath));
     }
 
     private function compareSchedules(TeachingSchedule $a, TeachingSchedule $b): int
@@ -494,7 +455,7 @@ class TeachingScheduleService
             }
 
             $groups[] = [
-                'day'   => $day,
+                'day' => $day,
                 'label' => self::DAY_LABELS[$day],
                 'items' => $byDay->get($day)->all(),
             ];
@@ -516,8 +477,8 @@ class TeachingScheduleService
                 continue;
             }
             $seen[$slotId] = [
-                'id'         => $slotId,
-                'label'      => $schedule->timeSlot?->label ?? $slotId,
+                'id' => $slotId,
+                'label' => $schedule->timeSlot?->label ?? $slotId,
                 'sort_order' => $schedule->timeSlot?->sort_order ?? PHP_INT_MAX,
             ];
         }
