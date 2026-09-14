@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Exceptions\HasDependentsException;
 use App\Models\AcademicYear;
+use App\Models\GradingTemplateFactor;
 use App\Models\School;
 use App\Models\TeachingSchedule;
 use App\Services\Akademik\AcademicSemesterService;
@@ -12,6 +13,20 @@ use Illuminate\Support\Facades\DB;
 
 class AcademicYearService
 {
+    /**
+     * Tables holding grading data (Penilaian, Absensi Pertemuan, Hafalan,
+     * Rapor) scoped to an academic year. Queried without Eloquent scopes so
+     * soft-deleted rows count too: they still hold the restrict FK.
+     */
+    private const GRADING_DATA_TABLES = [
+        'student_grades',
+        'class_tasks',
+        'class_sessions',
+        'memorization_targets',
+        'memorization_logs',
+        'report_cards',
+    ];
+
     public function __construct(
         private AcademicSemesterService $academicSemesterService,
     ) {}
@@ -78,7 +93,30 @@ class AcademicYearService
             }
         }
 
-        $academicYear->delete();
+        DB::transaction(function () use ($academicYear) {
+            if ($this->academicYearHasGradingData($academicYear)) {
+                throw new HasDependentsException(
+                    'Tahun ajaran tidak bisa dihapus karena sudah memiliki data penilaian.'
+                );
+            }
+
+            // Semester weights are configuration only; academic_semesters
+            // cascade on their own.
+            GradingTemplateFactor::where('academic_year_id', $academicYear->id)->delete();
+
+            $academicYear->delete();
+        });
+    }
+
+    private function academicYearHasGradingData(AcademicYear $academicYear): bool
+    {
+        foreach (self::GRADING_DATA_TABLES as $gradingDataTable) {
+            if (DB::table($gradingDataTable)->where('academic_year_id', $academicYear->id)->exists()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function activate(AcademicYear $academicYear): AcademicYear

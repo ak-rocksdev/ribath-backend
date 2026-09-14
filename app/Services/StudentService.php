@@ -131,9 +131,7 @@ class StudentService
             return;
         }
 
-        $classLevelId = ClassLevel::where('school_id', $schoolId)
-            ->where('slug', $data['class_level'])
-            ->value('id');
+        $classLevelId = ClassLevel::idForSchoolSlug($schoolId, $data['class_level']);
 
         if ($classLevelId !== null) {
             $data['class_level_id'] = $classLevelId;

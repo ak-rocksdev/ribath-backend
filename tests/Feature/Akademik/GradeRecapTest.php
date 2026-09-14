@@ -512,7 +512,12 @@ test('a provider missing reason is passed through to the recap', function () {
 test('class recap rejects a semester without academic semester configuration', function () {
     $context = setUpGradeRecapContext();
 
-    $unconfiguredYear = AcademicYear::factory()->create(['school_id' => $context['school']->id]);
+    $unconfiguredYear = AcademicYear::factory()->create([
+        'school_id' => $context['school']->id,
+        'name' => '2024/2025',
+        'start_date' => '2024-07-01',
+        'end_date' => '2025-06-30',
+    ]);
     recapScheduleSubjectBook($context['school'], $unconfiguredYear, 1, $context['classLevel'], $context['subjectBook'], $context['teacher']);
 
     $this->actingAs($context['user'])

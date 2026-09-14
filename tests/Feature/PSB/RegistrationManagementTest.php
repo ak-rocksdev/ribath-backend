@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\AcademicYear;
+use App\Models\ClassLevel;
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\School;
@@ -421,6 +422,32 @@ test('accept creates student record with data from registration', function () {
         'program' => $registration->preferred_program,
         'class_level' => 'tamhidi',
         'status' => 'active',
+    ]);
+});
+
+test('accept links the new student to the class level of the school', function () {
+    $admin = createAdminUser();
+    seedClassLevels();
+    $period = RegistrationPeriod::factory()->create();
+    $registration = Registration::factory()->create([
+        'registration_period_id' => $period->id,
+        'status' => Registration::STATUS_INTERVIEW,
+    ]);
+    $ibtidaSatu = ClassLevel::where('school_id', $registration->school_id)
+        ->where('slug', 'ibtida_1')
+        ->firstOrFail();
+
+    $response = $this->actingAs($admin)
+        ->postJson("/api/v1/psb/registrations/{$registration->id}/accept", [
+            'class_level' => 'ibtida_1',
+        ]);
+
+    $response->assertOk();
+
+    $this->assertDatabaseHas('students', [
+        'registration_id' => $registration->id,
+        'class_level' => 'ibtida_1',
+        'class_level_id' => $ibtidaSatu->id,
     ]);
 });
 

@@ -337,7 +337,12 @@ test('rejects a pair that is not scheduled', function () {
 test('rejects a semester without academic semester configuration', function () {
     $context = setUpAttendanceRecapContext();
 
-    $unconfiguredYear = AcademicYear::factory()->create(['school_id' => $context['school']->id]);
+    $unconfiguredYear = AcademicYear::factory()->create([
+        'school_id' => $context['school']->id,
+        'name' => '2024/2025',
+        'start_date' => '2024-07-01',
+        'end_date' => '2025-06-30',
+    ]);
     attendanceRecapCreateSchedule($context['school'], $unconfiguredYear, $context['classLevel'], $context['subjectBook'], $context['teacher']);
 
     $this->actingAs($context['user'])

@@ -8,8 +8,8 @@ namespace App\Services\Akademik\Validation;
  * between 0 and 100, with at most 2 decimal places.
  *
  * Shared by StudentGradeService::validateCell() (Input Nilai's percent
- * factors) and ClassTaskService::validateScore() (Tugas), so the three
- * Indonesian messages are defined in exactly one place.
+ * factors) and ClassTaskService::assertScoreRowsAreValid() (skor Tugas), so
+ * the three Indonesian messages are defined in exactly one place.
  *
  * Pure: no queries, no state.
  */

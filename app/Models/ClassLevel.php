@@ -32,4 +32,21 @@ class ClassLevel extends Model
     {
         return $this->belongsTo(School::class);
     }
+
+    /**
+     * The id of the school's class level with the given slug, or null when
+     * the school has no such class level. Students store both the slug
+     * (class_level) and this id (class_level_id); Penilaian defines class
+     * membership by the id. A student without a school has no class level.
+     */
+    public static function idForSchoolSlug(?string $schoolId, string $slug): ?string
+    {
+        if ($schoolId === null) {
+            return null;
+        }
+
+        return static::where('school_id', $schoolId)
+            ->where('slug', $slug)
+            ->value('id');
+    }
 }

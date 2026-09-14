@@ -527,7 +527,12 @@ test('bulk upsert rejects a semester without academic semester configuration', f
     $student = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
 
     // An academic year created without its academic_semesters rows.
-    $unconfiguredYear = AcademicYear::factory()->create(['school_id' => $context['school']->id]);
+    $unconfiguredYear = AcademicYear::factory()->create([
+        'school_id' => $context['school']->id,
+        'name' => '2024/2025',
+        'start_date' => '2024-07-01',
+        'end_date' => '2025-06-30',
+    ]);
     scheduleSubjectBookForClass($context['school'], $unconfiguredYear, 1, $context['classLevel'], $context['subjectBook'], $context['teacher']);
 
     $payload = studentGradeBulkPayload($context, [['student_id' => $student->id, 'scores' => ['uts' => 80]]]);
