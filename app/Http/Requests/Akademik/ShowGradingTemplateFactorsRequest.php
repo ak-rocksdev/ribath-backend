@@ -4,7 +4,6 @@ namespace App\Http\Requests\Akademik;
 
 use App\Models\School;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 class ShowGradingTemplateFactorsRequest extends FormRequest
 {
@@ -15,16 +14,7 @@ class ShowGradingTemplateFactorsRequest extends FormRequest
 
     public function rules(): array
     {
-        $school = School::activeOrFail();
-
-        return [
-            'academic_year_id' => [
-                'required',
-                'uuid',
-                Rule::exists('academic_years', 'id')->where('school_id', $school->id),
-            ],
-            'semester' => ['required', Rule::in([1, 2])],
-        ];
+        return StudentGradeGridRules::semesterSelectionRules(School::activeOrFail());
     }
 
     public function messages(): array

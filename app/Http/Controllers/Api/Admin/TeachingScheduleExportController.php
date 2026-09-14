@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\ExportTeacherSchedulePdfRequest;
 use App\Models\Teacher;
 use App\Services\TeachingScheduleService;
+use App\Support\BrowsershotEnvironment;
 use Spatie\LaravelPdf\Enums\Format;
 use Spatie\LaravelPdf\Facades\Pdf;
 use Spatie\LaravelPdf\PdfBuilder;
@@ -28,24 +29,12 @@ class TeachingScheduleExportController extends Controller
             semester: (int) $request->validated('semester'),
         );
 
-        // Tell puppeteer's resolver where to find its bundled Chromium cache. Has to be
-        // set on the PHP process env (not on Browsershot's launch-options env, which only
-        // affects the child Chrome process) because puppeteer reads it from process.env
-        // when *resolving the binary path* before launch.
-        //
-        // PHP-FPM commonly has variables_order="GPCS" (no E), so $_ENV is empty and Symfony
-        // Process's getDefaultEnv() ends up not propagating putenv() values to the child
-        // Node subprocess reliably. Setting all three guarantees the env reaches puppeteer.
-        if ($cacheDir = config('services.browsershot.puppeteer_cache_dir')) {
-            putenv("PUPPETEER_CACHE_DIR={$cacheDir}");
-            $_ENV['PUPPETEER_CACHE_DIR'] = $cacheDir;
-            $_SERVER['PUPPETEER_CACHE_DIR'] = $cacheDir;
-        }
+        BrowsershotEnvironment::preparePuppeteerCache();
 
         $pdf = Pdf::view('pdf.teaching-schedule-teacher', [
-                ...$viewModel,
-                'orientation' => $orientation,
-            ])
+            ...$viewModel,
+            'orientation' => $orientation,
+        ])
             ->format(Format::A4)
             // --no-sandbox required on Ubuntu 23.10+ where AppArmor disables unprivileged
             // user namespaces. Safe because we only render trusted Blade templates.

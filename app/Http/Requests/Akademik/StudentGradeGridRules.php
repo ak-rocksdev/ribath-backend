@@ -13,9 +13,12 @@ use Illuminate\Validation\Rule;
 final class StudentGradeGridRules
 {
     /**
+     * The required (academic_year_id, semester) pair — the semester akademik
+     * selection every semester-scoped request starts from.
+     *
      * @return array<string, array<int, mixed>>
      */
-    public static function gridSelectionRules(School $school): array
+    public static function semesterSelectionRules(School $school): array
     {
         return [
             'academic_year_id' => [
@@ -24,6 +27,16 @@ final class StudentGradeGridRules
                 Rule::exists('academic_years', 'id')->where('school_id', $school->id),
             ],
             'semester' => ['required', Rule::in([1, 2])],
+        ];
+    }
+
+    /**
+     * @return array<string, array<int, mixed>>
+     */
+    public static function gridSelectionRules(School $school): array
+    {
+        return [
+            ...self::semesterSelectionRules($school),
             'class_level_id' => [
                 'required',
                 'uuid',

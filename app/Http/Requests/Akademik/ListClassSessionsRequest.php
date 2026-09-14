@@ -21,8 +21,7 @@ class ListClassSessionsRequest extends FormRequest
         $school = School::activeOrFail();
 
         return [
-            'academic_year_id' => ['required', 'uuid', Rule::exists('academic_years', 'id')->where('school_id', $school->id)],
-            'semester' => ['required', Rule::in([1, 2])],
+            ...StudentGradeGridRules::semesterSelectionRules($school),
             'class_level_id' => ['nullable', 'uuid', Rule::exists('class_levels', 'id')->where('school_id', $school->id)],
             'teaching_schedule_id' => ['nullable', 'uuid', Rule::exists('teaching_schedules', 'id')->where('school_id', $school->id)],
             'date_from' => ['nullable', 'date_format:Y-m-d'],

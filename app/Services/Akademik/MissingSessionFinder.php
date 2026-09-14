@@ -3,10 +3,10 @@
 namespace App\Services\Akademik;
 
 use App\Models\AcademicSemester;
-use App\Models\AcademicYear;
 use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\TeachingSchedule;
+use App\Services\AcademicYearService;
 use App\Support\BusinessDate;
 use App\Support\ScheduleDateRange;
 use Illuminate\Support\Carbon;
@@ -34,15 +34,19 @@ class MissingSessionFinder
 
     public const MAX_ITEMS_PER_TEACHER = 50;
 
+    public function __construct(
+        private AcademicYearService $academicYearService,
+    ) {}
+
     /**
      * @return array<string, mixed>
      */
-    public function findForSemester(?string $academicYearId, ?int $semester, ?string $teacherId = null): array
+    public function findForSemester(?string $academicYearId, ?int $semester): array
     {
         $school = School::activeOrFail();
 
         if ($academicYearId === null || $semester === null) {
-            $activeAcademicYear = $this->activeAcademicYear($school);
+            $activeAcademicYear = $this->academicYearService->getActive();
 
             if ($activeAcademicYear === null) {
                 return $this->notConfigured(self::REASON_NO_ACTIVE_ACADEMIC_YEAR, null, null);
@@ -68,7 +72,6 @@ class MissingSessionFinder
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
             ->where('is_active', true)
-            ->when($teacherId !== null, fn ($query) => $query->where('teacher_id', $teacherId))
             ->with(['classLevel:id,label', 'subjectBook:id,title', 'timeSlot:id,label', 'teacher:id,full_name'])
             ->get();
 
@@ -181,11 +184,6 @@ class MissingSessionFinder
             ->toDateString();
 
         return $scheduleCreatedDate > $semesterStart ? $scheduleCreatedDate : $semesterStart;
-    }
-
-    private function activeAcademicYear(School $school): ?AcademicYear
-    {
-        return AcademicYear::where('school_id', $school->id)->where('is_active', true)->first();
     }
 
     /**

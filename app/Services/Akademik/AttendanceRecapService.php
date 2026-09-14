@@ -2,7 +2,6 @@
 
 namespace App\Services\Akademik;
 
-use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\School;
 use App\Models\Student;
@@ -19,16 +18,15 @@ use Illuminate\Validation\ValidationException;
  *
  * Unlike the grade recap, a kitab without a grading template may still
  * show attendance: only the pair-is-scheduled and semester-is-configured
- * checks apply (not StudentGradeService::resolveClassSubjectContext()'s
- * book-has-template check), reusing StudentGradeService's own message
- * constants so both recaps reject an unscheduled pair or an unconfigured
- * semester with the exact same wording.
+ * checks apply (StudentGradeService::assertScheduledPairAndConfiguredSemester(),
+ * without resolveClassSubjectContext()'s book-has-template check), so both
+ * recaps reject an unscheduled pair or an unconfigured semester with the
+ * exact same wording.
  */
 class AttendanceRecapService
 {
     public function __construct(
         private StudentGradeService $studentGradeService,
-        private GradableSubjectService $gradableSubjectService,
         private AttendanceTallyService $attendanceTallyService,
         private AttendanceFactorScoreProvider $attendanceFactorScoreProvider,
     ) {}
@@ -40,7 +38,7 @@ class AttendanceRecapService
      */
     public function recapForClassSubject(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
     {
-        $this->assertPairIsScheduledAndConfigured($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $this->studentGradeService->assertScheduledPairAndConfiguredSemester($academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $students = $this->studentGradeService->listClassStudents($classLevelId);
 
@@ -90,19 +88,5 @@ class AttendanceRecapService
             'score' => $factorScore->score,
             'missing_reason' => $factorScore->missingReason,
         ];
-    }
-
-    /**
-     * @throws ValidationException
-     */
-    private function assertPairIsScheduledAndConfigured(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): void
-    {
-        if (! $this->gradableSubjectService->isGradablePair($academicYearId, $semester, $classLevelId, $subjectBookId)) {
-            throw ValidationException::withMessages(['subject_book_id' => StudentGradeService::MESSAGE_PAIR_NOT_SCHEDULED]);
-        }
-
-        if (AcademicSemester::findByPair($academicYearId, $semester) === null) {
-            throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
-        }
     }
 }

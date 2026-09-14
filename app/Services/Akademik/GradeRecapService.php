@@ -471,9 +471,10 @@ class GradeRecapService
     private function buildFactorRows(AcademicSemester $academicSemester, Collection $templateFactors, FactorScoreContext $factorScoreContext): array
     {
         $factorScoresByCode = $this->collectFactorScores($templateFactors, $factorScoreContext);
+        $weightInputs = $this->weightInputs($templateFactors);
 
         return $factorScoreContext->students
-            ->map(fn (Student $student) => $this->buildStudentRow($student, $academicSemester, $templateFactors, $factorScoresByCode))
+            ->map(fn (Student $student) => $this->buildStudentRow($student, $academicSemester, $templateFactors, $weightInputs, $factorScoresByCode))
             ->values()
             ->all();
     }
@@ -524,17 +525,18 @@ class GradeRecapService
 
     /**
      * @param  Collection<int, GradingTemplateFactor>  $templateFactors
+     * @param  array<int, array{code: string, weight: float, is_active: bool}>  $weightInputs  weightInputs($templateFactors), built once per context
      * @param  array<string, array<string, FactorScore>>  $factorScoresByCode
      * @return array<string, mixed>
      */
-    private function buildStudentRow(Student $student, AcademicSemester $academicSemester, Collection $templateFactors, array $factorScoresByCode): array
+    private function buildStudentRow(Student $student, AcademicSemester $academicSemester, Collection $templateFactors, array $weightInputs, array $factorScoresByCode): array
     {
         $disabledFactorCodes = $this->midtermExclusionRule->disabledFactorCodesFor(
             $academicSemester,
             $student,
             $templateFactors->map(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor),
         );
-        $normalizedWeights = $this->gradeWeightNormalizer->normalize($this->weightInputs($templateFactors), $disabledFactorCodes);
+        $normalizedWeights = $this->gradeWeightNormalizer->normalize($weightInputs, $disabledFactorCodes);
 
         $studentFactorScores = [];
         foreach ($templateFactors as $templateFactor) {

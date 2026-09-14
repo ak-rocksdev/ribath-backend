@@ -27,8 +27,7 @@ class FinalizeReportCardRequest extends FormRequest
                 'uuid',
                 Rule::exists('students', 'id')->where('school_id', $school->id)->whereNull('deleted_at'),
             ],
-            'academic_year_id' => ['required', 'uuid', Rule::exists('academic_years', 'id')->where('school_id', $school->id)],
-            'semester' => ['required', Rule::in([1, 2])],
+            ...StudentGradeGridRules::semesterSelectionRules($school),
         ];
     }
 

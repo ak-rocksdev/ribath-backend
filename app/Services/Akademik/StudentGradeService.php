@@ -341,9 +341,7 @@ class StudentGradeService
             throw ValidationException::withMessages(['subject_book_id' => self::MESSAGE_BOOK_WITHOUT_TEMPLATE]);
         }
 
-        if (! $this->gradableSubjectService->isGradablePair($academicYearId, $semester, $classLevelId, $subjectBookId)) {
-            throw ValidationException::withMessages(['subject_book_id' => self::MESSAGE_PAIR_NOT_SCHEDULED]);
-        }
+        $academicSemester = $this->assertScheduledPairAndConfiguredSemester($academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $templateFactors = GradingTemplateFactor::query()
             ->where('school_id', $school->id)
@@ -355,13 +353,37 @@ class StudentGradeService
             ->sortBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->sort_order)
             ->values();
 
-        $academicSemester = AcademicSemester::findByPair($academicYearId, $semester);
-
-        if ($academicSemester === null || $templateFactors->isEmpty()) {
+        if ($templateFactors->isEmpty()) {
             throw ValidationException::withMessages(['semester' => self::MESSAGE_SEMESTER_NOT_CONFIGURED]);
         }
 
         return new ClassSubjectGradingContext($subjectBook, $academicSemester, $templateFactors, $classLevelId);
+    }
+
+    /**
+     * The two selection checks every Kelas × Kitab screen shares, in this
+     * order: the pair is scheduled (GradableSubjectService, keyed
+     * "subject_book_id") and the semester akademik is configured (keyed
+     * "semester"). resolveClassSubjectContext() adds the book-has-template
+     * check on top; the attendance recap uses these two alone.
+     *
+     * @return AcademicSemester the configured academic_semesters row
+     *
+     * @throws ValidationException MESSAGE_PAIR_NOT_SCHEDULED | MESSAGE_SEMESTER_NOT_CONFIGURED
+     */
+    public function assertScheduledPairAndConfiguredSemester(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): AcademicSemester
+    {
+        if (! $this->gradableSubjectService->isGradablePair($academicYearId, $semester, $classLevelId, $subjectBookId)) {
+            throw ValidationException::withMessages(['subject_book_id' => self::MESSAGE_PAIR_NOT_SCHEDULED]);
+        }
+
+        $academicSemester = AcademicSemester::findByPair($academicYearId, $semester);
+
+        if ($academicSemester === null) {
+            throw ValidationException::withMessages(['semester' => self::MESSAGE_SEMESTER_NOT_CONFIGURED]);
+        }
+
+        return $academicSemester;
     }
 
     /**

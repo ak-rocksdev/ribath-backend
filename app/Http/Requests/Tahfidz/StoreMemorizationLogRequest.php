@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Tahfidz;
 
+use App\Http\Requests\Akademik\StudentGradeGridRules;
 use App\Models\MemorizationLog;
 use App\Models\School;
 use App\Models\Student;
@@ -29,12 +30,7 @@ class StoreMemorizationLogRequest extends FormRequest
         $school = School::activeOrFail();
 
         return [
-            'academic_year_id' => [
-                'required',
-                'uuid',
-                Rule::exists('academic_years', 'id')->where('school_id', $school->id),
-            ],
-            'semester' => ['required', Rule::in([1, 2])],
+            ...StudentGradeGridRules::semesterSelectionRules($school),
             'student_id' => [
                 'required',
                 'uuid',

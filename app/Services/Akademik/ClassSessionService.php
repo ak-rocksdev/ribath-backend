@@ -4,12 +4,12 @@ namespace App\Services\Akademik;
 
 use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
-use App\Models\AcademicYear;
 use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentAttendance;
 use App\Models\TeachingSchedule;
+use App\Services\AcademicYearService;
 use App\Services\Akademik\Calculation\EnrollmentDateRule;
 use App\Support\ScheduleDateRange;
 use Carbon\CarbonInterface;
@@ -68,6 +68,7 @@ class ClassSessionService
         private StudentGradeService $studentGradeService,
         private SessionDatePolicy $sessionDatePolicy,
         private FinalizedReportCardGuard $finalizedReportCardGuard,
+        private AcademicYearService $academicYearService,
     ) {}
 
     /**
@@ -381,96 +382,19 @@ class ClassSessionService
     public function cancelDateRange(string $startDate, string $endDate, string $reason): array
     {
         $school = School::activeOrFail();
-        $activeAcademicYear = AcademicYear::where('school_id', $school->id)->where('is_active', true)->first();
-
-        if ($activeAcademicYear === null) {
-            throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
-        }
-
-        $academicSemester = AcademicSemester::findByPair($activeAcademicYear->id, $activeAcademicYear->active_semester);
-
-        if ($academicSemester === null || $academicSemester->start_date === null || $academicSemester->end_date === null) {
-            throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
-        }
-
-        $semesterStart = $academicSemester->start_date->toDateString();
-        $semesterEnd = $academicSemester->end_date->toDateString();
-
-        if ($endDate < $semesterStart || $startDate > $semesterEnd) {
-            throw ValidationException::withMessages(['start_date' => self::MESSAGE_RANGE_OUTSIDE_SEMESTER]);
-        }
-
-        $effectiveStart = $startDate > $semesterStart ? $startDate : $semesterStart;
-        $effectiveEnd = $endDate < $semesterEnd ? $endDate : $semesterEnd;
+        $activeAcademicSemester = $this->activeAcademicSemesterWithDatesOrFail();
+        [$effectiveStart, $effectiveEnd] = $this->clampRangeToSemester($startDate, $endDate, $activeAcademicSemester);
 
         $schedules = TeachingSchedule::query()
             ->where('school_id', $school->id)
-            ->where('academic_year_id', $activeAcademicYear->id)
-            ->where('semester', $activeAcademicYear->active_semester)
+            ->where('academic_year_id', $activeAcademicSemester->academic_year_id)
+            ->where('semester', $activeAcademicSemester->semester)
             ->where('is_active', true)
             ->get();
 
-        $createdItems = [];
-        $skippedItems = [];
-
-        if ($schedules->isNotEmpty()) {
-            $liveSessionKeys = ClassSession::query()
-                ->whereIn('teaching_schedule_id', $schedules->pluck('id'))
-                ->whereDate('session_date', '>=', $effectiveStart)
-                ->whereDate('session_date', '<=', $effectiveEnd)
-                ->get(['teaching_schedule_id', 'session_date'])
-                ->map(fn (ClassSession $session) => $session->teaching_schedule_id.'|'.$session->session_date->toDateString())
-                ->flip();
-
-            $actorIsSuperAdmin = $this->actorIsSuperAdmin();
-            $schoolId = $school->id;
-            $userId = auth()->id();
-
-            DB::transaction(function () use (
-                $schedules, $effectiveStart, $effectiveEnd, $liveSessionKeys, $reason, $actorIsSuperAdmin, $schoolId, $userId,
-                &$createdItems, &$skippedItems,
-            ) {
-                foreach ($schedules as $schedule) {
-                    foreach (ScheduleDateRange::datesMatchingWeekday($schedule->day_of_week, $effectiveStart, $effectiveEnd) as $sessionDate) {
-                        if ($liveSessionKeys->has($schedule->id.'|'.$sessionDate)) {
-                            $skippedItems[] = [
-                                'teaching_schedule_id' => $schedule->id,
-                                'session_date' => $sessionDate,
-                                'reason' => self::MESSAGE_RANGE_ALREADY_RECORDED,
-                            ];
-
-                            continue;
-                        }
-
-                        if ($this->sessionDatePolicy->isPastEditWindowForRangeCancel(Carbon::parse($sessionDate), $actorIsSuperAdmin)) {
-                            $skippedItems[] = [
-                                'teaching_schedule_id' => $schedule->id,
-                                'session_date' => $sessionDate,
-                                'reason' => SessionDatePolicy::MESSAGE_EDIT_WINDOW,
-                            ];
-
-                            continue;
-                        }
-
-                        $this->createSessionOrFailAsDuplicate(fn () => ClassSession::create(array_merge(
-                            $this->snapshotFromSchedule($schedule, Carbon::parse($sessionDate)),
-                            [
-                                'school_id' => $schoolId,
-                                'status' => ClassSession::STATUS_CANCELLED,
-                                'cancel_reason' => $reason,
-                                'created_by' => $userId,
-                                'updated_by' => $userId,
-                            ],
-                        )));
-
-                        $createdItems[] = [
-                            'teaching_schedule_id' => $schedule->id,
-                            'session_date' => $sessionDate,
-                        ];
-                    }
-                }
-            });
-        }
+        [$createdItems, $skippedItems] = $schedules->isEmpty()
+            ? [[], []]
+            : $this->cancelScheduleDatesInRange($schedules, $effectiveStart, $effectiveEnd, $reason, $school->id);
 
         return [
             'created' => count($createdItems),
@@ -666,6 +590,115 @@ class ClassSessionService
     private function actorIsSuperAdmin(): bool
     {
         return (bool) auth()->user()?->hasRole('super_admin');
+    }
+
+    /**
+     * The active academic year's active_semester, which libur massal
+     * always targets; it must exist with both start_date and end_date.
+     *
+     * @throws ValidationException keyed "semester"
+     */
+    private function activeAcademicSemesterWithDatesOrFail(): AcademicSemester
+    {
+        $activeAcademicYear = $this->academicYearService->getActive();
+        $activeAcademicSemester = $activeAcademicYear?->semester($activeAcademicYear->active_semester);
+
+        if ($activeAcademicSemester === null || $activeAcademicSemester->start_date === null || $activeAcademicSemester->end_date === null) {
+            throw ValidationException::withMessages(['semester' => StudentGradeService::MESSAGE_SEMESTER_NOT_CONFIGURED]);
+        }
+
+        return $activeAcademicSemester;
+    }
+
+    /**
+     * [$startDate, $endDate] cut down to the semester's own dates.
+     *
+     * @return array{0: string, 1: string} effective start and end (Y-m-d)
+     *
+     * @throws ValidationException keyed "start_date" when the range misses the semester entirely
+     */
+    private function clampRangeToSemester(string $startDate, string $endDate, AcademicSemester $academicSemester): array
+    {
+        $semesterStart = $academicSemester->start_date->toDateString();
+        $semesterEnd = $academicSemester->end_date->toDateString();
+
+        if ($endDate < $semesterStart || $startDate > $semesterEnd) {
+            throw ValidationException::withMessages(['start_date' => self::MESSAGE_RANGE_OUTSIDE_SEMESTER]);
+        }
+
+        return [
+            $startDate > $semesterStart ? $startDate : $semesterStart,
+            $endDate < $semesterEnd ? $endDate : $semesterEnd,
+        ];
+    }
+
+    /**
+     * Creates a cancelled Pertemuan on every date of the range matching
+     * each schedule's weekday, skipping a date that already has a live
+     * session or lies past the edit window. One transaction.
+     *
+     * @param  Collection<int, TeachingSchedule>  $schedules
+     * @return array{0: array<int, array<string, mixed>>, 1: array<int, array<string, mixed>>} created items, skipped items
+     */
+    private function cancelScheduleDatesInRange(Collection $schedules, string $effectiveStart, string $effectiveEnd, string $reason, string $schoolId): array
+    {
+        $liveSessionKeys = ClassSession::query()
+            ->whereIn('teaching_schedule_id', $schedules->pluck('id'))
+            ->whereDate('session_date', '>=', $effectiveStart)
+            ->whereDate('session_date', '<=', $effectiveEnd)
+            ->get(['teaching_schedule_id', 'session_date'])
+            ->map(fn (ClassSession $session) => $session->teaching_schedule_id.'|'.$session->session_date->toDateString())
+            ->flip();
+
+        $actorIsSuperAdmin = $this->actorIsSuperAdmin();
+        $userId = auth()->id();
+
+        return DB::transaction(function () use ($schedules, $effectiveStart, $effectiveEnd, $liveSessionKeys, $reason, $actorIsSuperAdmin, $schoolId, $userId) {
+            $createdItems = [];
+            $skippedItems = [];
+
+            foreach ($schedules as $schedule) {
+                foreach (ScheduleDateRange::datesMatchingWeekday($schedule->day_of_week, $effectiveStart, $effectiveEnd) as $sessionDate) {
+                    if ($liveSessionKeys->has($schedule->id.'|'.$sessionDate)) {
+                        $skippedItems[] = [
+                            'teaching_schedule_id' => $schedule->id,
+                            'session_date' => $sessionDate,
+                            'reason' => self::MESSAGE_RANGE_ALREADY_RECORDED,
+                        ];
+
+                        continue;
+                    }
+
+                    if ($this->sessionDatePolicy->isPastEditWindowForRangeCancel(Carbon::parse($sessionDate), $actorIsSuperAdmin)) {
+                        $skippedItems[] = [
+                            'teaching_schedule_id' => $schedule->id,
+                            'session_date' => $sessionDate,
+                            'reason' => SessionDatePolicy::MESSAGE_EDIT_WINDOW,
+                        ];
+
+                        continue;
+                    }
+
+                    $this->createSessionOrFailAsDuplicate(fn () => ClassSession::create(array_merge(
+                        $this->snapshotFromSchedule($schedule, Carbon::parse($sessionDate)),
+                        [
+                            'school_id' => $schoolId,
+                            'status' => ClassSession::STATUS_CANCELLED,
+                            'cancel_reason' => $reason,
+                            'created_by' => $userId,
+                            'updated_by' => $userId,
+                        ],
+                    )));
+
+                    $createdItems[] = [
+                        'teaching_schedule_id' => $schedule->id,
+                        'session_date' => $sessionDate,
+                    ];
+                }
+            }
+
+            return [$createdItems, $skippedItems];
+        });
     }
 
     /**

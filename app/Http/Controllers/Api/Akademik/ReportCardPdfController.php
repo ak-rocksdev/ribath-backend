@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Akademik;
 use App\Http\Controllers\Controller;
 use App\Models\ReportCard;
 use App\Services\Akademik\ReportCardPdfPresenter;
+use App\Support\BrowsershotEnvironment;
 use App\Traits\EnsuresActiveSchoolTenancy;
 use Spatie\LaravelPdf\Enums\Format;
 use Spatie\LaravelPdf\Facades\Pdf;
@@ -30,13 +31,7 @@ class ReportCardPdfController extends Controller
 
         $viewModel = $this->reportCardPdfPresenter->present($reportCard);
 
-        // See TeachingScheduleExportController for why this env propagation
-        // to the puppeteer child process is necessary under PHP-FPM.
-        if ($cacheDir = config('services.browsershot.puppeteer_cache_dir')) {
-            putenv("PUPPETEER_CACHE_DIR={$cacheDir}");
-            $_ENV['PUPPETEER_CACHE_DIR'] = $cacheDir;
-            $_SERVER['PUPPETEER_CACHE_DIR'] = $cacheDir;
-        }
+        BrowsershotEnvironment::preparePuppeteerCache();
 
         return Pdf::view('pdf.report-card', $viewModel)
             ->format(Format::A4)

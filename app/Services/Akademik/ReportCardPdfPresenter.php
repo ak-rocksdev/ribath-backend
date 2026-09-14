@@ -29,7 +29,7 @@ class ReportCardPdfPresenter
     /**
      * @throws ValidationException MESSAGE_NOT_FINAL (422) when the rapor is a draft
      */
-    public function assertFinal(ReportCard $reportCard): void
+    private function assertFinal(ReportCard $reportCard): void
     {
         if (! $reportCard->isFinal()) {
             throw ValidationException::withMessages(['report_card' => self::MESSAGE_NOT_FINAL]);

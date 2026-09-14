@@ -2,10 +2,10 @@
 
 namespace App\Http\Requests\Tahfidz;
 
+use App\Http\Requests\Akademik\StudentGradeGridRules;
 use App\Models\School;
 use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 
 /**
  * Query of GET /students/{student}/memorization-progress: (academic_year_id,
@@ -30,16 +30,7 @@ class ShowMemorizationProgressRequest extends FormRequest
 
     public function rules(): array
     {
-        $school = School::activeOrFail();
-
-        return [
-            'academic_year_id' => [
-                'required',
-                'uuid',
-                Rule::exists('academic_years', 'id')->where('school_id', $school->id),
-            ],
-            'semester' => ['required', Rule::in([1, 2])],
-        ];
+        return StudentGradeGridRules::semesterSelectionRules(School::activeOrFail());
     }
 
     public function messages(): array
