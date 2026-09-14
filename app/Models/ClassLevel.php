@@ -34,6 +34,20 @@ class ClassLevel extends Model
     }
 
     /**
+     * The `class_level` object every API payload nests: {id, slug, label}.
+     *
+     * @return array{id: string, slug: string, label: string}
+     */
+    public function summary(): array
+    {
+        return [
+            'id' => $this->id,
+            'slug' => $this->slug,
+            'label' => $this->label,
+        ];
+    }
+
+    /**
      * The id of the school's class level with the given slug, or null when
      * the school has no such class level. Students store both the slug
      * (class_level) and this id (class_level_id); Penilaian defines class

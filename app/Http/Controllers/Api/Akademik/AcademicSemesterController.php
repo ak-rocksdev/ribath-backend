@@ -26,10 +26,12 @@ class AcademicSemesterController extends Controller
         return $this->successResponse($semesters, 'Semester akademik berhasil diambil');
     }
 
+    /**
+     * Tenancy is checked in UpdateAcademicSemesterRequest::authorize(),
+     * before validation reads the academic year.
+     */
     public function update(UpdateAcademicSemesterRequest $request, AcademicYear $academicYear, string $semester): JsonResponse
     {
-        $this->ensureBelongsToActiveSchool($academicYear);
-
         $updatedSemester = $this->academicSemesterService->updateSemester(
             $academicYear,
             (int) $semester,

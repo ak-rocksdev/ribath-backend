@@ -98,11 +98,7 @@ class GradeRecapService
         return [
             'academic_year_id' => $academicYearId,
             'semester' => $semester,
-            'class_level' => [
-                'id' => $classLevel->id,
-                'slug' => $classLevel->slug,
-                'label' => $classLevel->label,
-            ],
+            'class_level' => $classLevel->summary(),
             'subject_book' => [
                 'id' => $subjectBook->id,
                 'title' => $subjectBook->title,

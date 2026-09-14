@@ -96,11 +96,7 @@ class ReportCardService
         return [
             'academic_year_id' => $academicYearId,
             'semester' => $semester,
-            'class_level' => [
-                'id' => $classLevel->id,
-                'slug' => $classLevel->slug,
-                'label' => $classLevel->label,
-            ],
+            'class_level' => $classLevel->summary(),
             'rows' => $rows,
             'summary' => [
                 'student_count' => count($rows),
@@ -221,11 +217,7 @@ class ReportCardService
                 'name' => $reportCard->academicYear?->name,
             ],
             'semester' => $reportCard->semester,
-            'class_level' => $reportCard->classLevel === null ? null : [
-                'id' => $reportCard->classLevel->id,
-                'slug' => $reportCard->classLevel->slug,
-                'label' => $reportCard->classLevel->label,
-            ],
+            'class_level' => $reportCard->classLevel?->summary(),
             'status' => $reportCard->status,
             'is_finalized' => $isFinal,
             'finalized_at' => $reportCard->finalized_at?->toJSON(),

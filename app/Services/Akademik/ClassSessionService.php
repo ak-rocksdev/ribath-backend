@@ -421,11 +421,7 @@ class ClassSessionService
             'class_level_id' => $session->class_level_id,
             'subject_book_id' => $session->subject_book_id,
             'teacher_id' => $session->teacher_id,
-            'class_level' => $session->classLevel ? [
-                'id' => $session->classLevel->id,
-                'slug' => $session->classLevel->slug,
-                'label' => $session->classLevel->label,
-            ] : null,
+            'class_level' => $session->classLevel?->summary(),
             'subject_book' => $session->subjectBook ? [
                 'id' => $session->subjectBook->id,
                 'title' => $session->subjectBook->title,

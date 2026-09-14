@@ -118,11 +118,7 @@ class GradableSubjectService
         return [
             'class_level_id' => $firstSchedule->class_level_id,
             'subject_book_id' => $firstSchedule->subject_book_id,
-            'class_level' => [
-                'id' => $classLevel?->id,
-                'slug' => $classLevel?->slug,
-                'label' => $classLevel?->label,
-            ],
+            'class_level' => $classLevel?->summary() ?? ['id' => null, 'slug' => null, 'label' => null],
             'subject_book' => [
                 'id' => $subjectBook?->id,
                 'title' => $subjectBook?->title,
@@ -170,11 +166,7 @@ class GradableSubjectService
                 $classLevel->id.'|'.$tahfizhBook->id => [
                     'class_level_id' => $classLevel->id,
                     'subject_book_id' => $tahfizhBook->id,
-                    'class_level' => [
-                        'id' => $classLevel->id,
-                        'slug' => $classLevel->slug,
-                        'label' => $classLevel->label,
-                    ],
+                    'class_level' => $classLevel->summary(),
                     'subject_book' => [
                         'id' => $tahfizhBook->id,
                         'title' => $tahfizhBook->title,

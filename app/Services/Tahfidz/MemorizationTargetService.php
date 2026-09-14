@@ -168,11 +168,7 @@ class MemorizationTargetService
             'student' => [
                 'id' => $target->student?->id,
                 'full_name' => $target->student?->full_name,
-                'class_level' => $classLevel ? [
-                    'id' => $classLevel->id,
-                    'slug' => $classLevel->slug,
-                    'label' => $classLevel->label,
-                ] : null,
+                'class_level' => $classLevel?->summary(),
             ],
             'academic_year_id' => $target->academic_year_id,
             'semester' => $target->semester,
