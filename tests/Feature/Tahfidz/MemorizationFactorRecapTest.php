@@ -11,6 +11,7 @@ use App\Models\Teacher;
 use App\Models\User;
 use App\Services\Akademik\AcademicSemesterService;
 use App\Services\Akademik\FactorScores\FactorScoreContext;
+use App\Services\Akademik\FactorScores\FactorScoreProviderRegistry;
 use App\Services\Akademik\FactorScores\MemorizationFactorScoreProvider;
 use App\Services\Akademik\GradingDefaultsInstaller;
 use Database\Seeders\ClassLevelSeeder;
@@ -18,6 +19,7 @@ use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 use Database\Seeders\SubjectCategorySeeder;
 use Database\Seeders\TahfizhSubjectBookSeeder;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Task 15: the three automatic Tahfizh factors (target_hafalan,
@@ -328,4 +330,47 @@ test('the same provider instance scores two different contexts correctly back to
     // Re-scoring contextA on the same instance still reports A's own number, not B's.
     $scoresAAgain = $provider->scoresFor($targetHafalanFactor, $contextA);
     expect($scoresAAgain[$studentA->id]->score)->toBe(50.0);
+});
+
+// ── Batched scoring: one read of the memorization rows per context ────────
+
+test('the registry scores the three Tahfizh factors of one context from one pair of memorization queries', function () {
+    $context = setUpMemorizationFactorRecapContext();
+    $student = factorCreateStudent($this, $context['user'], 'Santri Provider Satu Kueri');
+    factorCreateTarget($this, $context, $student, 40);
+    factorCreateLog($this, $context, $student, 'new', 20, 80);
+    factorCreateLog($this, $context, $student, 'review', 5, 70);
+
+    $factorScoreContext = new FactorScoreContext(
+        academicSemester: AcademicSemester::findByPair($context['academicYear']->id, 1),
+        academicYearId: $context['academicYear']->id,
+        semester: 1,
+        classLevelId: $context['classLevel']->id,
+        subjectBookId: $context['tahfizhBook']->id,
+        students: collect([$student->fresh()]),
+    );
+    $tahfizhFactors = GradingFactor::where('school_id', $context['school']->id)
+        ->whereIn('code', ['target_hafalan', 'kualitas_setoran', 'murajaah'])
+        ->orderBy('sort_order')
+        ->get();
+    expect($tahfizhFactors)->toHaveCount(3);
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $scoresByCode = app(FactorScoreProviderRegistry::class)->scoresForFactors($tahfizhFactors, $factorScoreContext);
+    $memorizationQueries = collect(DB::getQueryLog())
+        ->filter(fn (array $query) => str_contains($query['query'], 'memorization_targets') || str_contains($query['query'], 'memorization_logs'));
+    DB::disableQueryLog();
+
+    expect($memorizationQueries)->toHaveCount(2);
+    expect(array_keys($scoresByCode))->toBe(['target_hafalan', 'kualitas_setoran', 'murajaah']);
+    // 20 ÷ 40 × 100 = 50; the only Setoran scored 80; the only Murajaah scored 70.
+    expect($scoresByCode['target_hafalan'][$student->id]->score)->toBe(50.0);
+    expect($scoresByCode['kualitas_setoran'][$student->id]->score)->toBe(80.0);
+    expect($scoresByCode['murajaah'][$student->id]->score)->toBe(70.0);
+
+    // Same numbers as scoring each factor on its own.
+    foreach ($tahfizhFactors as $factor) {
+        expect($scoresByCode[$factor->code])->toEqual(app(FactorScoreProviderRegistry::class)->scoresFor($factor, $factorScoreContext));
+    }
 });

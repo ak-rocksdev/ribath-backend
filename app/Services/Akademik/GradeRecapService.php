@@ -478,7 +478,9 @@ class GradeRecapService
     /**
      * Scores of every template factor for every santri of the context:
      * manual factors from student_grades (one query), the others from the
-     * provider registry. A santri without a value gets FactorScore(null).
+     * provider registry in one batched call (so the three Tahfizh factors
+     * share one read of the memorization rows). A santri without a value
+     * gets FactorScore(null).
      *
      * @param  Collection<int, GradingTemplateFactor>  $templateFactors
      * @return array<string, array<string, FactorScore>> factor code => student id => score
@@ -511,9 +513,13 @@ class GradeRecapService
             }
         }
 
-        foreach ($providedTemplateFactors as $templateFactor) {
-            $factorScoresByCode[$templateFactor->gradingFactor->code] = $this->factorScoreProviderRegistry
-                ->scoresFor($templateFactor->gradingFactor, $factorScoreContext);
+        $providedScoresByCode = $this->factorScoreProviderRegistry->scoresForFactors(
+            $providedTemplateFactors->map(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor),
+            $factorScoreContext,
+        );
+
+        foreach ($providedScoresByCode as $code => $providedScores) {
+            $factorScoresByCode[$code] = $providedScores;
         }
 
         return $factorScoresByCode;

@@ -27,16 +27,18 @@ use App\Services\Akademik\Calculation\MemorizationFactorResult;
  * fixed catalogue, but a provider must not throw on it — scores NULL,
  * "Faktor hafalan tidak dikenal".
  *
- * Stateless like AttendanceFactorScoreProvider: every scoresFor() call runs
- * its own pair of bulk queries (targets, logs) for the given context, scoped
- * to (school, academic_year_id, semester) and the context's students — no
- * caching across calls or across contexts, since a provider instance can be
- * reused for several different contexts within one process (e.g. Task 16
- * looping students × kitab through the recap builder), and caching by
- * context object identity would risk serving another context's stale
- * results once PHP recycles a garbage-collected object's id.
+ * Stateless like AttendanceFactorScoreProvider: every scoresFor() /
+ * scoresForFactors() call runs its own pair of bulk queries (targets, logs)
+ * for the given context, scoped to (school, academic_year_id, semester) and
+ * the context's students — no caching across calls or across contexts,
+ * since a provider instance can be reused for several different contexts
+ * within one process (e.g. Task 16 looping students × kitab through the
+ * recap builder), and caching by context object identity would risk
+ * serving another context's stale results once PHP recycles a
+ * garbage-collected object's id. As a BatchFactorScoreProvider it scores
+ * all three factors of one context from that single pair of queries.
  */
-class MemorizationFactorScoreProvider implements FactorScoreProvider
+class MemorizationFactorScoreProvider implements BatchFactorScoreProvider
 {
     public const MESSAGE_NO_TARGET = 'Target belum diset';
 
@@ -73,6 +75,35 @@ class MemorizationFactorScoreProvider implements FactorScoreProvider
      */
     public function scoresFor(GradingFactor $factor, FactorScoreContext $context): array
     {
+        return $this->scoresForFactors([$factor], $context)[$factor->code];
+    }
+
+    /**
+     * The memorization rows are read and calculated once for all the given
+     * factors (and not at all when none of them has a known code).
+     *
+     * @param  array<int, GradingFactor>  $factors
+     * @return array<string, array<string, FactorScore>> factor code => student id => score
+     */
+    public function scoresForFactors(array $factors, FactorScoreContext $context): array
+    {
+        $hasKnownFactor = collect($factors)->contains(fn (GradingFactor $factor) => isset(self::RESULT_FIELD_BY_CODE[$factor->code]));
+        $resultsByStudentId = $hasKnownFactor ? $this->resultsFor($context) : [];
+
+        $scoresByCode = [];
+        foreach ($factors as $factor) {
+            $scoresByCode[$factor->code] = $this->scoresFromResults($factor, $context, $resultsByStudentId);
+        }
+
+        return $scoresByCode;
+    }
+
+    /**
+     * @param  array<string, MemorizationFactorResult>  $resultsByStudentId
+     * @return array<string, FactorScore>
+     */
+    private function scoresFromResults(GradingFactor $factor, FactorScoreContext $context, array $resultsByStudentId): array
+    {
         $field = self::RESULT_FIELD_BY_CODE[$factor->code] ?? null;
 
         if ($field === null) {
@@ -80,8 +111,6 @@ class MemorizationFactorScoreProvider implements FactorScoreProvider
                 fn (Student $student) => [$student->id => new FactorScore(null, self::MESSAGE_UNKNOWN_FACTOR)]
             )->all();
         }
-
-        $resultsByStudentId = $this->resultsFor($context);
 
         return $context->students->mapWithKeys(function (Student $student) use ($resultsByStudentId, $field) {
             $value = $resultsByStudentId[$student->id]->{$field};

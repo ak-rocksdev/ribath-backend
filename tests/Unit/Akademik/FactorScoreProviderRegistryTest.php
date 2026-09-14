@@ -3,6 +3,7 @@
 use App\Models\AcademicSemester;
 use App\Models\GradingFactor;
 use App\Models\Student;
+use App\Services\Akademik\FactorScores\BatchFactorScoreProvider;
 use App\Services\Akademik\FactorScores\FactorScore;
 use App\Services\Akademik\FactorScores\FactorScoreContext;
 use App\Services\Akademik\FactorScores\FactorScoreProvider;
@@ -100,4 +101,76 @@ test('the recap source follows the factor input type (R4)', function (string $in
 test('the source values are the recap API strings', function () {
     expect(array_map(fn (FactorScoreSource $source) => $source->value, FactorScoreSource::cases()))
         ->toBe(['manual', 'tugas', 'absensi', 'hafalan']);
+});
+
+test('scoresForFactors calls a batch provider once with all its factors and a plain provider once per factor', function () {
+    $batchProvider = new class implements BatchFactorScoreProvider
+    {
+        /** @var array<int, array<int, string>> */
+        public array $batchCalls = [];
+
+        public int $singleCalls = 0;
+
+        public function supports(GradingFactor $factor): bool
+        {
+            return $factor->input_type === GradingFactor::INPUT_TYPE_AUTO_FROM_LOG;
+        }
+
+        public function scoresFor(GradingFactor $factor, FactorScoreContext $context): array
+        {
+            $this->singleCalls++;
+
+            return [];
+        }
+
+        public function scoresForFactors(array $factors, FactorScoreContext $context): array
+        {
+            $this->batchCalls[] = array_map(fn (GradingFactor $factor) => $factor->code, $factors);
+
+            return [
+                'target_hafalan' => ['ali' => new FactorScore(50.0, null)],
+                'murajaah' => ['ali' => new FactorScore(70.0, null)],
+            ];
+        }
+    };
+    $plainProvider = new class implements FactorScoreProvider
+    {
+        /** @var array<int, string> */
+        public array $calls = [];
+
+        public function supports(GradingFactor $factor): bool
+        {
+            return $factor->input_type === GradingFactor::INPUT_TYPE_MANUAL_PERIODIC;
+        }
+
+        public function scoresFor(GradingFactor $factor, FactorScoreContext $context): array
+        {
+            $this->calls[] = $factor->code;
+
+            return ['zaid' => new FactorScore(90.0, null)];
+        }
+    };
+
+    $scoresByCode = (new FactorScoreProviderRegistry([$plainProvider, $batchProvider]))->scoresForFactors(
+        collect([
+            registryFactor('target_hafalan', GradingFactor::INPUT_TYPE_AUTO_FROM_LOG),
+            registryFactor('tugas', GradingFactor::INPUT_TYPE_MANUAL_PERIODIC),
+            registryFactor('kualitas_setoran', GradingFactor::INPUT_TYPE_AUTO_FROM_LOG),
+            registryFactor('absensi', GradingFactor::INPUT_TYPE_AUTO_FROM_ATTENDANCE),
+            registryFactor('murajaah', GradingFactor::INPUT_TYPE_AUTO_FROM_LOG),
+            registryFactor('tugas_2', GradingFactor::INPUT_TYPE_MANUAL_PERIODIC),
+        ]),
+        registryContext(['ali', 'zaid']),
+    );
+
+    expect($batchProvider->batchCalls)->toBe([['target_hafalan', 'kualitas_setoran', 'murajaah']]);
+    expect($batchProvider->singleCalls)->toBe(0);
+    expect($plainProvider->calls)->toBe(['tugas', 'tugas_2']);
+
+    // Given factor order; every santri present; anything not supplied is FactorScore(null, null).
+    expect(array_keys($scoresByCode))->toBe(['target_hafalan', 'tugas', 'kualitas_setoran', 'absensi', 'murajaah', 'tugas_2']);
+    expect($scoresByCode['target_hafalan'])->toEqual(['ali' => new FactorScore(50.0, null), 'zaid' => new FactorScore(null, null)]);
+    expect($scoresByCode['kualitas_setoran'])->toEqual(['ali' => new FactorScore(null, null), 'zaid' => new FactorScore(null, null)]);
+    expect($scoresByCode['absensi'])->toEqual(['ali' => new FactorScore(null, null), 'zaid' => new FactorScore(null, null)]);
+    expect($scoresByCode['tugas_2'])->toEqual(['ali' => new FactorScore(null, null), 'zaid' => new FactorScore(90.0, null)]);
 });
