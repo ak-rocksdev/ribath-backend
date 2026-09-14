@@ -2,8 +2,13 @@
 
 use App\Models\AcademicYear;
 use App\Models\ClassLevel;
+use App\Models\ClassSession;
+use App\Models\ClassTask;
 use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
+use App\Models\MemorizationLog;
+use App\Models\ReportCard;
+use App\Models\ReportCardEntry;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
@@ -15,6 +20,7 @@ use App\Models\TimeSlot;
 use App\Models\User;
 use App\Services\Akademik\AcademicSemesterService;
 use App\Services\Akademik\GradingDefaultsInstaller;
+use App\Services\SubjectBookService;
 use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
@@ -844,3 +850,93 @@ test('a kitab with recorded grades cannot be deleted', function () {
 
     expect(SubjectBook::find($context['subjectBook']->id))->not->toBeNull();
 });
+
+/**
+ * Creates one row of the given penilaian table referencing the context's
+ * kitab. Every one of these holds a restrict FK on subject_books.
+ */
+function createSubjectBookDependent(string $dependent, array $context, Student $student): void
+{
+    $semesterScope = [
+        'school_id' => $context['school']->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'subject_book_id' => $context['subjectBook']->id,
+    ];
+
+    match ($dependent) {
+        'class_task', 'soft_deleted_class_task' => (function () use ($dependent, $semesterScope, $context) {
+            $task = ClassTask::create($semesterScope + [
+                'class_level_id' => $context['classLevel']->id,
+                'title' => 'Tugas 1',
+                'task_date' => '2025-08-01',
+            ]);
+
+            if ($dependent === 'soft_deleted_class_task') {
+                $task->delete();
+            }
+        })(),
+        // The session hangs off another kitab's schedule so the teaching
+        // schedule guard does not fire first.
+        'class_session' => ClassSession::create($semesterScope + [
+            'teaching_schedule_id' => scheduleSubjectBookForClass(
+                $context['school'],
+                $context['academicYear'],
+                1,
+                $context['classLevel'],
+                createGradableSubjectBook($context['school'], 'Kitab Lain', null),
+                $context['teacher'],
+            )->id,
+            'session_date' => '2025-08-01',
+            'class_level_id' => $context['classLevel']->id,
+            'teacher_id' => $context['teacher']->id,
+            'status' => 'held',
+        ]),
+        'memorization_log' => MemorizationLog::create($semesterScope + [
+            'student_id' => $student->id,
+            'teacher_id' => $context['teacher']->id,
+            'log_date' => '2025-08-01',
+            'type' => 'new',
+            'pages' => 1,
+            'quality_score' => 80,
+        ]),
+        'report_card_entry' => ReportCardEntry::create([
+            'school_id' => $context['school']->id,
+            'report_card_id' => ReportCard::create([
+                'school_id' => $context['school']->id,
+                'student_id' => $student->id,
+                'academic_year_id' => $context['academicYear']->id,
+                'semester' => 1,
+                'class_level_id' => $context['classLevel']->id,
+                'status' => 'final',
+            ])->id,
+            'subject_book_id' => $context['subjectBook']->id,
+            'final_score' => 80,
+            'breakdown' => [],
+        ]),
+    };
+}
+
+test('a kitab referenced by penilaian data cannot be deleted (422, not a 500 from the FK)', function (string $dependent, string $expectedMessage) {
+    $context = setUpStudentGradeContext();
+    $student = createStudentThroughEndpointForGrading($this, $context['user'], 'Ali');
+
+    createSubjectBookDependent($dependent, $context, $student);
+
+    // Without schedules the only remaining dependent is the one under test.
+    TeachingSchedule::where('subject_book_id', $context['subjectBook']->id)->delete();
+
+    $this->actingAs($context['user'])
+        ->deleteJson("/api/v1/subject-books/{$context['subjectBook']->id}")
+        ->assertUnprocessable()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', $expectedMessage);
+
+    expect(SubjectBook::find($context['subjectBook']->id))->not->toBeNull();
+})->with([
+    'a Tugas' => ['class_task', SubjectBookService::MESSAGE_HAS_CLASS_TASKS],
+    'a deleted Tugas (the row still holds the FK)' => ['soft_deleted_class_task', SubjectBookService::MESSAGE_HAS_CLASS_TASKS],
+    'a Pertemuan' => ['class_session', SubjectBookService::MESSAGE_HAS_CLASS_SESSIONS],
+    'a Log Setoran' => ['memorization_log', SubjectBookService::MESSAGE_HAS_MEMORIZATION_LOGS],
+    'a Rapor entry' => ['report_card_entry', SubjectBookService::MESSAGE_HAS_REPORT_CARD_ENTRIES],
+]);

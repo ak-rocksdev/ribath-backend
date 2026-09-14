@@ -18,6 +18,10 @@ use App\Models\School;
  * the snapshot itself, which is never recalculated.
  *
  * A draft rapor (never finalized, or finalization cancelled) locks nothing.
+ *
+ * Accepted race: a write can pass this guard and commit after
+ * ReportCardService::finalize() computed the snapshot; the snapshot itself
+ * never changes, and a super_admin unfinalize (then finalize) repairs it.
  */
 class FinalizedReportCardGuard
 {

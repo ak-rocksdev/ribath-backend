@@ -86,6 +86,35 @@ test('active academic year endpoint includes semesters', function () {
         ->assertJsonCount(2, 'data.semesters');
 });
 
+test('semester dates are serialized as plain Y-m-d dates wherever semesters are returned', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create([
+        'school_id' => $school->id,
+        'is_active' => true,
+        'start_date' => '2025-07-01',
+        'end_date' => '2026-06-30',
+    ]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+    app(AcademicSemesterService::class)->updateSemester($academicYear, 1, [
+        'start_date' => '2025-07-01',
+        'end_date' => '2025-12-20',
+        'midterm_exam_date' => '2025-09-15',
+    ]);
+
+    $active = $this->actingAs($user)->getJson('/api/v1/academic-years/active')->assertOk();
+    $semesterOne = collect($active->json('data.semesters'))->firstWhere('semester', 1);
+    expect($semesterOne['start_date'])->toBe('2025-07-01')
+        ->and($semesterOne['end_date'])->toBe('2025-12-20')
+        ->and($semesterOne['midterm_exam_date'])->toBe('2025-09-15');
+
+    $listed = $this->actingAs($user)->getJson("/api/v1/academic-years/{$academicYear->id}/semesters")->assertOk();
+    expect(collect($listed->json('data'))->firstWhere('semester', 1)['start_date'])->toBe('2025-07-01');
+
+    // The academic year's own dates keep their existing output (other screens consume it).
+    expect($active->json('data.start_date'))->toBe('2025-07-01T00:00:00.000000Z');
+});
+
 test('can list semesters for an academic year', function () {
     [$user, $school] = createSchoolAndUserForSemesters();
 
@@ -148,9 +177,9 @@ test('can update a semester dates and uts flag', function () {
     $response->assertOk()
         ->assertJsonPath('success', true)
         ->assertJsonPath('data.semester', 1)
-        ->assertJsonPath('data.start_date', '2025-07-01T00:00:00.000000Z')
-        ->assertJsonPath('data.end_date', '2025-12-20T00:00:00.000000Z')
-        ->assertJsonPath('data.midterm_exam_date', '2025-09-15T00:00:00.000000Z')
+        ->assertJsonPath('data.start_date', '2025-07-01')
+        ->assertJsonPath('data.end_date', '2025-12-20')
+        ->assertJsonPath('data.midterm_exam_date', '2025-09-15')
         ->assertJsonPath('data.uts_enabled', false);
 
     $this->assertDatabaseHas('academic_semesters', [

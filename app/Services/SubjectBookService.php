@@ -12,6 +12,26 @@ use Illuminate\Support\Facades\DB;
 
 class SubjectBookService
 {
+    public const MESSAGE_HAS_CLASS_TASKS = 'Kitab tidak dapat dihapus karena sudah memiliki data Tugas.';
+
+    public const MESSAGE_HAS_CLASS_SESSIONS = 'Kitab tidak dapat dihapus karena sudah memiliki data Pertemuan (absensi).';
+
+    public const MESSAGE_HAS_MEMORIZATION_LOGS = 'Kitab tidak dapat dihapus karena sudah memiliki data Log Setoran.';
+
+    public const MESSAGE_HAS_REPORT_CARD_ENTRIES = 'Kitab tidak dapat dihapus karena sudah tercantum di Rapor.';
+
+    /**
+     * Penilaian tables holding a restrict FK on subject_books, checked with
+     * the query builder so soft-deleted rows (which still hold the FK) count
+     * too — otherwise the delete would surface as a 500.
+     */
+    private const PENILAIAN_DEPENDENT_MESSAGES = [
+        'class_tasks' => self::MESSAGE_HAS_CLASS_TASKS,
+        'class_sessions' => self::MESSAGE_HAS_CLASS_SESSIONS,
+        'memorization_logs' => self::MESSAGE_HAS_MEMORIZATION_LOGS,
+        'report_card_entries' => self::MESSAGE_HAS_REPORT_CARD_ENTRIES,
+    ];
+
     public function listBooks(array $filters, int $perPage = 15): LengthAwarePaginator
     {
         $school = School::activeOrFail();
@@ -87,6 +107,12 @@ class SubjectBookService
             throw new HasDependentsException(
                 'Cannot delete subject book with recorded student grades'
             );
+        }
+
+        foreach (self::PENILAIAN_DEPENDENT_MESSAGES as $table => $message) {
+            if (DB::table($table)->where('subject_book_id', $subjectBook->id)->exists()) {
+                throw new HasDependentsException($message);
+            }
         }
 
         $subjectBook->delete();

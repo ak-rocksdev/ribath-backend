@@ -18,6 +18,7 @@ use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 use Database\Seeders\SubjectCategorySeeder;
 use Database\Seeders\TahfizhSubjectBookSeeder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -390,6 +391,25 @@ test('the list can be filtered by class_level_id and searched by santri name', f
         'search' => 'ahmad',
     ]));
     $bySearch->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.student.full_name', 'Ahmad Fulan');
+});
+
+test('the santri name search is case-insensitive even where LIKE is case-sensitive (PostgreSQL)', function () {
+    $context = setUpMemorizationTargetContext();
+    $student = targetCreateStudent($this, $context['user'], 'Ahmad Fulan');
+    $this->actingAs($context['user'])->postJson('/api/v1/memorization-targets', targetStorePayload($context, $student))->assertCreated();
+
+    // SQLite's LIKE ignores ASCII case by default; switch it to PostgreSQL's case-sensitive behaviour.
+    DB::statement('PRAGMA case_sensitive_like = ON');
+
+    foreach (['ahmad', 'AHMAD', 'aHmAd fUL'] as $search) {
+        $this->actingAs($context['user'])->getJson('/api/v1/memorization-targets?'.http_build_query([
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'search' => $search,
+        ]))->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.student.full_name', 'Ahmad Fulan');
+    }
+
+    DB::statement('PRAGMA case_sensitive_like = OFF');
 });
 
 // ── ADR 0003: appears in gradable subjects, roster is target-driven ────────

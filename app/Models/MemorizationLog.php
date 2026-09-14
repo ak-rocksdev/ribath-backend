@@ -50,7 +50,7 @@ class MemorizationLog extends Model
     {
         return [
             'semester' => 'integer',
-            'log_date' => 'date',
+            'log_date' => 'date:Y-m-d',
             'juz' => 'integer',
             'start_page' => 'integer',
             'end_page' => 'integer',

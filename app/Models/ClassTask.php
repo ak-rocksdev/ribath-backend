@@ -34,7 +34,7 @@ class ClassTask extends Model
     {
         return [
             'semester' => 'integer',
-            'task_date' => 'date',
+            'task_date' => 'date:Y-m-d',
             'created_by' => 'integer',
             'updated_by' => 'integer',
         ];

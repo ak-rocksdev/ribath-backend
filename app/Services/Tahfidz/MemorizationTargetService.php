@@ -52,7 +52,7 @@ class MemorizationTargetService
             ))
             ->when($search, fn ($query) => $query->whereHas(
                 'student',
-                fn ($studentQuery) => $studentQuery->where('full_name', 'like', '%'.$search.'%')
+                fn ($studentQuery) => $studentQuery->whereRaw('LOWER(full_name) LIKE ?', ['%'.mb_strtolower($search).'%'])
             ))
             ->orderByDesc('created_at')
             ->paginate($perPage);

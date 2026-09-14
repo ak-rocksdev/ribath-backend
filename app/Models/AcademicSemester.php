@@ -21,13 +21,17 @@ class AcademicSemester extends Model
         'uts_enabled',
     ];
 
+    /**
+     * Pure dates serialize as `Y-m-d` (not a UTC midnight timestamp): the
+     * frontend compares and parses them as calendar dates.
+     */
     protected function casts(): array
     {
         return [
             'semester' => 'integer',
-            'start_date' => 'date',
-            'end_date' => 'date',
-            'midterm_exam_date' => 'date',
+            'start_date' => 'date:Y-m-d',
+            'end_date' => 'date:Y-m-d',
+            'midterm_exam_date' => 'date:Y-m-d',
             'uts_enabled' => 'boolean',
         ];
     }
