@@ -3,6 +3,7 @@
 use App\Models\School;
 use App\Models\Teacher;
 use App\Models\User;
+use App\Services\TeacherService;
 use Database\Seeders\RolePermissionSeeder;
 use Spatie\Permission\Exceptions\RoleDoesNotExist;
 use Spatie\Permission\Models\Permission;
@@ -323,6 +324,29 @@ test('update teacher with invalid status returns 422', function () {
         ->assertJsonValidationErrors(['status']);
 });
 
+test('a teacher of another school is not found for update, status change and delete', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $otherSchool = School::factory()->inactive()->create();
+    $otherSchoolAccount = User::factory()->create(['school_id' => $otherSchool->id, 'is_active' => true]);
+    $teacher = Teacher::factory()->create([
+        'school_id' => $otherSchool->id,
+        'user_id' => $otherSchoolAccount->id,
+        'status' => 'active',
+        'full_name' => 'Ustadz Sekolah Lain',
+    ]);
+
+    $this->actingAs($user)->putJson("/api/v1/teachers/{$teacher->id}", ['full_name' => 'Diubah', 'status' => 'inactive'])->assertNotFound();
+    $this->actingAs($user)->patchJson("/api/v1/teachers/{$teacher->id}/status", ['status' => 'inactive'])->assertNotFound();
+    $this->actingAs($user)->deleteJson("/api/v1/teachers/{$teacher->id}?cascade_user=true")->assertNotFound();
+
+    $teacher->refresh();
+    expect($teacher->full_name)->toBe('Ustadz Sekolah Lain')
+        ->and($teacher->status)->toBe('active')
+        ->and($teacher->trashed())->toBeFalse()
+        ->and($otherSchoolAccount->fresh()?->is_active)->toBeTrue();
+});
+
 // --- Grant Access ---
 
 test('grant access creates user with ustadz role and links to teacher', function () {
@@ -451,6 +475,34 @@ test('grant access to teacher who already has access returns 422', function () {
     $response->assertStatus(422)
         ->assertJsonPath('success', false)
         ->assertJsonPath('message', 'Teacher already has system access');
+});
+
+test('grant access to a nonaktif teacher returns 422 and creates no account', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null, 'status' => 'inactive']);
+
+    $this->actingAs($user)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'ustadz-nonaktif@example.com',
+        'password' => 'password123',
+    ])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['status'])
+        ->assertJsonPath('message', TeacherService::MESSAGE_INACTIVE_TEACHER_CANNOT_BE_GRANTED_ACCESS);
+
+    expect($teacher->fresh()->user_id)->toBeNull()
+        ->and(User::where('email', 'ustadz-nonaktif@example.com')->exists())->toBeFalse();
+});
+
+test('grant access to a teacher on leave (cuti) still creates the account', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null, 'status' => 'on_leave']);
+
+    $this->actingAs($user)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'ustadz-cuti@example.com',
+        'password' => 'password123',
+    ])->assertStatus(201);
 });
 
 test('grant access with duplicate email returns 422', function () {
@@ -605,6 +657,45 @@ test('reactivating a teacher after nonaktif does not reactivate the linked accou
     $teacherUser = User::where('email', $account['email'])->firstOrFail();
     expect($teacherUser->is_active)->toBeFalse()
         ->and($teacherUser->tokens()->count())->toBe(0);
+});
+
+test('editing a nonaktif teacher again leaves an account reactivated by hand active', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $superAdmin = createSuperAdmin();
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null, 'status' => 'active']);
+
+    $account = grantAccessAndLogIn($this, $user, $teacher, 'ustadz-diaktifkan-manual@example.com');
+
+    $this->actingAs($user)->patchJson("/api/v1/teachers/{$teacher->id}/status", [
+        'status' => 'inactive',
+    ])->assertStatus(200);
+
+    // Akun Pengguna: super_admin reactivates the account on purpose.
+    $teacherUser = User::where('email', $account['email'])->firstOrFail();
+    $this->actingAs($superAdmin)->patchJson("/api/v1/users/{$teacherUser->id}/toggle-status")->assertOk();
+    expect($teacherUser->fresh()->is_active)->toBeTrue();
+    $newToken = $teacherUser->fresh()->createToken('after-reactivation')->plainTextToken;
+
+    // A later edit of the still-nonaktif teacher: a new phone, the status sent unchanged as the form does.
+    $this->actingAs($user)->putJson("/api/v1/teachers/{$teacher->id}", [
+        'phone' => '081234567890',
+        'status' => 'inactive',
+    ])->assertStatus(200)->assertJsonPath('data.phone', '081234567890');
+    $this->actingAs($user)->putJson("/api/v1/teachers/{$teacher->id}", [
+        'phone' => '081200000000',
+    ])->assertStatus(200);
+    $this->actingAs($user)->patchJson("/api/v1/teachers/{$teacher->id}/status", [
+        'status' => 'inactive',
+    ])->assertStatus(200);
+
+    expect($teacherUser->fresh()->is_active)->toBeTrue()
+        ->and($teacherUser->tokens()->count())->toBe(1);
+
+    app('auth')->forgetGuards();
+    $this->withHeader('Authorization', "Bearer {$newToken}")
+        ->getJson('/api/v1/auth/me')
+        ->assertOk();
 });
 
 test('changing status of a teacher without a linked account succeeds', function () {

@@ -7,9 +7,12 @@ use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 
 class TeacherService
 {
+    public const MESSAGE_INACTIVE_TEACHER_CANNOT_BE_GRANTED_ACCESS = 'Ustadz berstatus nonaktif tidak dapat diberi akses. Aktifkan kembali datanya terlebih dahulu.';
+
     public function listTeachers(array $filters): LengthAwarePaginator
     {
         $query = Teacher::with(['school', 'user']);
@@ -47,7 +50,7 @@ class TeacherService
         return DB::transaction(function () use ($teacher, $data) {
             $teacher->update($data);
 
-            $this->deactivateLinkedAccountWhenInactive($teacher);
+            $this->deactivateLinkedAccountWhenStatusChangedToInactive($teacher);
 
             return $teacher->fresh()->load(['school', 'user']);
         });
@@ -58,7 +61,7 @@ class TeacherService
         return DB::transaction(function () use ($teacher, $status) {
             $teacher->update(['status' => $status]);
 
-            $this->deactivateLinkedAccountWhenInactive($teacher);
+            $this->deactivateLinkedAccountWhenStatusChangedToInactive($teacher);
 
             return $teacher->fresh()->load(['school', 'user']);
         });
@@ -70,11 +73,16 @@ class TeacherService
      * status change, so someone who has left no longer holds access to
      * santri grades. Status cuti and reactivating the teacher (aktif) leave
      * the account untouched — reactivating the account stays a deliberate,
-     * manual step in Kelola Pengguna (Akun Pengguna).
+     * manual step in Kelola Pengguna (Akun Pengguna). Only the change TO
+     * nonaktif acts: a later edit of a teacher who already is nonaktif (a
+     * new phone number) leaves an account reactivated by hand active.
+     * Expects $teacher right after its update(), so wasChanged() reports it.
      */
-    private function deactivateLinkedAccountWhenInactive(Teacher $teacher): void
+    private function deactivateLinkedAccountWhenStatusChangedToInactive(Teacher $teacher): void
     {
-        if ($teacher->status !== Teacher::STATUS_INACTIVE || $teacher->user === null) {
+        $statusChangedToInactive = $teacher->wasChanged('status') && $teacher->status === Teacher::STATUS_INACTIVE;
+
+        if (! $statusChangedToInactive || $teacher->user === null) {
             return;
         }
 
@@ -82,8 +90,19 @@ class TeacherService
         $teacher->user->tokens()->delete();
     }
 
+    /**
+     * "Beri Akses": creates the Akun Ustadz of a teacher. A nonaktif teacher
+     * is refused (422) — the account would open santri data to someone who
+     * has left; status cuti may be granted.
+     *
+     * @throws ValidationException keyed "status" for a nonaktif teacher
+     */
     public function grantAccess(Teacher $teacher, string $email, string $password): array
     {
+        if ($teacher->status === Teacher::STATUS_INACTIVE) {
+            throw ValidationException::withMessages(['status' => self::MESSAGE_INACTIVE_TEACHER_CANNOT_BE_GRANTED_ACCESS]);
+        }
+
         return DB::transaction(function () use ($teacher, $email, $password) {
             $user = User::create([
                 'name' => $teacher->full_name,

@@ -44,6 +44,8 @@ class TeacherController extends Controller
 
     public function update(UpdateTeacherRequest $request, Teacher $teacher): JsonResponse
     {
+        $this->ensureBelongsToActiveSchool($teacher);
+
         $updatedTeacher = $this->teacherService->updateTeacher($teacher, $request->validated());
 
         return $this->successResponse($updatedTeacher, 'Teacher updated');
@@ -51,6 +53,8 @@ class TeacherController extends Controller
 
     public function destroy(Request $request, Teacher $teacher): JsonResponse
     {
+        $this->ensureBelongsToActiveSchool($teacher);
+
         $cascadeUser = filter_var($request->query('cascade_user', false), FILTER_VALIDATE_BOOLEAN);
 
         $this->teacherService->deleteWithCascade($teacher, $cascadeUser);
@@ -67,6 +71,8 @@ class TeacherController extends Controller
 
     public function updateStatus(UpdateTeacherStatusRequest $request, Teacher $teacher): JsonResponse
     {
+        $this->ensureBelongsToActiveSchool($teacher);
+
         $updatedTeacher = $this->teacherService->updateTeacherStatus(
             $teacher,
             $request->validated()['status']
