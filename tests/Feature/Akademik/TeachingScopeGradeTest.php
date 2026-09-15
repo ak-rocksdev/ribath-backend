@@ -4,7 +4,10 @@ use App\Models\AcademicYear;
 use App\Models\ClassLevel;
 use App\Models\ClassSession;
 use App\Models\ClassTask;
+use App\Models\GradingFactor;
 use App\Models\GradingTemplate;
+use App\Models\GradingTemplateFactor;
+use App\Models\ReportCard;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
@@ -22,6 +25,7 @@ use Carbon\Carbon;
 use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
+use Spatie\LaravelPdf\Facades\Pdf;
 use Spatie\Permission\Models\Role;
 
 /*
@@ -37,7 +41,9 @@ use Spatie\Permission\Models\Role;
  * Ticket 05: Absensi Pertemuan (schedule list, record, edit, cancel,
  * Rekap Kehadiran) follows the same Cakupan Mengajar; the Alert Pertemuan
  * Bolong of an Akun Ustadz holds only the schedules he currently holds;
- * libur massal stays with pengurus.
+ * libur massal stays with pengurus. Ticket 06: the Rekap Kelas × Kitab
+ * opens for the pairs of the Cakupan Mengajar; the per-santri recap, every
+ * Rapor endpoint and the grading settings stay with pengurus.
  *
  * Every record the rules depend on is created through the real endpoints:
  * accounts via grant-access, schedules via /teaching-schedules, santri via
@@ -1007,29 +1013,30 @@ test('the riwayat pengajar of another school widens nothing', function () {
         ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
 });
 
-test('a finalized Rapor ends the access of the former Ustadz as it does for everyone', function () {
-    Carbon::setTestNow('2025-09-10 10:00:00');
-    $context = setUpTeachingScopeContext($this);
+/**
+ * Completes every factor of Safinatun Najah, Ali's only kitab: a held
+ * Pertemuan (Absensi) and a scored Tugas recorded by super_admin, then the
+ * manual factors (UTS 80, UAS 85, Keaktifan 3, Adab 4) saved by
+ * $manualFactorGrader. Needs "now" inside semester 1 (e.g. 2025-09-10).
+ */
+function completeTeachingScopeSafinahOfAli($testCase, array $context, User $manualFactorGrader): void
+{
     $ali = $context['tamhidiSantri'];
 
-    replaceTeachingScopeTeacher($this, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
-
-    // Bakar completes every factor of Safinah, Ali's only kitab: a held
-    // Pertemuan (Absensi), a scored Tugas, then the manual factors.
-    $this->actingAs($context['superAdmin'])
+    $testCase->actingAs($context['superAdmin'])
         ->putJson("/api/v1/academic-years/{$context['academicYear']->id}/semesters/1", [
             'start_date' => '2025-07-01',
             'end_date' => '2025-12-31',
         ])
         ->assertOk();
-    $this->actingAs($context['superAdmin'])
+    $testCase->actingAs($context['superAdmin'])
         ->postJson('/api/v1/class-sessions', [
             'teaching_schedule_id' => $context['ahmadSafinahScheduleId'],
             'session_date' => '2025-09-08',
             'attendances' => [['student_id' => $ali->id, 'status' => 'present', 'notes' => null]],
         ])
         ->assertCreated();
-    $taskId = $this->actingAs($context['superAdmin'])
+    $taskId = $testCase->actingAs($context['superAdmin'])
         ->postJson('/api/v1/class-tasks', [
             'academic_year_id' => $context['academicYear']->id,
             'semester' => 1,
@@ -1040,14 +1047,25 @@ test('a finalized Rapor ends the access of the former Ustadz as it does for ever
         ])
         ->assertCreated()
         ->json('data.id');
-    $this->actingAs($context['superAdmin'])
+    $testCase->actingAs($context['superAdmin'])
         ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 75]]])
         ->assertOk();
-    $this->actingAs($context['bakarAccount'])
+    $testCase->actingAs($manualFactorGrader)
         ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
             ['student_id' => $ali->id, 'scores' => ['uts' => 80, 'uas' => 85, 'keaktifan' => 3, 'adab' => 4]],
         ]))
         ->assertOk();
+}
+
+test('a finalized Rapor ends the access of the former Ustadz as it does for everyone', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+
+    replaceTeachingScopeTeacher($this, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
+
+    // Bakar, now the Ustadz of the moved schedule, completes Ali's Safinah.
+    completeTeachingScopeSafinahOfAli($this, $context, $context['bakarAccount']);
 
     $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/report-cards/finalize', [
@@ -1962,4 +1980,261 @@ test('an Akun Ustadz gets the same validation and tenancy answers on Absensi as 
     }
 
     expect(ClassSession::count())->toBe(0);
+});
+
+// ── Rekap Nilai (ticket 06) ──────────────────────────────────────────────
+
+function teachingScopeClassRecapUrl(array $context, ClassLevel $classLevel, SubjectBook $subjectBook, int $semester = 1): string
+{
+    return '/api/v1/grade-recaps/class?'.http_build_query([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => $semester,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $subjectBook->id,
+    ]);
+}
+
+/**
+ * The row factors of one santri in a class recap response, as code => [score, is_missing].
+ *
+ * @return array<string, array{0: mixed, 1: bool}>
+ */
+function teachingScopeRecapFactorsOf($response, Student $student): array
+{
+    $row = collect($response->json('data.rows'))->firstWhere('student.id', $student->id);
+
+    return collect($row['factors'])
+        ->mapWithKeys(fn (array $factor) => [$factor['code'] => [$factor['score'], $factor['is_missing']]])
+        ->all();
+}
+
+test('an Akun Ustadz opens the Rekap Kelas × Kitab of his own pair with every factor and what is still empty', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => 80, 'adab' => 4]],
+        ]))
+        ->assertOk();
+
+    $response = $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertOk()
+        ->assertJsonPath('data.class_level.id', $context['tamhidi']->id)
+        ->assertJsonPath('data.subject_book.id', $context['safinah']->id)
+        ->assertJsonPath('data.grading_template.code', 'teori_kitab')
+        ->assertJsonPath('data.summary.student_count', 1)
+        ->assertJsonPath('data.summary.complete_count', 0)
+        ->assertJsonPath('data.rows.0.student.id', $ali->id)
+        ->assertJsonPath('data.rows.0.final_score', null)
+        ->assertJsonPath('data.rows.0.is_complete', false);
+
+    expect(collect($response->json('data.factors'))->pluck('code')->sort()->values()->all())
+        ->toBe(['absensi', 'adab', 'keaktifan', 'tugas', 'uas', 'uts']);
+    $aliFactors = teachingScopeRecapFactorsOf($response, $ali);
+    expect($aliFactors['uts'])->toEqual([80, false])
+        ->and($aliFactors['adab'][1])->toBeFalse()
+        ->and($aliFactors['uas'])->toEqual([null, true])
+        ->and($aliFactors['keaktifan'])->toEqual([null, true]);
+    expect($response->json('data.rows.0.missing_factor_codes'))->toContain('uas', 'keaktifan');
+});
+
+test('a pair outside the Cakupan Mengajar is refused with 403 on the Rekap Kelas × Kitab', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Bakar's pair, and a pair nobody teaches.
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeClassRecapUrl($context, $context['ibtida'], $context['jurumiyah']))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['jurumiyah']))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+    // Ahmad's own pair has no schedule in semester 2.
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['safinah'], semester: 2))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+
+    // For pengurus the unscheduled pair is only unscheduled.
+    $this->actingAs($context['pengurus'])
+        ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['jurumiyah']))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['subject_book_id']);
+
+    $accountWithoutGradePermissions = User::factory()->create(['school_id' => $context['school']->id]);
+    $this->actingAs($accountWithoutGradePermissions)
+        ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertForbidden();
+});
+
+test('pengurus and a pengurus who also teaches open the Rekap Kelas × Kitab of every pair', function () {
+    $context = setUpTeachingScopeContext($this);
+    $multiRoleAccount = createTeachingScopeMultiRoleAccount($this, $context);
+
+    foreach ([$context['pengurus'], $multiRoleAccount] as $unrestrictedUser) {
+        $this->actingAs($unrestrictedUser)
+            ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertOk()
+            ->assertJsonPath('data.rows.0.student.id', $context['tamhidiSantri']->id);
+        $this->actingAs($unrestrictedUser)
+            ->getJson(teachingScopeClassRecapUrl($context, $context['ibtida'], $context['jurumiyah']))
+            ->assertOk()
+            ->assertJsonPath('data.rows.0.student.id', $context['ibtidaSantri']->id);
+    }
+});
+
+test('the former and the new Ustadz of a schedule moved through the bulk ganti ustadz both open its Rekap Kelas × Kitab', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    replaceTeachingScopeTeacher($this, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
+
+    foreach ([$context['ahmadAccount'], $context['bakarAccount']] as $ustadzAccount) {
+        $this->actingAs($ustadzAccount)
+            ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertOk()
+            ->assertJsonPath('data.rows.0.student.id', $context['tamhidiSantri']->id);
+    }
+});
+
+test('an Akun Ustadz gets the same validation and tenancy answers on the Rekap Kelas × Kitab as pengurus', function () {
+    $context = setUpTeachingScopeContext($this);
+    $otherSchool = School::factory()->create();
+    $otherSchoolClassLevel = ClassLevel::factory()->create(['school_id' => $otherSchool->id]);
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        $this->actingAs($user)
+            ->getJson('/api/v1/grade-recaps/class')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['academic_year_id', 'semester', 'class_level_id', 'subject_book_id']);
+        $this->actingAs($user)
+            ->getJson(teachingScopeClassRecapUrl($context, $otherSchoolClassLevel, $context['safinah']))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['class_level_id']);
+    }
+});
+
+test('the per-santri recap, every Rapor endpoint and the grading settings stay closed to an Akun Ustadz', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    Pdf::fake();
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+    $academicYearId = $context['academicYear']->id;
+    completeTeachingScopeSafinahOfAli($this, $context, $context['ahmadAccount']);
+
+    $finalizePayload = ['student_id' => $ali->id, 'academic_year_id' => $academicYearId, 'semester' => 1];
+    $semesterQuery = http_build_query(['academic_year_id' => $academicYearId, 'semester' => 1]);
+
+    // Ali's Rapor is complete, yet his own Ustadz cannot finalize it.
+    $this->actingAs($context['ahmadAccount'])->postJson('/api/v1/report-cards/finalize', $finalizePayload)->assertForbidden();
+    expect(ReportCard::count())->toBe(0);
+
+    $reportCardId = $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/report-cards/finalize', $finalizePayload)
+        ->assertOk()
+        ->json('data.id');
+
+    $adab = GradingFactor::where('school_id', $context['school']->id)->where('code', 'adab')->firstOrFail();
+    $factorsByCode = GradingFactor::where('school_id', $context['school']->id)->get()->keyBy('code');
+    $teoriKitabTemplate = GradingTemplate::where('school_id', $context['school']->id)->where('code', 'teori_kitab')->firstOrFail();
+    $weightsBefore = GradingTemplateFactor::where('grading_template_id', $teoriKitabTemplate->id)->orderBy('id')->pluck('weight', 'id')->all();
+
+    $refusedRequests = [
+        'per-santri recap' => fn () => $this->getJson("/api/v1/grade-recaps/student/{$ali->id}?{$semesterQuery}"),
+        'Rapor list' => fn () => $this->getJson("/api/v1/report-cards?{$semesterQuery}&class_level_id={$context['tamhidi']->id}"),
+        'Rapor detail' => fn () => $this->getJson("/api/v1/report-cards/{$reportCardId}"),
+        'Rapor PDF' => fn () => $this->getJson("/api/v1/report-cards/{$reportCardId}/pdf"),
+        'Rapor finalization' => fn () => $this->postJson('/api/v1/report-cards/finalize', $finalizePayload),
+        'Rapor cancellation' => fn () => $this->postJson("/api/v1/report-cards/{$reportCardId}/unfinalize", ['reason' => 'Salah input nilai']),
+        'factor and scale settings' => fn () => $this->putJson("/api/v1/grading-factors/{$adab->id}", [
+            'name' => 'Adab & Akhlak',
+            'scale_levels' => [
+                ['level' => 1, 'label' => 'Kurang', 'description' => 'x', 'score' => 55],
+                ['level' => 2, 'label' => 'Cukup', 'description' => 'x', 'score' => 70],
+                ['level' => 3, 'label' => 'Baik', 'description' => 'x', 'score' => 85],
+                ['level' => 4, 'label' => 'Sangat Baik', 'description' => 'x', 'score' => 100],
+            ],
+        ]),
+        'weight settings' => fn () => $this->putJson('/api/v1/grading-template-factors', [
+            'academic_year_id' => $academicYearId,
+            'semester' => 1,
+            'grading_template_id' => $teoriKitabTemplate->id,
+            'factors' => [
+                ['grading_factor_id' => $factorsByCode['uts']->id, 'weight' => 25, 'is_active' => true],
+                ['grading_factor_id' => $factorsByCode['uas']->id, 'weight' => 25, 'is_active' => true],
+                ['grading_factor_id' => $factorsByCode['tugas']->id, 'weight' => 20, 'is_active' => true],
+                ['grading_factor_id' => $factorsByCode['keaktifan']->id, 'weight' => 10, 'is_active' => true],
+                ['grading_factor_id' => $factorsByCode['adab']->id, 'weight' => 10, 'is_active' => true],
+                ['grading_factor_id' => $factorsByCode['absensi']->id, 'weight' => 10, 'is_active' => true],
+            ],
+        ]),
+        'Semester Akademik settings' => fn () => $this->putJson("/api/v1/academic-years/{$academicYearId}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-20',
+        ]),
+    ];
+
+    foreach ($refusedRequests as $endpoint => $sendRequest) {
+        $this->actingAs($context['ahmadAccount']);
+        expect($sendRequest()->status())->toBe(403, "{$endpoint} must refuse the Akun Ustadz");
+    }
+
+    expect(ReportCard::findOrFail($reportCardId)->isFinal())->toBeTrue()
+        ->and($adab->fresh()->name)->not->toBe('Adab & Akhlak')
+        ->and(GradingTemplateFactor::where('grading_template_id', $teoriKitabTemplate->id)->orderBy('id')->pluck('weight', 'id')->all())->toBe($weightsBefore);
+});
+
+test('a pengurus who also teaches keeps the per-santri recap and the Rapor', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpTeachingScopeContext($this);
+    $multiRoleAccount = createTeachingScopeMultiRoleAccount($this, $context);
+    $ali = $context['tamhidiSantri'];
+    $semesterQuery = http_build_query(['academic_year_id' => $context['academicYear']->id, 'semester' => 1]);
+    completeTeachingScopeSafinahOfAli($this, $context, $context['ahmadAccount']);
+
+    $this->actingAs($multiRoleAccount)
+        ->getJson("/api/v1/grade-recaps/student/{$ali->id}?{$semesterQuery}")
+        ->assertOk()
+        ->assertJsonPath('data.student.id', $ali->id)
+        ->assertJsonPath('data.is_complete', true);
+    $reportCardId = $this->actingAs($multiRoleAccount)
+        ->postJson('/api/v1/report-cards/finalize', ['student_id' => $ali->id, 'academic_year_id' => $context['academicYear']->id, 'semester' => 1])
+        ->assertOk()
+        ->json('data.id');
+    $this->actingAs($multiRoleAccount)
+        ->getJson("/api/v1/report-cards?{$semesterQuery}&class_level_id={$context['tamhidi']->id}")
+        ->assertOk();
+    $this->actingAs($multiRoleAccount)
+        ->getJson("/api/v1/report-cards/{$reportCardId}")
+        ->assertOk()
+        ->assertJsonPath('data.id', $reportCardId);
+});
+
+test('a finalized Rapor refuses the change of an Akun Ustadz with the message pengurus gets, and his Rekap shows the row as final', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+    completeTeachingScopeSafinahOfAli($this, $context, $context['ahmadAccount']);
+
+    $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/report-cards/finalize', ['student_id' => $ali->id, 'academic_year_id' => $context['academicYear']->id, 'semester' => 1])
+        ->assertOk();
+
+    $changeOfUts = teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+        ['student_id' => $ali->id, 'scores' => ['uts' => 60]],
+    ]);
+    $pengurusRefusal = $this->actingAs($context['pengurus'])->putJson('/api/v1/student-grades/bulk', $changeOfUts)->assertUnprocessable();
+    $ustadzRefusal = $this->actingAs($context['ahmadAccount'])->putJson('/api/v1/student-grades/bulk', $changeOfUts)->assertUnprocessable();
+
+    expect($ustadzRefusal->json('message'))->toBe($pengurusRefusal->json('message'))
+        ->and($ustadzRefusal->json('errors'))->toBe($pengurusRefusal->json('errors'));
+    expect(StudentGrade::where('student_id', $ali->id)->whereHas('gradingFactor', fn ($query) => $query->where('code', 'uts'))->value('score'))->toEqual(80);
+
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeClassRecapUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertOk()
+        ->assertJsonPath('data.rows.0.student.id', $ali->id)
+        ->assertJsonPath('data.rows.0.is_finalized', true);
 });

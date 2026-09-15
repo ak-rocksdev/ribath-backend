@@ -195,10 +195,13 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-grades|manage-own-grades');
     });
 
-    // Grade recap routes (Penilaian: Rekap Nilai, computed live)
+    // Grade recap routes (Penilaian: Rekap Nilai, computed live). The Rekap
+    // Kelas × Kitab takes "semua" or "milik sendiri" (ADR 0004) and
+    // GradeRecapService narrows the latter to the Cakupan Mengajar; the
+    // per-santri recap, which spans every kitab, stays "semua" only.
     Route::prefix('grade-recaps')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/class', [GradeRecapController::class, 'classSubject'])
-            ->middleware('permission:view-grades');
+            ->middleware('permission:view-grades|view-own-grades');
         Route::get('/student/{student}', [GradeRecapController::class, 'student'])
             ->middleware('permission:view-grades');
     });
