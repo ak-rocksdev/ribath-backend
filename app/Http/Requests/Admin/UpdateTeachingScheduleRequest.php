@@ -11,10 +11,17 @@ use Illuminate\Validation\Rule;
  * PUT /teaching-schedules/{teachingSchedule}. Tenancy is checked here,
  * before validation, so a schedule of another school answers 404 and is
  * never changed — nor recorded in the riwayat pengajar.
+ *
+ * The Semester Akademik of a schedule is fixed: the edit form re-sends the
+ * schedule's own year and semester, and any other value is refused (a
+ * schedule reaches another semester by being cloned there), so every
+ * riwayat pengajar entry stays in the semester its schedule lives in.
  */
 class UpdateTeachingScheduleRequest extends FormRequest
 {
     use EnsuresActiveSchoolTenancy;
+
+    public const MESSAGE_SEMESTER_AKADEMIK_IS_FIXED = 'Semester Akademik jadwal tidak dapat diubah; salin jadwal ke semester lain.';
 
     public function authorize(): bool
     {
@@ -29,15 +36,26 @@ class UpdateTeachingScheduleRequest extends FormRequest
 
     public function rules(): array
     {
+        /** @var TeachingSchedule $teachingSchedule */
+        $teachingSchedule = $this->route('teachingSchedule');
+
         return [
-            'academic_year_id' => ['sometimes', 'uuid', 'exists:academic_years,id'],
-            'semester' => ['sometimes', 'integer', 'in:1,2'],
+            'academic_year_id' => ['sometimes', 'uuid', Rule::in([$teachingSchedule->academic_year_id])],
+            'semester' => ['sometimes', 'integer', Rule::in([$teachingSchedule->semester])],
             'day_of_week' => ['sometimes', 'string', Rule::in(TeachingSchedule::DAYS_OF_WEEK)],
             'time_slot_id' => ['sometimes', 'uuid', 'exists:time_slots,id'],
             'class_level_id' => ['sometimes', 'uuid', 'exists:class_levels,id'],
             'subject_book_id' => ['sometimes', 'uuid', 'exists:subject_books,id'],
             'teacher_id' => ['sometimes', 'uuid', 'exists:teachers,id'],
             'is_active' => ['sometimes', 'boolean'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'academic_year_id.in' => self::MESSAGE_SEMESTER_AKADEMIK_IS_FIXED,
+            'semester.in' => self::MESSAGE_SEMESTER_AKADEMIK_IS_FIXED,
         ];
     }
 }

@@ -349,6 +349,45 @@ test('a rejected change records nothing', function () {
         ->and(TeachingSchedule::findOrFail($context['scheduleId'])->teacher_id)->toBe($context['ustadzAhmad']->id);
 });
 
+// ── Semester Akademik tetap ──────────────────────────────────────────────
+
+const TEACHER_HISTORY_FIXED_SEMESTER_MESSAGE = 'Semester Akademik jadwal tidak dapat diubah; salin jadwal ke semester lain.';
+
+test('an edit cannot move a schedule to another Semester Akademik', function () {
+    $context = setUpTeacherHistoryContext($this);
+    $scheduleUrl = "/api/v1/teaching-schedules/{$context['scheduleId']}";
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $context['school']->id, 'is_active' => false]);
+
+    $this->actingAs($context['pengurus'])
+        ->putJson($scheduleUrl, teacherHistoryEditFormPayload($context['scheduleId'], ['semester' => 2]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['semester' => TEACHER_HISTORY_FIXED_SEMESTER_MESSAGE]);
+
+    $this->actingAs($context['pengurus'])
+        ->putJson($scheduleUrl, teacherHistoryEditFormPayload($context['scheduleId'], ['academic_year_id' => $otherAcademicYear->id]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['academic_year_id' => TEACHER_HISTORY_FIXED_SEMESTER_MESSAGE]);
+
+    // Moving to another semester together with a new Ustadz is refused as a whole.
+    $this->actingAs($context['pengurus'])
+        ->putJson($scheduleUrl, ['semester' => 2, 'teacher_id' => $context['ustadzBakar']->id])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['semester']);
+
+    $schedule = TeachingSchedule::findOrFail($context['scheduleId']);
+    expect($schedule->academic_year_id)->toBe($context['academicYear']->id)
+        ->and($schedule->semester)->toBe(1)
+        ->and($schedule->teacher_id)->toBe($context['ustadzAhmad']->id)
+        ->and(TeachingScheduleTeacherHistory::count())->toBe(0);
+
+    // The edit form re-sends the schedule's own year and semester: accepted.
+    $this->actingAs($context['pengurus'])
+        ->putJson($scheduleUrl, teacherHistoryEditFormPayload($context['scheduleId'], ['day_of_week' => 'wednesday']))
+        ->assertOk()
+        ->assertJsonPath('data.day_of_week', 'wednesday')
+        ->assertJsonPath('data.semester', 1);
+});
+
 // ── Tenancy ──────────────────────────────────────────────────────────────
 
 test('a schedule of another school is not found for the edit and untouched by the bulk ganti ustadz', function () {

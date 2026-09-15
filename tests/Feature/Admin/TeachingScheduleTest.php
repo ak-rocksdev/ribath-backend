@@ -991,16 +991,18 @@ test('can update a teaching schedule', function () {
         'teacher_id' => $teacher->id,
     ]);
 
+    // The schedule's own semester may be re-sent; changing it is refused
+    // (see TeachingScheduleTeacherHistoryTest).
     $response = $this->actingAs($user)
         ->putJson("/api/v1/teaching-schedules/{$schedule->id}", [
             'day_of_week' => 'wednesday',
-            'semester' => 2,
+            'semester' => 1,
         ]);
 
     $response->assertOk()
         ->assertJsonPath('success', true)
         ->assertJsonPath('data.day_of_week', 'wednesday')
-        ->assertJsonPath('data.semester', 2);
+        ->assertJsonPath('data.semester', 1);
 });
 
 test('update schedule returns eager loaded relations', function () {

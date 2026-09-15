@@ -12,12 +12,10 @@ class TeacherFactory extends Factory
 
     public function definition(): array
     {
-        $letters = $this->faker->regexify('[A-Z]{2,3}');
-        $digit = $this->faker->optional(0.5)->regexify('[0-9]');
-
         return [
             'school_id' => School::factory(),
-            'code' => $letters.$digit,
+            // unique(): teachers.code is unique per school, and a test often creates several.
+            'code' => $this->faker->unique()->regexify('[A-Z]{2,3}[0-9]?'),
             'full_name' => $this->faker->name(),
             'status' => Teacher::STATUS_ACTIVE,
             'email' => $this->faker->unique()->safeEmail(),
