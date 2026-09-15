@@ -13,8 +13,8 @@ use Illuminate\Database\Eloquent\Collection;
  * Jadwal Saya: the Jadwal Mengajar the Ustadz linked to the current user
  * holds NOW in one Semester Akademik — the active one unless another is
  * chosen. Whatever the user's permissions, it is always his own schedule
- * (a pengurus without a linked Ustadz gets an empty list), never the
- * school's whole schedule.
+ * (a pengurus without a linked Ustadz, or one whose Ustadz is nonaktif,
+ * gets an empty list), never the school's whole schedule.
  *
  * Not the Cakupan Mengajar: the Absensi Pertemuan list
  * (ClassSessionService::listSchedulesForAttendance) also holds the
@@ -48,7 +48,7 @@ class MyTeachingScheduleService
 
         /** @var User $user */
         $user = auth()->user();
-        $linkedTeacherId = $user->teacher?->id;
+        $linkedTeacherId = $user->activeLinkedTeacherId();
 
         return [
             'academic_year' => ['id' => $academicYear->id, 'name' => $academicYear->name],

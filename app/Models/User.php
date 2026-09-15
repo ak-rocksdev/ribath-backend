@@ -61,6 +61,22 @@ class User extends Authenticatable
         return $this->hasOne(Teacher::class);
     }
 
+    /**
+     * The id of the Ustadz linked to this account, or null when none is
+     * linked or his status is nonaktif: an Ustadz who has left gives the
+     * account no Cakupan Mengajar and no Jadwal Saya, also when the account
+     * itself is still active (linked before status nonaktif deactivated
+     * accounts, or reactivated by hand). Status cuti keeps the link.
+     */
+    public function activeLinkedTeacherId(): ?string
+    {
+        $linkedTeacher = $this->teacher;
+
+        return $linkedTeacher !== null && $linkedTeacher->status !== Teacher::STATUS_INACTIVE
+            ? $linkedTeacher->id
+            : null;
+    }
+
     public function appNotifications(): HasMany
     {
         return $this->hasMany(Notification::class);

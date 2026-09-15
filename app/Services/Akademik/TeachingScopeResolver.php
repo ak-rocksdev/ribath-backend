@@ -21,7 +21,7 @@ use InvalidArgumentException;
  *   restriction, even when the user also holds the "milik sendiri" one;
  * - only the "milik sendiri" permission (e.g. `manage-own-grades`) → the
  *   Cakupan Mengajar of the Ustadz linked to the user (empty when none is
- *   linked):
+ *   linked or his status is nonaktif — User::activeLinkedTeacherId()):
  *   - the Kelas × Kitab pairs of his Jadwal Mengajar rows of that
  *     semester — active or deactivated — plus the pairs the riwayat
  *     pengajar of that semester records for him (a schedule since moved
@@ -75,7 +75,7 @@ class TeachingScopeResolver
             return TeachingScope::unrestricted();
         }
 
-        $linkedTeacherId = $user->teacher?->id;
+        $linkedTeacherId = $user->activeLinkedTeacherId();
 
         if ($linkedTeacherId === null) {
             return TeachingScope::limitedTo(null, [], [], []);
@@ -121,7 +121,7 @@ class TeachingScopeResolver
             return null;
         }
 
-        $linkedTeacherId = $user->teacher?->id;
+        $linkedTeacherId = $user->activeLinkedTeacherId();
 
         return $linkedTeacherId === null ? [] : [$linkedTeacherId];
     }

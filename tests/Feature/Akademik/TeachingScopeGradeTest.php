@@ -1749,6 +1749,48 @@ test('a Pertemuan outside the Cakupan Mengajar is not found and a schedule outsi
     $this->actingAs($context['bakarAccount'])->getJson("/api/v1/class-sessions/{$bakarSessionId}")->assertOk();
 });
 
+test('cancelling on a schedule inside the Cakupan Mengajar does not reach a Pertemuan whose own pair is outside it', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ali = $context['tamhidiSantri'];
+    $movedScheduleId = $context['ahmadSafinahScheduleId'];
+
+    // Ahmad records a held Pertemuan for Tamhidi × Safinah.
+    $sessionId = recordTeachingScopeSession($this, $context['ahmadAccount'], $movedScheduleId, '2025-09-08', $ali)
+        ->assertCreated()
+        ->json('data.class_session.id');
+
+    // Pengurus moves the schedule to Ibtida 1 and Ustadz Bakar: the schedule's pair is now Bakar's, the Pertemuan's snapshot is not.
+    editTeachingScopeSchedule($this, $context, $movedScheduleId, [
+        'class_level_id' => $context['ibtida']->id,
+        'teacher_id' => $context['ustadzBakar']->id,
+    ]);
+
+    $this->actingAs($context['bakarAccount'])->getJson("/api/v1/class-sessions/{$sessionId}")->assertNotFound();
+    $this->actingAs($context['bakarAccount'])
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $movedScheduleId,
+            'session_date' => '2025-09-08',
+            'reason' => 'Libur',
+        ])
+        ->assertNotFound();
+
+    $session = ClassSession::findOrFail($sessionId);
+    expect($session->status)->toBe(ClassSession::STATUS_HELD)
+        ->and($session->cancel_reason)->toBeNull()
+        ->and($session->updated_by)->toBe($context['ahmadAccount']->id);
+
+    // Pengurus is never restricted and still converts it.
+    $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $movedScheduleId,
+            'session_date' => '2025-09-08',
+            'reason' => 'Libur',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.class_session.id', $sessionId)
+        ->assertJsonPath('data.class_session.status', 'cancelled');
+});
+
 test('a former Ustadz records the Pertemuan of a schedule moved away from him under the current Ustadz, as the recorder', function (string $throughPath) {
     $context = setUpTeachingScopeAttendanceContext($this);
     $ali = $context['tamhidiSantri'];
@@ -2442,4 +2484,34 @@ test('without an active academic year Jadwal Saya is empty and names no semester
         ->assertJsonPath('data.academic_year', null)
         ->assertJsonPath('data.semester', null)
         ->assertJsonPath('data.schedules', []);
+});
+
+test('an account whose linked Ustadz is already nonaktif works like one without a linked Ustadz, while cuti keeps his scope', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ahmad = $context['ahmadAccount'];
+
+    // Data from before the automatic deactivation: the Ustadz is nonaktif, his account still active.
+    Teacher::whereKey($context['ustadzAhmad']->id)->update(['status' => Teacher::STATUS_INACTIVE]);
+    Teacher::whereKey($context['ustadzBakar']->id)->update(['status' => Teacher::STATUS_ON_LEAVE]);
+    expect($ahmad->fresh()->is_active)->toBeTrue();
+
+    $this->actingAs($ahmad)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk()->assertJsonCount(0, 'data');
+    $this->actingAs($ahmad)
+        ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+    $this->actingAs($ahmad)->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()->assertJsonPath('data', []);
+    recordTeachingScopeSession($this, $ahmad, $context['ahmadSafinahScheduleId'], '2025-09-08', $context['tamhidiSantri'])
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+    $this->actingAs($ahmad)
+        ->getJson('/api/v1/attendance-alerts')
+        ->assertOk()
+        ->assertJsonPath('data.teachers', []);
+    expect(teachingScopeMyScheduleIds($this, $ahmad))->toBe([]);
+
+    // Status cuti changes nothing.
+    expect(teachingScopeMyScheduleIds($this, $context['bakarAccount']))->toBe([$context['bakarJurumiyahScheduleId']])
+        ->and(teachingScopeScheduleIds($this->actingAs($context['bakarAccount'])->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()))
+        ->toBe([$context['bakarJurumiyahScheduleId']]);
 });

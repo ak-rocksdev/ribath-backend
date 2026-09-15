@@ -400,6 +400,10 @@ class ClassSessionService
      *
      * @return array{result: array{class_session: array<string, mixed>, attendances: array<int, array<string, mixed>>, requires_override_warning: bool}, created: bool}
      *
+     * An existing session whose own Kelas × Kitab (its snapshot) is outside
+     * the Cakupan Mengajar is not found (404), even when the schedule's
+     * current pair is inside it.
+     *
      * @throws OutsideTeachingScopeException the schedule's pair is outside the Cakupan Mengajar
      * @throws ValidationException
      */
@@ -413,6 +417,8 @@ class ClassSessionService
         $isEditingExistingSession = $existingSession !== null;
 
         if ($isEditingExistingSession) {
+            // The schedule's pair may have moved since: the Pertemuan's own snapshot decides, as on its routes.
+            $this->ensureSessionWithinTeachingScope($existingSession, 'manage-attendance');
             $this->sessionDatePolicy->assertAttendanceEditAllowed($existingSession->session_date, $actorIsSuperAdmin);
         } else {
             if (! $schedule->is_active) {
