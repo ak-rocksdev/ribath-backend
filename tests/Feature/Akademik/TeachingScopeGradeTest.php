@@ -34,6 +34,10 @@ use Spatie\Permission\Models\Role;
  * who held it earlier in the same semester. Ticket 04: the Tugas of a pair
  * inside the Cakupan Mengajar are listed, created, changed, deleted and
  * scored like pengurus does; a Tugas of another pair is not found (404).
+ * Ticket 05: Absensi Pertemuan (schedule list, record, edit, cancel,
+ * Rekap Kehadiran) follows the same Cakupan Mengajar; the Alert Pertemuan
+ * Bolong of an Akun Ustadz holds only the schedules he currently holds;
+ * libur massal stays with pengurus.
  *
  * Every record the rules depend on is created through the real endpoints:
  * accounts via grant-access, schedules via /teaching-schedules, santri via
@@ -105,7 +109,7 @@ function setUpTeachingScopeContext($testCase): array
     $context['bakarAccount'] = grantTeachingScopeAccess($testCase, $context, $ustadzBakar, 'bakar@example.com');
 
     $context['ahmadSafinahScheduleId'] = createTeachingScopeSchedule($testCase, $context, $tamhidi, $safinah, $ustadzAhmad, 'monday');
-    createTeachingScopeSchedule($testCase, $context, $ibtida, $jurumiyah, $ustadzBakar, 'tuesday');
+    $context['bakarJurumiyahScheduleId'] = createTeachingScopeSchedule($testCase, $context, $ibtida, $jurumiyah, $ustadzBakar, 'tuesday');
 
     $context['tamhidiSantri'] = createTeachingScopeStudent($testCase, $context, 'Ali', 'tamhidi');
     $context['ibtidaSantri'] = createTeachingScopeStudent($testCase, $context, 'Zaid', 'ibtida_1');
@@ -1427,4 +1431,535 @@ test('an Akun Ustadz gets the same validation and tenancy answers on Tugas as pe
     $this->actingAs($ahmad)->deleteJson("/api/v1/class-tasks/{$otherSchoolTask->id}")->assertNotFound();
     $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$otherSchoolTask->id}/scores")->assertNotFound();
     $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$otherSchoolTask->id}/scores/bulk", ['rows' => []])->assertNotFound();
+});
+
+// ── Absensi Pertemuan dan Alert Pertemuan Bolong (ticket 05) ─────────────
+
+/**
+ * The Cakupan Mengajar context with semester 1 dated 2025-07-01..2025-12-31.
+ * The schedules are created while "now" is Monday 2025-09-01, so the Alert
+ * Pertemuan Bolong starts there; "today" is then Wednesday 2025-09-10 (WIB),
+ * which puts Ahmad's missed Mondays at 2025-09-01 and 2025-09-08 and Bakar's
+ * missed Tuesdays at 2025-09-02 and 2025-09-09.
+ *
+ * @return array<string, mixed>
+ */
+function setUpTeachingScopeAttendanceContext($testCase): array
+{
+    Carbon::setTestNow('2025-09-01 01:00:00');
+    $context = setUpTeachingScopeContext($testCase);
+
+    $testCase->actingAs($context['superAdmin'])
+        ->putJson("/api/v1/academic-years/{$context['academicYear']->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-31',
+        ])
+        ->assertOk();
+
+    Carbon::setTestNow('2025-09-10 03:00:00');
+
+    return $context;
+}
+
+/** A pengurus who also teaches: "Beri Akses" for his Ustadz, then roles ustadz + pengurus_pesantren. */
+function createTeachingScopeMultiRoleAccount($testCase, array $context): User
+{
+    $pengurusYangMengajar = Teacher::factory()->create(['school_id' => $context['school']->id, 'full_name' => 'Ustadz Pengurus', 'user_id' => null]);
+    $multiRoleAccount = grantTeachingScopeAccess($testCase, $context, $pengurusYangMengajar, 'pengurus.ustadz@example.com');
+    $testCase->actingAs($context['superAdmin'])
+        ->postJson("/api/v1/users/{$multiRoleAccount->id}/roles", ['roles' => ['ustadz', 'pengurus_pesantren']])
+        ->assertOk();
+
+    return $multiRoleAccount->fresh();
+}
+
+/** Records a held Pertemuan through POST /class-sessions with one santri's status. */
+function recordTeachingScopeSession($testCase, User $user, string $scheduleId, string $sessionDate, Student $student, string $status = 'present')
+{
+    return $testCase->actingAs($user)->postJson('/api/v1/class-sessions', [
+        'teaching_schedule_id' => $scheduleId,
+        'session_date' => $sessionDate,
+        'attendances' => [['student_id' => $student->id, 'status' => $status, 'notes' => null]],
+    ]);
+}
+
+function teachingScopeAttendanceSchedulesUrl(array $context, int $semester = 1): string
+{
+    return '/api/v1/attendance-schedules?'.http_build_query([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => $semester,
+    ]);
+}
+
+function teachingScopeClassSessionsUrl(array $context, array $filters = []): string
+{
+    return '/api/v1/class-sessions?'.http_build_query(array_merge([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+    ], $filters));
+}
+
+function teachingScopeAttendanceRecapUrl(array $context, ClassLevel $classLevel, SubjectBook $subjectBook): string
+{
+    return '/api/v1/attendance-recaps?'.http_build_query([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $subjectBook->id,
+    ]);
+}
+
+/**
+ * The schedule ids of an attendance-schedules response, sorted.
+ *
+ * @return array<int, string>
+ */
+function teachingScopeScheduleIds($response): array
+{
+    return collect($response->json('data'))->pluck('id')->sort()->values()->all();
+}
+
+/**
+ * The Alert Pertemuan Bolong the user sees, as Ustadz name => the
+ * "<teaching_schedule_id>|<session_date>" of each missed Pertemuan.
+ *
+ * @return array<string, array<int, string>>
+ */
+function teachingScopeMissingSessionsByUstadz($testCase, User $user): array
+{
+    $response = $testCase->actingAs($user)->getJson('/api/v1/attendance-alerts')->assertOk();
+
+    return collect($response->json('data.teachers'))
+        ->mapWithKeys(fn (array $teacherGroup) => [
+            $teacherGroup['teacher']['full_name'] => collect($teacherGroup['items'])
+                ->map(fn (array $item) => $item['teaching_schedule_id'].'|'.$item['session_date'])
+                ->all(),
+        ])
+        ->all();
+}
+
+/** Moves Ahmad's Tamhidi × Safinah schedule to Ustadz Bakar through the edit or the bulk ganti ustadz. */
+function moveTeachingScopeScheduleToBakar($testCase, array $context, string $throughPath): void
+{
+    if ($throughPath === 'the schedule edit') {
+        editTeachingScopeSchedule($testCase, $context, $context['ahmadSafinahScheduleId'], ['teacher_id' => $context['ustadzBakar']->id]);
+
+        return;
+    }
+
+    // Bakar teaches Tuesday at the same slot; the Monday schedule moves without a conflict.
+    replaceTeachingScopeTeacher($testCase, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
+}
+
+test('the Absensi Pertemuan schedule list holds only the active schedules of the Cakupan Mengajar', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ahmadScheduleId = $context['ahmadSafinahScheduleId'];
+    $bakarScheduleId = $context['bakarJurumiyahScheduleId'];
+
+    $ahmadResponse = $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeAttendanceSchedulesUrl($context))
+        ->assertOk();
+    expect(teachingScopeScheduleIds($ahmadResponse))->toBe([$ahmadScheduleId])
+        ->and($ahmadResponse->json('data.0.teacher.full_name'))->toBe('Ustadz Ahmad')
+        ->and($ahmadResponse->json('data.0.class_level.id'))->toBe($context['tamhidi']->id)
+        ->and($ahmadResponse->json('data.0.subject_book.title'))->toBe('Safinatun Najah')
+        ->and($ahmadResponse->json('data.0.time_slot.id'))->toBe($context['timeSlot']->id);
+
+    expect(teachingScopeScheduleIds($this->actingAs($context['bakarAccount'])->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()))
+        ->toBe([$bakarScheduleId]);
+
+    $everySchedule = collect([$ahmadScheduleId, $bakarScheduleId])->sort()->values()->all();
+    foreach ([$context['pengurus'], createTeachingScopeMultiRoleAccount($this, $context)] as $unrestrictedUser) {
+        expect(teachingScopeScheduleIds($this->actingAs($unrestrictedUser)->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()))
+            ->toBe($everySchedule);
+    }
+
+    // One schedule by id (the ?schedule= link of the alert): inside the scope only.
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson("/api/v1/attendance-schedules/{$ahmadScheduleId}")
+        ->assertOk()
+        ->assertJsonPath('data.id', $ahmadScheduleId)
+        ->assertJsonPath('data.academic_year_id', $context['academicYear']->id)
+        ->assertJsonPath('data.semester', 1);
+    $this->actingAs($context['ahmadAccount'])->getJson("/api/v1/attendance-schedules/{$bakarScheduleId}")->assertNotFound();
+    $this->actingAs($context['pengurus'])->getJson("/api/v1/attendance-schedules/{$bakarScheduleId}")->assertOk();
+
+    // Another Semester Akademik: Ahmad has no schedule there.
+    expect($this->actingAs($context['ahmadAccount'])->getJson(teachingScopeAttendanceSchedulesUrl($context, semester: 2))->assertOk()->json('data'))
+        ->toBe([]);
+
+    // A deleted (deactivated) schedule leaves the list, as it did for pengurus.
+    $this->actingAs($context['pengurus'])->deleteJson("/api/v1/teaching-schedules/{$ahmadScheduleId}")->assertOk();
+    expect($this->actingAs($context['ahmadAccount'])->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()->json('data'))->toBe([])
+        ->and(teachingScopeScheduleIds($this->actingAs($context['pengurus'])->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()))
+        ->toBe([$bakarScheduleId]);
+});
+
+test('an Akun Ustadz records, edits and cancels the Pertemuan of his own schedule under his own account', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ahmad = $context['ahmadAccount'];
+    $ali = $context['tamhidiSantri'];
+    $scheduleId = $context['ahmadSafinahScheduleId'];
+
+    $this->actingAs($ahmad)
+        ->getJson("/api/v1/teaching-schedules/{$scheduleId}/expected-students?session_date=2025-09-08")
+        ->assertOk()
+        ->assertJsonPath('data.students.0.id', $ali->id);
+
+    $sessionId = recordTeachingScopeSession($this, $ahmad, $scheduleId, '2025-09-08', $ali)
+        ->assertCreated()
+        ->assertJsonPath('data.class_session.teacher.full_name', 'Ustadz Ahmad')
+        ->json('data.class_session.id');
+
+    $this->actingAs($ahmad)
+        ->getJson(teachingScopeClassSessionsUrl($context, ['teaching_schedule_id' => $scheduleId]))
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $sessionId);
+    $this->actingAs($ahmad)->getJson("/api/v1/class-sessions/{$sessionId}")->assertOk()->assertJsonPath('data.attendances.0.status', 'present');
+
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-sessions/{$sessionId}/attendances", [
+            'attendances' => [['student_id' => $ali->id, 'status' => 'sick', 'notes' => 'Demam']],
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.attendances.0.updated_by', $ahmad->id);
+
+    $cancelledSessionId = $this->actingAs($ahmad)
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $scheduleId,
+            'session_date' => '2025-09-01',
+            'reason' => 'Ustadz sakit',
+        ])
+        ->assertCreated()
+        ->assertJsonPath('data.class_session.status', 'cancelled')
+        ->assertJsonPath('data.class_session.cancel_reason', 'Ustadz sakit')
+        ->json('data.class_session.id');
+
+    // The reason stays required for an Akun Ustadz.
+    $this->actingAs($ahmad)
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $scheduleId,
+            'session_date' => '2025-09-08',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['reason']);
+
+    $heldSession = ClassSession::findOrFail($sessionId);
+    $cancelledSession = ClassSession::findOrFail($cancelledSessionId);
+    expect($heldSession->teacher_id)->toBe($context['ustadzAhmad']->id)
+        ->and($heldSession->created_by)->toBe($ahmad->id)
+        ->and($heldSession->updated_by)->toBe($ahmad->id)
+        ->and($heldSession->status)->toBe(ClassSession::STATUS_HELD)
+        ->and($cancelledSession->created_by)->toBe($ahmad->id)
+        ->and($cancelledSession->teacher_id)->toBe($context['ustadzAhmad']->id);
+
+    $this->actingAs($ahmad)
+        ->getJson(teachingScopeAttendanceRecapUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertOk()
+        ->assertJsonPath('data.held_session_count', 1)
+        ->assertJsonPath('data.cancelled_session_count', 1)
+        ->assertJsonPath('data.rows.0.student.id', $ali->id)
+        ->assertJsonPath('data.rows.0.sick_count', 1);
+});
+
+test('a Pertemuan outside the Cakupan Mengajar is not found and a schedule outside it is refused with 403', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ahmad = $context['ahmadAccount'];
+    $zaid = $context['ibtidaSantri'];
+    $bakarScheduleId = $context['bakarJurumiyahScheduleId'];
+
+    $bakarSessionId = recordTeachingScopeSession($this, $context['bakarAccount'], $bakarScheduleId, '2025-09-09', $zaid)
+        ->assertCreated()
+        ->json('data.class_session.id');
+
+    // Records bound to the route: not found, even before the body or the query is validated.
+    $this->actingAs($ahmad)->getJson("/api/v1/class-sessions/{$bakarSessionId}")->assertNotFound();
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-sessions/{$bakarSessionId}/attendances", [
+            'attendances' => [['student_id' => $zaid->id, 'status' => 'absent', 'notes' => null]],
+        ])
+        ->assertNotFound();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-sessions/{$bakarSessionId}/attendances", ['attendances' => []])->assertNotFound();
+    $this->actingAs($ahmad)
+        ->getJson("/api/v1/teaching-schedules/{$bakarScheduleId}/expected-students?session_date=2025-09-09")
+        ->assertNotFound();
+    $this->actingAs($ahmad)->getJson("/api/v1/teaching-schedules/{$bakarScheduleId}/expected-students")->assertNotFound();
+
+    // A schedule or pair chosen in the body or the query: 403 with the scope message.
+    $refusals = [
+        recordTeachingScopeSession($this, $ahmad, $bakarScheduleId, '2025-09-02', $zaid),
+        $this->actingAs($ahmad)->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $bakarScheduleId,
+            'session_date' => '2025-09-09',
+            'reason' => 'Libur',
+        ]),
+        $this->actingAs($ahmad)->getJson(teachingScopeClassSessionsUrl($context, ['teaching_schedule_id' => $bakarScheduleId])),
+        $this->actingAs($ahmad)->getJson(teachingScopeAttendanceRecapUrl($context, $context['ibtida'], $context['jurumiyah'])),
+        // A pair nobody teaches is outside the Cakupan Mengajar too.
+        $this->actingAs($ahmad)->getJson(teachingScopeAttendanceRecapUrl($context, $context['tamhidi'], $context['jurumiyah'])),
+    ];
+    foreach ($refusals as $refusal) {
+        $refusal->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+    }
+
+    // The unfiltered list leaves out the Pertemuan of other pairs.
+    $this->actingAs($ahmad)->getJson(teachingScopeClassSessionsUrl($context))->assertOk()->assertJsonCount(0, 'data');
+    $this->actingAs($ahmad)->getJson(teachingScopeClassSessionsUrl($context, ['class_level_id' => $context['ibtida']->id]))->assertOk()->assertJsonCount(0, 'data');
+
+    // Nothing changed: Bakar's Pertemuan is the only one, as he recorded it.
+    $bakarSession = ClassSession::with('attendances')->sole();
+    expect($bakarSession->id)->toBe($bakarSessionId)
+        ->and($bakarSession->status)->toBe(ClassSession::STATUS_HELD)
+        ->and($bakarSession->updated_by)->toBe($context['bakarAccount']->id)
+        ->and($bakarSession->attendances->sole()->status)->toBe('present');
+
+    $this->actingAs($context['bakarAccount'])->getJson("/api/v1/class-sessions/{$bakarSessionId}")->assertOk();
+});
+
+test('a former Ustadz records the Pertemuan of a schedule moved away from him under the current Ustadz, as the recorder', function (string $throughPath) {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ali = $context['tamhidiSantri'];
+    $movedScheduleId = $context['ahmadSafinahScheduleId'];
+
+    moveTeachingScopeScheduleToBakar($this, $context, $throughPath);
+
+    // The riwayat pengajar keeps the pair in Ahmad's Cakupan Mengajar: the schedule, now Bakar's, is listed.
+    $ahmadResponse = $this->actingAs($context['ahmadAccount'])->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk();
+    expect(teachingScopeScheduleIds($ahmadResponse))->toBe([$movedScheduleId])
+        ->and($ahmadResponse->json('data.0.teacher.full_name'))->toBe('Ustadz Bakar');
+
+    $sessionId = recordTeachingScopeSession($this, $context['ahmadAccount'], $movedScheduleId, '2025-09-08', $ali)
+        ->assertCreated()
+        ->assertJsonPath('data.class_session.teacher.full_name', 'Ustadz Bakar')
+        ->assertJsonPath('data.class_session.created_by', $context['ahmadAccount']->id)
+        ->json('data.class_session.id');
+
+    $this->actingAs($context['bakarAccount'])
+        ->putJson("/api/v1/class-sessions/{$sessionId}/attendances", [
+            'attendances' => [['student_id' => $ali->id, 'status' => 'excused', 'notes' => null]],
+        ])
+        ->assertOk();
+
+    $session = ClassSession::findOrFail($sessionId);
+    expect($session->teacher_id)->toBe($context['ustadzBakar']->id)
+        ->and($session->created_by)->toBe($context['ahmadAccount']->id)
+        ->and($session->updated_by)->toBe($context['bakarAccount']->id);
+})->with(['the schedule edit', 'the bulk ganti ustadz']);
+
+test('the Alert Pertemuan Bolong of an Akun Ustadz holds only the schedules he holds now, while pengurus see every Ustadz', function (string $throughPath) {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ahmadScheduleId = $context['ahmadSafinahScheduleId'];
+    $bakarScheduleId = $context['bakarJurumiyahScheduleId'];
+    $multiRoleAccount = createTeachingScopeMultiRoleAccount($this, $context);
+
+    $ahmadMissing = ["{$ahmadScheduleId}|2025-09-01", "{$ahmadScheduleId}|2025-09-08"];
+    $bakarMissing = ["{$bakarScheduleId}|2025-09-02", "{$bakarScheduleId}|2025-09-09"];
+
+    expect(teachingScopeMissingSessionsByUstadz($this, $context['ahmadAccount']))->toBe(['Ustadz Ahmad' => $ahmadMissing])
+        ->and(teachingScopeMissingSessionsByUstadz($this, $context['bakarAccount']))->toBe(['Ustadz Bakar' => $bakarMissing]);
+    foreach ([$context['pengurus'], $multiRoleAccount] as $unrestrictedUser) {
+        expect(teachingScopeMissingSessionsByUstadz($this, $unrestrictedUser))
+            ->toBe(['Ustadz Ahmad' => $ahmadMissing, 'Ustadz Bakar' => $bakarMissing]);
+    }
+
+    moveTeachingScopeScheduleToBakar($this, $context, $throughPath);
+
+    // Only the Ustadz who holds the schedule now is alerted — never the former one.
+    $bakarNowMissing = collect([...$ahmadMissing, ...$bakarMissing])->sortBy(fn (string $key) => explode('|', $key)[1])->values()->all();
+    expect(teachingScopeMissingSessionsByUstadz($this, $context['ahmadAccount']))->toBe([])
+        ->and(teachingScopeMissingSessionsByUstadz($this, $context['bakarAccount']))->toBe(['Ustadz Bakar' => $bakarNowMissing]);
+    foreach ([$context['pengurus'], $multiRoleAccount] as $unrestrictedUser) {
+        expect(teachingScopeMissingSessionsByUstadz($this, $unrestrictedUser))->toBe(['Ustadz Bakar' => $bakarNowMissing]);
+    }
+
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson('/api/v1/attendance-alerts')
+        ->assertOk()
+        ->assertJsonPath('data.configured', true)
+        ->assertJsonPath('data.total_missing', 0);
+})->with(['the schedule edit', 'the bulk ganti ustadz']);
+
+test('a user holding the ustadz role without a linked Ustadz has no Alert Pertemuan Bolong and no schedules', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+
+    $accountWithoutUstadz = User::factory()->create(['school_id' => $context['school']->id]);
+    $accountWithoutUstadz->assignRole('ustadz');
+
+    $this->actingAs($accountWithoutUstadz)
+        ->getJson('/api/v1/attendance-alerts')
+        ->assertOk()
+        ->assertJsonPath('data.total_missing', 0)
+        ->assertJsonPath('data.teachers', []);
+    $this->actingAs($accountWithoutUstadz)->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()->assertJsonPath('data', []);
+    recordTeachingScopeSession($this, $accountWithoutUstadz, $context['ahmadSafinahScheduleId'], '2025-09-08', $context['tamhidiSantri'])
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+});
+
+test('the 14-day limit and the date rules apply to an Akun Ustadz exactly as to pengurus', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+
+    // Today is Wednesday 2025-09-10 (WIB); the edit window reaches back to 2025-08-27.
+    $cases = [
+        'Akun Ustadz' => [$context['ahmadAccount'], $context['ahmadSafinahScheduleId'], $context['tamhidiSantri'], ['future' => '2025-09-15', 'old' => '2025-08-25', 'recent' => '2025-09-01']],
+        'pengurus' => [$context['pengurus'], $context['bakarJurumiyahScheduleId'], $context['ibtidaSantri'], ['future' => '2025-09-16', 'old' => '2025-08-26', 'recent' => '2025-09-02']],
+    ];
+
+    foreach ($cases as [$user, $scheduleId, $santri, $dates]) {
+        recordTeachingScopeSession($this, $user, $scheduleId, $dates['future'], $santri)
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.session_date.0', 'Pertemuan tidak boleh dicatat untuk tanggal mendatang.');
+
+        // A missed Pertemuan older than 14 days may still be recorded, but not changed afterwards.
+        $oldSessionId = recordTeachingScopeSession($this, $user, $scheduleId, $dates['old'], $santri)->assertCreated()->json('data.class_session.id');
+        $this->actingAs($user)
+            ->putJson("/api/v1/class-sessions/{$oldSessionId}/attendances", [
+                'attendances' => [['student_id' => $santri->id, 'status' => 'absent', 'notes' => null]],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.session_date.0', 'Perubahan absensi hanya boleh sampai 14 hari ke belakang.');
+        $this->actingAs($user)
+            ->postJson('/api/v1/class-sessions/cancel', ['teaching_schedule_id' => $scheduleId, 'session_date' => $dates['old'], 'reason' => 'Libur'])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.session_date.0', 'Perubahan absensi hanya boleh sampai 14 hari ke belakang.');
+
+        // Inside the window the change is saved.
+        $recentSessionId = recordTeachingScopeSession($this, $user, $scheduleId, $dates['recent'], $santri)->assertCreated()->json('data.class_session.id');
+        $this->actingAs($user)
+            ->putJson("/api/v1/class-sessions/{$recentSessionId}/attendances", [
+                'attendances' => [['student_id' => $santri->id, 'status' => 'absent', 'notes' => null]],
+            ])
+            ->assertOk();
+
+        expect(ClassSession::findOrFail($oldSessionId)->status)->toBe(ClassSession::STATUS_HELD);
+    }
+});
+
+test('libur massal is refused for an Akun Ustadz and stays with pengurus, including a pengurus who teaches', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $cancelRangePayload = ['start_date' => '2025-09-01', 'end_date' => '2025-09-09', 'reason' => 'Libur Maulid Nabi'];
+
+    $this->actingAs($context['ahmadAccount'])->postJson('/api/v1/class-sessions/cancel-range', $cancelRangePayload)->assertForbidden();
+    expect(ClassSession::count())->toBe(0);
+
+    $this->actingAs(createTeachingScopeMultiRoleAccount($this, $context))
+        ->postJson('/api/v1/class-sessions/cancel-range', $cancelRangePayload)
+        ->assertOk()
+        ->assertJsonPath('data.created', 4);
+});
+
+test('viewing attendance within the Cakupan Mengajar does not allow recording it', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $ali = $context['tamhidiSantri'];
+    $scheduleId = $context['ahmadSafinahScheduleId'];
+    $sessionId = recordTeachingScopeSession($this, $context['pengurus'], $scheduleId, '2025-09-08', $ali)->assertCreated()->json('data.class_session.id');
+
+    $viewOnlyRole = Role::firstOrCreate(['name' => 'ustadz_absensi_baca_saja', 'guard_name' => 'web']);
+    $viewOnlyRole->syncPermissions(['view-own-attendance']);
+    $viewOnlyAccount = $context['ahmadAccount'];
+    $viewOnlyAccount->syncRoles([$viewOnlyRole]);
+
+    $this->actingAs($viewOnlyAccount)->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()->assertJsonCount(1, 'data');
+    $this->actingAs($viewOnlyAccount)->getJson("/api/v1/attendance-schedules/{$scheduleId}")->assertOk();
+    $this->actingAs($viewOnlyAccount)->getJson(teachingScopeClassSessionsUrl($context))->assertOk()->assertJsonCount(1, 'data');
+    $this->actingAs($viewOnlyAccount)->getJson("/api/v1/class-sessions/{$sessionId}")->assertOk();
+    $this->actingAs($viewOnlyAccount)->getJson("/api/v1/teaching-schedules/{$scheduleId}/expected-students?session_date=2025-09-01")->assertOk();
+    $this->actingAs($viewOnlyAccount)->getJson(teachingScopeAttendanceRecapUrl($context, $context['tamhidi'], $context['safinah']))->assertOk();
+    $this->actingAs($viewOnlyAccount)->getJson('/api/v1/attendance-alerts')->assertOk();
+
+    recordTeachingScopeSession($this, $viewOnlyAccount, $scheduleId, '2025-09-01', $ali)->assertForbidden();
+    $this->actingAs($viewOnlyAccount)
+        ->putJson("/api/v1/class-sessions/{$sessionId}/attendances", ['attendances' => [['student_id' => $ali->id, 'status' => 'absent', 'notes' => null]]])
+        ->assertForbidden();
+    $this->actingAs($viewOnlyAccount)
+        ->postJson('/api/v1/class-sessions/cancel', ['teaching_schedule_id' => $scheduleId, 'session_date' => '2025-09-01', 'reason' => 'Libur'])
+        ->assertForbidden();
+    expect(ClassSession::count())->toBe(1);
+
+    $accountWithoutAttendancePermissions = User::factory()->create(['school_id' => $context['school']->id]);
+    foreach ([
+        teachingScopeAttendanceSchedulesUrl($context),
+        "/api/v1/attendance-schedules/{$scheduleId}",
+        teachingScopeClassSessionsUrl($context),
+        "/api/v1/class-sessions/{$sessionId}",
+        "/api/v1/teaching-schedules/{$scheduleId}/expected-students?session_date=2025-09-01",
+        teachingScopeAttendanceRecapUrl($context, $context['tamhidi'], $context['safinah']),
+        '/api/v1/attendance-alerts',
+    ] as $readUrl) {
+        $this->actingAs($accountWithoutAttendancePermissions)->getJson($readUrl)->assertForbidden();
+    }
+    recordTeachingScopeSession($this, $accountWithoutAttendancePermissions, $scheduleId, '2025-09-01', $ali)->assertForbidden();
+});
+
+test('pengurus and a pengurus who also teaches record and read the Pertemuan of every schedule', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+    $multiRoleAccount = createTeachingScopeMultiRoleAccount($this, $context);
+
+    $bakarSessionId = recordTeachingScopeSession($this, $multiRoleAccount, $context['bakarJurumiyahScheduleId'], '2025-09-09', $context['ibtidaSantri'])
+        ->assertCreated()
+        ->assertJsonPath('data.class_session.teacher.full_name', 'Ustadz Bakar')
+        ->assertJsonPath('data.class_session.created_by', $multiRoleAccount->id)
+        ->json('data.class_session.id');
+    recordTeachingScopeSession($this, $context['pengurus'], $context['ahmadSafinahScheduleId'], '2025-09-08', $context['tamhidiSantri'])->assertCreated();
+
+    foreach ([$context['pengurus'], $multiRoleAccount] as $unrestrictedUser) {
+        $this->actingAs($unrestrictedUser)->getJson(teachingScopeClassSessionsUrl($context))->assertOk()->assertJsonCount(2, 'data');
+        $this->actingAs($unrestrictedUser)->getJson("/api/v1/class-sessions/{$bakarSessionId}")->assertOk();
+        $this->actingAs($unrestrictedUser)->getJson(teachingScopeAttendanceRecapUrl($context, $context['ibtida'], $context['jurumiyah']))->assertOk();
+    }
+});
+
+test('an Akun Ustadz gets the same validation and tenancy answers on Absensi as pengurus', function () {
+    $context = setUpTeachingScopeAttendanceContext($this);
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        $this->actingAs($user)
+            ->getJson('/api/v1/attendance-schedules')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['academic_year_id', 'semester']);
+        $this->actingAs($user)
+            ->postJson('/api/v1/class-sessions', [])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['teaching_schedule_id', 'session_date', 'attendances']);
+    }
+
+    // A santri of another class is rejected per santri inside Ahmad's own schedule.
+    recordTeachingScopeSession($this, $context['ahmadAccount'], $context['ahmadSafinahScheduleId'], '2025-09-08', $context['ibtidaSantri'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([$context['ibtidaSantri']->id]);
+
+    $otherSchool = School::factory()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    $otherClassLevel = ClassLevel::factory()->create(['school_id' => $otherSchool->id]);
+    $otherSubjectBook = SubjectBook::factory()->create([
+        'school_id' => $otherSchool->id,
+        'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $otherSchool->id])->id,
+    ]);
+    $otherTeacher = Teacher::factory()->create(['school_id' => $otherSchool->id]);
+    $otherSchedule = TeachingSchedule::factory()->create([
+        'school_id' => $otherSchool->id,
+        'academic_year_id' => $otherAcademicYear->id,
+        'semester' => 1,
+        'day_of_week' => 'monday',
+        'time_slot_id' => TimeSlot::factory()->create(['school_id' => $otherSchool->id])->id,
+        'class_level_id' => $otherClassLevel->id,
+        'subject_book_id' => $otherSubjectBook->id,
+        'teacher_id' => $otherTeacher->id,
+    ]);
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        $this->actingAs($user)->getJson("/api/v1/attendance-schedules/{$otherSchedule->id}")->assertNotFound();
+        recordTeachingScopeSession($this, $user, $otherSchedule->id, '2025-09-08', $context['tamhidiSantri'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['teaching_schedule_id']);
+        $this->actingAs($user)
+            ->getJson('/api/v1/attendance-schedules?'.http_build_query(['academic_year_id' => $otherAcademicYear->id, 'semester' => 1]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['academic_year_id']);
+    }
+
+    expect(ClassSession::count())->toBe(0);
 });

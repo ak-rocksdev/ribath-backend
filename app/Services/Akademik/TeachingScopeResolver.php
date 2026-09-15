@@ -25,7 +25,9 @@ use InvalidArgumentException;
  * - neither → 403.
  *
  * Every Penilaian service asks this resolver instead of checking roles or
- * teacher ids itself.
+ * teacher ids itself. The one view that follows who holds a schedule NOW
+ * rather than the Cakupan Mengajar — the Alert Pertemuan Bolong — asks
+ * currentScheduleTeacherIdsForCurrentUser().
  */
 class TeachingScopeResolver
 {
@@ -46,6 +48,53 @@ class TeachingScopeResolver
      */
     public function forCurrentUser(string $allDataPermission, string $academicYearId, int $semester): TeachingScope
     {
+        $user = $this->currentUserLimitedToOwnScope($allDataPermission);
+
+        if ($user === null) {
+            return TeachingScope::unrestricted();
+        }
+
+        return TeachingScope::limitedToClassSubjectPairs(
+            $this->classSubjectPairsTaughtBy($user, $academicYearId, $semester)
+        );
+    }
+
+    /**
+     * Whose Jadwal Mengajar the user follows where only the schedules held
+     * NOW count, never the riwayat pengajar — the Alert Pertemuan Bolong
+     * (ADR 0005: the former Ustadz of a moved schedule is not alerted):
+     *
+     * - the "semua" permission → null, every schedule;
+     * - only the "milik sendiri" permission → the id of the Ustadz linked
+     *   to the user, or an empty list when none is linked;
+     * - neither → 403.
+     *
+     * @param  string  $allDataPermission  the "semua" permission the view needs, e.g. `view-attendance`
+     * @return array<int, string>|null
+     *
+     * @throws AuthorizationException the user holds neither permission of the pair
+     */
+    public function currentScheduleTeacherIdsForCurrentUser(string $allDataPermission): ?array
+    {
+        $user = $this->currentUserLimitedToOwnScope($allDataPermission);
+
+        if ($user === null) {
+            return null;
+        }
+
+        $linkedTeacherId = $user->teacher?->id;
+
+        return $linkedTeacherId === null ? [] : [$linkedTeacherId];
+    }
+
+    /**
+     * The current user when he holds only the "milik sendiri" counterpart
+     * of $allDataPermission; null when he holds the "semua" permission.
+     *
+     * @throws AuthorizationException the user holds neither permission of the pair
+     */
+    private function currentUserLimitedToOwnScope(string $allDataPermission): ?User
+    {
         $ownScopePermission = self::OWN_SCOPE_PERMISSION_BY_ALL_DATA_PERMISSION[$allDataPermission]
             ?? throw new InvalidArgumentException("No \"milik sendiri\" counterpart for permission {$allDataPermission}.");
 
@@ -54,16 +103,14 @@ class TeachingScopeResolver
 
         // can() goes through Gate::before, so super_admin is never restricted.
         if ($user?->can($allDataPermission)) {
-            return TeachingScope::unrestricted();
+            return null;
         }
 
         if (! $user?->can($ownScopePermission)) {
             throw new AuthorizationException;
         }
 
-        return TeachingScope::limitedToClassSubjectPairs(
-            $this->classSubjectPairsTaughtBy($user, $academicYearId, $semester)
-        );
+        return $user;
     }
 
     /**

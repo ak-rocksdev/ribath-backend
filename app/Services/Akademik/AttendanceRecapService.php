@@ -2,6 +2,7 @@
 
 namespace App\Services\Akademik;
 
+use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\ClassLevel;
 use App\Models\School;
 use App\Models\Student;
@@ -22,6 +23,10 @@ use Illuminate\Validation\ValidationException;
  * without resolveClassSubjectContext()'s book-has-template check), so both
  * recaps reject an unscheduled pair or an unconfigured semester with the
  * exact same wording.
+ *
+ * A user limited to his Cakupan Mengajar (only `view-own-attendance`)
+ * sees the recap of his own pairs; another pair is refused with 403
+ * before the other checks, as on the grade grid.
  */
 class AttendanceRecapService
 {
@@ -29,15 +34,21 @@ class AttendanceRecapService
         private StudentGradeService $studentGradeService,
         private AttendanceTallyService $attendanceTallyService,
         private AttendanceFactorScoreProvider $attendanceFactorScoreProvider,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
      * @return array<string, mixed>
      *
+     * @throws OutsideTeachingScopeException the pair is outside the Cakupan Mengajar
      * @throws ValidationException MESSAGE_PAIR_NOT_SCHEDULED | MESSAGE_SEMESTER_NOT_CONFIGURED
      */
     public function recapForClassSubject(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
     {
+        $this->teachingScopeResolver
+            ->forCurrentUser('view-attendance', $academicYearId, $semester)
+            ->assertIncludesClassSubjectPair($classLevelId, $subjectBookId);
+
         $this->studentGradeService->assertScheduledPairAndConfiguredSemester($academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $students = $this->studentGradeService->listClassStudents($classLevelId);

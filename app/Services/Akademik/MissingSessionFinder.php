@@ -25,6 +25,11 @@ use Illuminate\Support\Carbon;
  * (held or cancelled, not soft-deleted) already exists for it. Sessions
  * are loaded once for the whole semester and diffed in memory rather than
  * queried per date.
+ *
+ * A user holding only `view-own-attendance` (Akun Ustadz, ADR 0004) is
+ * alerted for the schedules his Ustadz holds NOW — not the Cakupan
+ * Mengajar, whose riwayat pengajar would alert the former Ustadz of a
+ * moved schedule (ADR 0005). `view-attendance` sees every Ustadz.
  */
 class MissingSessionFinder
 {
@@ -36,6 +41,7 @@ class MissingSessionFinder
 
     public function __construct(
         private AcademicYearService $academicYearService,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
@@ -44,6 +50,7 @@ class MissingSessionFinder
     public function findForSemester(?string $academicYearId, ?int $semester): array
     {
         $school = School::activeOrFail();
+        $alertedTeacherIds = $this->teachingScopeResolver->currentScheduleTeacherIdsForCurrentUser('view-attendance');
 
         if ($academicYearId === null || $semester === null) {
             $activeAcademicYear = $this->academicYearService->getActive();
@@ -72,6 +79,7 @@ class MissingSessionFinder
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
             ->where('is_active', true)
+            ->when($alertedTeacherIds !== null, fn ($query) => $query->whereIn('teacher_id', $alertedTeacherIds))
             ->with(['classLevel:id,label', 'subjectBook:id,title', 'timeSlot:id,label', 'teacher:id,full_name'])
             ->get();
 

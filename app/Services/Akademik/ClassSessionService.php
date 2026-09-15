@@ -3,6 +3,7 @@
 namespace App\Services\Akademik;
 
 use App\Exceptions\FinalizedReportCardException;
+use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\AcademicSemester;
 use App\Models\ClassSession;
 use App\Models\School;
@@ -13,6 +14,7 @@ use App\Services\AcademicYearService;
 use App\Services\Akademik\Calculation\EnrollmentDateRule;
 use App\Support\ScheduleDateRange;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -35,7 +37,16 @@ use Illuminate\Validation\ValidationException;
  * any row fails (all-or-nothing).
  *
  * Date rules live in SessionDatePolicy. The class, kitab and teacher are
- * snapshotted from the schedule when a session is first stored.
+ * snapshotted from the schedule when a session is first stored — the
+ * schedule's CURRENT Ustadz, also when a former Ustadz records it; who
+ * recorded or changed it is kept in created_by/updated_by.
+ *
+ * Cakupan Mengajar (ADR 0004, 0005): a user holding only the "milik
+ * sendiri" attendance permissions works on the schedules and Pertemuan
+ * whose Kelas × Kitab pair is in his Cakupan Mengajar. A schedule chosen
+ * in the body or the query outside it is refused with 403; a Pertemuan or
+ * schedule bound to the route outside it is not found (404), like
+ * tenancy. Libur massal (cancelDateRange) keeps its "semua"-only route.
  */
 class ClassSessionService
 {
@@ -69,7 +80,74 @@ class ClassSessionService
         private SessionDatePolicy $sessionDatePolicy,
         private FinalizedReportCardGuard $finalizedReportCardGuard,
         private AcademicYearService $academicYearService,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
+
+    /**
+     * The active Jadwal Mengajar of a semester a Pertemuan can be recorded
+     * for — the schedule list of the Absensi Pertemuan page. A user
+     * limited to his Cakupan Mengajar gets the schedules of his pairs
+     * only, including a schedule now held by another Ustadz when the
+     * riwayat pengajar keeps its pair in his scope.
+     *
+     * @return EloquentCollection<int, TeachingSchedule>
+     */
+    public function listSchedulesForAttendance(string $academicYearId, int $semester): EloquentCollection
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-attendance', $academicYearId, $semester);
+
+        return TeachingSchedule::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->where('is_active', true)
+            ->with(TeachingSchedule::EAGER_LOAD_RELATIONS)
+            ->orderBy('day_of_week')
+            ->orderBy('created_at')
+            ->get()
+            ->filter(fn (TeachingSchedule $schedule) => $teachingScope->includesClassSubjectPair($schedule->class_level_id, $schedule->subject_book_id))
+            ->values();
+    }
+
+    /**
+     * One schedule for the Absensi Pertemuan page (its `?schedule=` link),
+     * active or not; outside the Cakupan Mengajar it is not found.
+     */
+    public function showScheduleForAttendance(TeachingSchedule $schedule): TeachingSchedule
+    {
+        $this->ensureScheduleWithinTeachingScope($schedule, 'view-attendance');
+
+        return $schedule->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
+    }
+
+    /**
+     * A schedule bound to the route whose pair is outside the user's
+     * Cakupan Mengajar is not found (404), the same answer as a schedule
+     * of another school. The scope is resolved for the schedule's own
+     * Semester Akademik, so its riwayat pengajar counts (ADR 0005).
+     *
+     * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to write
+     */
+    public function ensureScheduleWithinTeachingScope(TeachingSchedule $schedule, string $allDataPermission): void
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $schedule->academic_year_id, $schedule->semester);
+
+        abort_unless($teachingScope->includesClassSubjectPair($schedule->class_level_id, $schedule->subject_book_id), 404);
+    }
+
+    /**
+     * A Pertemuan bound to the route whose own Kelas × Kitab (its
+     * snapshot) is outside the user's Cakupan Mengajar for its Semester
+     * Akademik is not found (404), like tenancy.
+     *
+     * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to change its attendances
+     */
+    public function ensureSessionWithinTeachingScope(ClassSession $session, string $allDataPermission): void
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $session->academic_year_id, $session->semester);
+
+        abort_unless($teachingScope->includesClassSubjectPair($session->class_level_id, $session->subject_book_id), 404);
+    }
 
     /**
      * Sessions of one semester, most recent session_date first, each with
@@ -80,6 +158,13 @@ class ClassSessionService
      */
     public function listSessions(array $filters): array
     {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-attendance', $filters['academic_year_id'], (int) $filters['semester']);
+
+        if (! empty($filters['teaching_schedule_id'])) {
+            $chosenSchedule = TeachingSchedule::findOrFail($filters['teaching_schedule_id']);
+            $teachingScope->assertIncludesClassSubjectPair($chosenSchedule->class_level_id, $chosenSchedule->subject_book_id);
+        }
+
         $sessions = ClassSession::query()
             ->where('school_id', School::activeOrFail()->id)
             ->where('academic_year_id', $filters['academic_year_id'])
@@ -91,7 +176,9 @@ class ClassSessionService
             ->with(self::SESSION_RELATIONS)
             ->orderByDesc('session_date')
             ->orderByDesc('created_at')
-            ->get();
+            ->get()
+            ->filter(fn (ClassSession $session) => $teachingScope->includesClassSubjectPair($session->class_level_id, $session->subject_book_id))
+            ->values();
 
         $summariesBySessionId = $this->attendanceSummariesFor($sessions->pluck('id'));
 
@@ -107,6 +194,8 @@ class ClassSessionService
      */
     public function getSession(ClassSession $session): array
     {
+        $this->ensureSessionWithinTeachingScope($session, 'view-attendance');
+
         $session->loadMissing(self::SESSION_RELATIONS);
 
         $attendances = StudentAttendance::query()
@@ -130,6 +219,8 @@ class ClassSessionService
      */
     public function presentExpectedStudents(TeachingSchedule $schedule, string $sessionDate): array
     {
+        $this->ensureScheduleWithinTeachingScope($schedule, 'view-attendance');
+
         $sessionDateAsCarbon = Carbon::parse($sessionDate)->startOfDay();
 
         return [
@@ -151,10 +242,13 @@ class ClassSessionService
      * @param  array<int, array{student_id: string, status: mixed, notes?: mixed}>  $attendanceRows
      * @return array{class_session: array<string, mixed>, attendances: array<int, array<string, mixed>>, requires_override_warning: bool}
      *
+     * @throws OutsideTeachingScopeException the schedule's pair is outside the Cakupan Mengajar
      * @throws ValidationException
      */
     public function recordSession(TeachingSchedule $schedule, string $sessionDate, array $attendanceRows): array
     {
+        $this->assertScheduleChosenWithinTeachingScope($schedule);
+
         $sessionDateAsCarbon = Carbon::parse($sessionDate)->startOfDay();
         $actorIsSuperAdmin = $this->actorIsSuperAdmin();
 
@@ -223,6 +317,8 @@ class ClassSessionService
      */
     public function updateAttendances(ClassSession $session, array $attendanceRows): array
     {
+        $this->ensureSessionWithinTeachingScope($session, 'manage-attendance');
+
         if ($session->isCancelled()) {
             throw ValidationException::withMessages(['class_session' => self::MESSAGE_SESSION_CANCELLED]);
         }
@@ -304,10 +400,13 @@ class ClassSessionService
      *
      * @return array{result: array{class_session: array<string, mixed>, attendances: array<int, array<string, mixed>>, requires_override_warning: bool}, created: bool}
      *
+     * @throws OutsideTeachingScopeException the schedule's pair is outside the Cakupan Mengajar
      * @throws ValidationException
      */
     public function cancelSession(TeachingSchedule $schedule, string $sessionDate, string $reason): array
     {
+        $this->assertScheduleChosenWithinTeachingScope($schedule);
+
         $sessionDateAsCarbon = Carbon::parse($sessionDate)->startOfDay();
         $actorIsSuperAdmin = $this->actorIsSuperAdmin();
         $existingSession = $this->findLiveSession($schedule, $sessionDateAsCarbon);
@@ -581,6 +680,20 @@ class ClassSessionService
     private function isAttendanceRequiredFor(Student $student): bool
     {
         return $student->status === Student::STATUS_ACTIVE;
+    }
+
+    /**
+     * A schedule chosen in the request body to record or cancel a
+     * Pertemuan: outside the Cakupan Mengajar of its Semester Akademik it
+     * is refused with 403 and the scope message.
+     *
+     * @throws OutsideTeachingScopeException
+     */
+    private function assertScheduleChosenWithinTeachingScope(TeachingSchedule $schedule): void
+    {
+        $this->teachingScopeResolver
+            ->forCurrentUser('manage-attendance', $schedule->academic_year_id, $schedule->semester)
+            ->assertIncludesClassSubjectPair($schedule->class_level_id, $schedule->subject_book_id);
     }
 
     private function actorIsSuperAdmin(): bool

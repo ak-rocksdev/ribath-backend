@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\Admin\UserController;
 use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
 use App\Http\Controllers\Api\Akademik\AttendanceAlertController;
 use App\Http\Controllers\Api\Akademik\AttendanceRecapController;
+use App\Http\Controllers\Api\Akademik\AttendanceScheduleController;
 use App\Http\Controllers\Api\Akademik\ClassSessionController;
 use App\Http\Controllers\Api\Akademik\ClassTaskController;
 use App\Http\Controllers\Api\Akademik\GradableSubjectController;
@@ -236,32 +237,44 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-grades|manage-own-grades');
     });
 
-    // Class session routes (Absensi: Pertemuan & Absensi per jadwal mengajar)
+    // Class session routes (Absensi: Pertemuan & Absensi per jadwal mengajar).
+    // "semua" or "milik sendiri" permission (ADR 0004); ClassSessionService
+    // narrows the latter to the Cakupan Mengajar. Libur massal (cancel-range)
+    // stays "semua" only.
     Route::prefix('class-sessions')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [ClassSessionController::class, 'index'])
-            ->middleware('permission:view-attendance');
+            ->middleware('permission:view-attendance|view-own-attendance');
         Route::post('/', [ClassSessionController::class, 'store'])
-            ->middleware('permission:manage-attendance');
+            ->middleware('permission:manage-attendance|manage-own-attendance');
         Route::post('/cancel', [ClassSessionController::class, 'cancel'])
-            ->middleware('permission:manage-attendance');
+            ->middleware('permission:manage-attendance|manage-own-attendance');
         Route::get('/{classSession}', [ClassSessionController::class, 'show'])
-            ->middleware('permission:view-attendance');
+            ->middleware('permission:view-attendance|view-own-attendance');
         Route::put('/{classSession}/attendances', [ClassSessionController::class, 'updateAttendances'])
-            ->middleware('permission:manage-attendance');
+            ->middleware('permission:manage-attendance|manage-own-attendance');
         Route::post('/cancel-range', [ClassSessionController::class, 'cancelRange'])
             ->middleware('permission:manage-attendance');
     });
 
-    // Attendance alerts (Pertemuan Bolong)
+    // Jadwal Mengajar of the Absensi Pertemuan page (within the Cakupan Mengajar)
+    Route::prefix('attendance-schedules')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [AttendanceScheduleController::class, 'index'])
+            ->middleware('permission:view-attendance|view-own-attendance');
+        Route::get('/{teachingSchedule}', [AttendanceScheduleController::class, 'show'])
+            ->middleware('permission:view-attendance|view-own-attendance');
+    });
+
+    // Attendance alerts (Pertemuan Bolong); a "milik sendiri" user sees the
+    // schedules his Ustadz holds now (MissingSessionFinder)
     Route::prefix('attendance-alerts')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [AttendanceAlertController::class, 'index'])
-            ->middleware('permission:view-attendance');
+            ->middleware('permission:view-attendance|view-own-attendance');
     });
 
     // Attendance recap (Absensi: Rekap Kehadiran per Kelas × Kitab)
     Route::prefix('attendance-recaps')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [AttendanceRecapController::class, 'index'])
-            ->middleware('permission:view-attendance');
+            ->middleware('permission:view-attendance|view-own-attendance');
     });
 
     // Target Hafalan routes (Tahfidz: siapa yang ikut penilaian Tahfizh semester ini — ADR 0003)
@@ -343,7 +356,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/', [TeachingScheduleController::class, 'store'])
             ->middleware('permission:manage-schedules');
         Route::get('/{teachingSchedule}/expected-students', [ClassSessionController::class, 'expectedStudents'])
-            ->middleware('permission:view-attendance');
+            ->middleware('permission:view-attendance|view-own-attendance');
         Route::get('/{teachingSchedule}', [TeachingScheduleController::class, 'show'])
             ->middleware('permission:view-schedules');
         Route::put('/{teachingSchedule}', [TeachingScheduleController::class, 'update'])
