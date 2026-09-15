@@ -44,16 +44,42 @@ class TeacherService
 
     public function updateTeacher(Teacher $teacher, array $data): Teacher
     {
-        $teacher->update($data);
+        return DB::transaction(function () use ($teacher, $data) {
+            $teacher->update($data);
 
-        return $teacher->fresh()->load(['school', 'user']);
+            $this->deactivateLinkedAccountWhenInactive($teacher);
+
+            return $teacher->fresh()->load(['school', 'user']);
+        });
     }
 
     public function updateTeacherStatus(Teacher $teacher, string $status): Teacher
     {
-        $teacher->update(['status' => $status]);
+        return DB::transaction(function () use ($teacher, $status) {
+            $teacher->update(['status' => $status]);
 
-        return $teacher->fresh()->load(['school', 'user']);
+            $this->deactivateLinkedAccountWhenInactive($teacher);
+
+            return $teacher->fresh()->load(['school', 'user']);
+        });
+    }
+
+    /**
+     * Status nonaktif on a teacher's data deactivates its linked Akun Ustadz
+     * and revokes every one of its sessions, in the same transaction as the
+     * status change, so someone who has left no longer holds access to
+     * santri grades. Status cuti and reactivating the teacher (aktif) leave
+     * the account untouched — reactivating the account stays a deliberate,
+     * manual step in Kelola Pengguna (Akun Pengguna).
+     */
+    private function deactivateLinkedAccountWhenInactive(Teacher $teacher): void
+    {
+        if ($teacher->status !== Teacher::STATUS_INACTIVE || $teacher->user === null) {
+            return;
+        }
+
+        $teacher->user->update(['is_active' => false]);
+        $teacher->user->tokens()->delete();
     }
 
     public function grantAccess(Teacher $teacher, string $email, string $password): array
