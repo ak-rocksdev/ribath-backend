@@ -76,6 +76,15 @@ class RolePermissionSeeder extends Seeder
             'manage-attendance',
             'view-memorization',
             'manage-memorization',
+
+            // "Milik sendiri" counterparts of the pairs above (ADR 0004): data
+            // limited to the user's Cakupan Mengajar.
+            'view-own-grades',
+            'manage-own-grades',
+            'view-own-attendance',
+            'manage-own-attendance',
+            'view-own-memorization',
+            'manage-own-memorization',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -126,6 +135,18 @@ class RolePermissionSeeder extends Seeder
             'manage-attendance',
             'view-memorization',
             'manage-memorization',
+        ]);
+
+        // Akun Ustadz: the role "Beri Akses" gives (TeacherService::grantAccess).
+        $ustadz = Role::firstOrCreate(['name' => 'ustadz']);
+        $ustadz->syncPermissions([
+            'view-own-grades',
+            'manage-own-grades',
+            'view-own-attendance',
+            'manage-own-attendance',
+            'view-own-memorization',
+            'manage-own-memorization',
+            'view-academic-years',
         ]);
 
         $adminUser = User::firstOrCreate(

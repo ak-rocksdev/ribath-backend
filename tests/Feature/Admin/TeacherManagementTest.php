@@ -3,6 +3,8 @@
 use App\Models\School;
 use App\Models\Teacher;
 use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
+use Spatie\Permission\Exceptions\RoleDoesNotExist;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -323,6 +325,7 @@ test('update teacher with invalid status returns 422', function () {
 // --- Grant Access ---
 
 test('grant access creates user with ustadz role and links to teacher', function () {
+    $this->seed(RolePermissionSeeder::class);
     $user = createUserWithTeacherPermissions();
     $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null]);
 
@@ -342,6 +345,93 @@ test('grant access creates user with ustadz role and links to teacher', function
     $teacherUser = User::find($teacher->user_id);
     expect($teacherUser->hasRole('ustadz'))->toBeTrue()
         ->and($teacherUser->school_id)->toBe($this->school->id);
+});
+
+test('granted Akun Ustadz logs in with the seeded ustadz role and its permissions', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null]);
+
+    $this->actingAs($user)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'ustadz@example.com',
+        'password' => 'password123',
+    ])->assertStatus(201);
+
+    $loginResponse = $this->postJson('/api/v1/auth/login', [
+        'email' => 'ustadz@example.com',
+        'password' => 'password123',
+    ])->assertOk();
+
+    expect($loginResponse->json('data.user.roles'))->toBe(['ustadz'])
+        ->and(collect($loginResponse->json('data.user.permissions'))->sort()->values()->all())->toBe([
+            'manage-own-attendance',
+            'manage-own-grades',
+            'manage-own-memorization',
+            'view-academic-years',
+            'view-own-attendance',
+            'view-own-grades',
+            'view-own-memorization',
+        ]);
+});
+
+test('Akun Ustadz from grant access may read academic years but not manage teachers', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null]);
+
+    $this->actingAs($user)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'ustadz@example.com',
+        'password' => 'password123',
+    ])->assertStatus(201);
+
+    $ustadzAccount = User::where('email', 'ustadz@example.com')->firstOrFail();
+
+    $this->actingAs($ustadzAccount)->getJson('/api/v1/academic-years')->assertOk();
+    $this->actingAs($ustadzAccount)->getJson('/api/v1/teachers')->assertForbidden();
+});
+
+test('grant access does not create the ustadz role when the seeder has not run', function () {
+    $this->withoutExceptionHandling();
+    $user = createUserWithTeacherPermissions();
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null]);
+
+    expect(fn () => $this->actingAs($user)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'teacher@example.com',
+        'password' => 'password123',
+    ]))->toThrow(RoleDoesNotExist::class);
+
+    expect(Role::where('name', 'ustadz')->exists())->toBeFalse()
+        ->and(User::where('email', 'teacher@example.com')->exists())->toBeFalse()
+        ->and($teacher->fresh()->user_id)->toBeNull();
+});
+
+test('grant access requires edit-teachers', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $viewer = User::factory()->create();
+    $viewer->givePermissionTo('view-teachers');
+    $teacher = Teacher::factory()->create(['school_id' => $this->school->id, 'user_id' => null]);
+
+    $this->actingAs($viewer)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'teacher@example.com',
+        'password' => 'password123',
+    ])->assertForbidden();
+
+    expect($teacher->fresh()->user_id)->toBeNull();
+});
+
+test('grant access to a teacher of another school returns 404', function () {
+    $this->seed(RolePermissionSeeder::class);
+    $user = createUserWithTeacherPermissions();
+    $otherSchool = School::factory()->inactive()->create();
+    $teacher = Teacher::factory()->create(['school_id' => $otherSchool->id, 'user_id' => null]);
+
+    $this->actingAs($user)->postJson("/api/v1/teachers/{$teacher->id}/grant-access", [
+        'email' => 'teacher@example.com',
+        'password' => 'password123',
+    ])->assertNotFound();
+
+    expect($teacher->fresh()->user_id)->toBeNull()
+        ->and(User::where('email', 'teacher@example.com')->exists())->toBeFalse();
 });
 
 test('grant access to teacher who already has access returns 422', function () {

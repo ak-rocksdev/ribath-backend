@@ -40,7 +40,7 @@ test('list permissions returns all seeded permissions', function () {
         ->assertJsonPath('success', true);
 
     $permissions = $response->json('data');
-    expect(count($permissions))->toBe(44);
+    expect(count($permissions))->toBe(50);
 
     $permissionNames = collect($permissions)->pluck('name')->toArray();
     expect($permissionNames)->toContain('view-users')
@@ -48,7 +48,8 @@ test('list permissions returns all seeded permissions', function () {
         ->toContain('view-registrations')
         ->toContain('manage-class-levels')
         ->toContain('view-grades')
-        ->toContain('manage-grading-settings');
+        ->toContain('manage-grading-settings')
+        ->toContain('manage-own-grades');
 });
 
 test('permissions are ordered by name', function () {

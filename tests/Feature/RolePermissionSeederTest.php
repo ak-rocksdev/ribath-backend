@@ -10,7 +10,8 @@ test('seeder creates roles and permissions', function () {
 
     expect(Role::where('name', 'super_admin')->exists())->toBeTrue()
         ->and(Role::where('name', 'pengurus_pesantren')->exists())->toBeTrue()
-        ->and(Role::count())->toBe(2);
+        ->and(Role::where('name', 'ustadz')->exists())->toBeTrue()
+        ->and(Role::count())->toBe(3);
 
     expect(Permission::where('name', 'view-users')->exists())->toBeTrue()
         ->and(Permission::where('name', 'create-users')->exists())->toBeTrue()
@@ -56,7 +57,13 @@ test('seeder creates roles and permissions', function () {
         ->and(Permission::where('name', 'manage-attendance')->exists())->toBeTrue()
         ->and(Permission::where('name', 'view-memorization')->exists())->toBeTrue()
         ->and(Permission::where('name', 'manage-memorization')->exists())->toBeTrue()
-        ->and(Permission::count())->toBe(44);
+        ->and(Permission::where('name', 'view-own-grades')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-own-grades')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-own-attendance')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-own-attendance')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'view-own-memorization')->exists())->toBeTrue()
+        ->and(Permission::where('name', 'manage-own-memorization')->exists())->toBeTrue()
+        ->and(Permission::count())->toBe(50);
 });
 
 test('seeder assigns permissions to pengurus_pesantren', function () {
@@ -104,7 +111,32 @@ test('seeder assigns permissions to pengurus_pesantren', function () {
         ->and($pengurusPesantren->hasPermissionTo('manage-attendance'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('view-memorization'))->toBeTrue()
         ->and($pengurusPesantren->hasPermissionTo('manage-memorization'))->toBeTrue()
-        ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse();
+        ->and($pengurusPesantren->hasPermissionTo('delete-users'))->toBeFalse()
+        ->and($pengurusPesantren->hasPermissionTo('manage-own-grades'))->toBeFalse();
+});
+
+test('seeder gives the ustadz role only the own-scope permissions and view-academic-years', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    $ustadz = Role::findByName('ustadz');
+
+    expect($ustadz->permissions->pluck('name')->sort()->values()->all())->toBe([
+        'manage-own-attendance',
+        'manage-own-grades',
+        'manage-own-memorization',
+        'view-academic-years',
+        'view-own-attendance',
+        'view-own-grades',
+        'view-own-memorization',
+    ]);
+});
+
+test('seeder creates the ustadz role on the same guard as the other roles', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    expect(Role::findByName('ustadz')->guard_name)
+        ->toBe(Role::findByName('super_admin')->guard_name)
+        ->toBe(Role::findByName('pengurus_pesantren')->guard_name);
 });
 
 test('seeder creates admin user with super_admin role', function () {
@@ -121,6 +153,8 @@ test('seeder is idempotent', function () {
     $this->seed(RolePermissionSeeder::class);
     $this->seed(RolePermissionSeeder::class);
 
-    expect(Role::count())->toBe(2)
+    expect(Role::count())->toBe(3)
+        ->and(Permission::count())->toBe(50)
+        ->and(Role::findByName('ustadz')->permissions()->count())->toBe(7)
         ->and(User::where('email', 'akhabsy110@gmail.com')->count())->toBe(1);
 });

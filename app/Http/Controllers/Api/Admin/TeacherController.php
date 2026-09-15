@@ -9,11 +9,14 @@ use App\Http\Requests\Admin\UpdateTeacherRequest;
 use App\Http\Requests\Admin\UpdateTeacherStatusRequest;
 use App\Models\Teacher;
 use App\Services\TeacherService;
+use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class TeacherController extends Controller
 {
+    use EnsuresActiveSchoolTenancy;
+
     public function __construct(
         private TeacherService $teacherService
     ) {}
@@ -74,6 +77,8 @@ class TeacherController extends Controller
 
     public function grantAccess(GrantTeacherAccessRequest $request, Teacher $teacher): JsonResponse
     {
+        $this->ensureBelongsToActiveSchool($teacher);
+
         if ($teacher->user_id !== null) {
             return $this->errorResponse('Teacher already has system access', null, 422);
         }

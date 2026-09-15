@@ -4,6 +4,7 @@ use App\Models\School;
 use App\Models\Student;
 use App\Models\Teacher;
 use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -195,6 +196,7 @@ test('create user with email of soft-deleted user succeeds', function () {
 });
 
 test('grant teacher access with email of soft-deleted user succeeds', function () {
+    $this->seed(RolePermissionSeeder::class);
     $admin = createAdminWithUserPermissions();
     $deletedUser = User::factory()->create(['email' => 'teacher-reuse@example.com']);
     $deletedUser->delete();

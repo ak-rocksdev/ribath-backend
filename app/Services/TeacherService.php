@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Spatie\Permission\Models\Role;
 
 class TeacherService
 {
@@ -67,10 +66,9 @@ class TeacherService
                 'school_id' => $teacher->school_id,
             ]);
 
-            $ustadzRole = Role::firstOrCreate(
-                ['name' => 'ustadz', 'guard_name' => 'web']
-            );
-            $user->assignRole($ustadzRole);
+            // Seeded by RolePermissionSeeder with the "milik sendiri" permissions; a
+            // missing role fails the whole grant instead of creating an empty one.
+            $user->assignRole('ustadz');
 
             $teacher->update(['user_id' => $user->id]);
 
