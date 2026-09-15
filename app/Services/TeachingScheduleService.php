@@ -75,6 +75,27 @@ class TeachingScheduleService
             ->get();
     }
 
+    /**
+     * The active schedules the Ustadz holds now in the semester, in the
+     * active school, ordered by day and time slot (Jadwal Saya). Former
+     * schedules recorded in the riwayat pengajar are not his any more.
+     *
+     * @return Collection<int, TeachingSchedule>
+     */
+    public function listActiveSchedulesHeldBy(string $teacherId, string $academicYearId, int $semester): Collection
+    {
+        return TeachingSchedule::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('teacher_id', $teacherId)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->where('is_active', true)
+            ->with(TeachingSchedule::EAGER_LOAD_RELATIONS)
+            ->get()
+            ->sort(fn (TeachingSchedule $first, TeachingSchedule $second) => $this->compareSchedules($first, $second))
+            ->values();
+    }
+
     public function createSchedule(array $data): TeachingSchedule
     {
         $school = School::activeOrFail();

@@ -12,6 +12,9 @@ use Illuminate\Http\JsonResponse;
 /**
  * The Jadwal Mengajar of the Absensi Pertemuan page, readable with the
  * attendance permissions rather than the pesantren-wide `view-schedules`.
+ * It follows the Cakupan Mengajar, so it keeps a schedule moved away from
+ * the Ustadz that semester; Jadwal Saya (MyTeachingScheduleController)
+ * lists only the schedules his Ustadz holds now.
  */
 class AttendanceScheduleController extends Controller
 {

@@ -2250,3 +2250,196 @@ test('a finalized Rapor refuses the change of an Akun Ustadz with the message pe
         ->assertJsonPath('data.rows.0.student.id', $ali->id)
         ->assertJsonPath('data.rows.0.is_finalized', true);
 });
+
+// ── Jadwal Saya (ticket 08) ──────────────────────────────────────────────
+//
+// GET /my-teaching-schedules returns the active Jadwal Mengajar the Ustadz
+// linked to the user holds NOW — for the active semester, or the one
+// chosen — never the school's whole schedule and never the riwayat
+// pengajar (unlike /attendance-schedules, which follows the Cakupan
+// Mengajar).
+
+/**
+ * The Jadwal Saya the user gets, as its schedule ids in response order.
+ *
+ * @param  array<string, mixed>  $query
+ * @return array<int, string>
+ */
+function teachingScopeMyScheduleIds($testCase, User $user, array $query = []): array
+{
+    $url = '/api/v1/my-teaching-schedules'.($query === [] ? '' : '?'.http_build_query($query));
+
+    return collect($testCase->actingAs($user)->getJson($url)->assertOk()->json('data.schedules'))->pluck('id')->all();
+}
+
+test('Jadwal Saya lists the active schedules an Akun Ustadz holds now in the active semester, by day and time slot', function () {
+    $context = setUpTeachingScopeContext($this);
+    $earlierTimeSlot = TimeSlot::factory()->create(['school_id' => $context['school']->id, 'sort_order' => 0]);
+
+    $wednesdayScheduleId = createTeachingScopeSchedule($this, $context, $context['tamhidi'], $context['jurumiyah'], $context['ustadzAhmad'], 'wednesday');
+    $mondayEarlierScheduleId = $this->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/teaching-schedules', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'day_of_week' => 'monday',
+            'time_slot_id' => $earlierTimeSlot->id,
+            'class_level_id' => $context['ibtida']->id,
+            'subject_book_id' => $context['jurumiyah']->id,
+            'teacher_id' => $context['ustadzAhmad']->id,
+        ])
+        ->assertCreated()
+        ->json('data.id');
+
+    $response = $this->actingAs($context['ahmadAccount'])
+        ->getJson('/api/v1/my-teaching-schedules')
+        ->assertOk()
+        ->assertJsonPath('data.academic_year.id', $context['academicYear']->id)
+        ->assertJsonPath('data.academic_year.name', '2025/2026')
+        ->assertJsonPath('data.semester', 1)
+        ->assertJsonPath('data.schedules.1.id', $context['ahmadSafinahScheduleId'])
+        ->assertJsonPath('data.schedules.1.day_of_week', 'monday')
+        ->assertJsonPath('data.schedules.1.class_level.label', $context['tamhidi']->label)
+        ->assertJsonPath('data.schedules.1.subject_book.title', 'Safinatun Najah')
+        ->assertJsonPath('data.schedules.1.time_slot.id', $context['timeSlot']->id)
+        ->assertJsonPath('data.schedules.1.teacher.full_name', 'Ustadz Ahmad');
+
+    expect(collect($response->json('data.schedules'))->pluck('id')->all())
+        ->toBe([$mondayEarlierScheduleId, $context['ahmadSafinahScheduleId'], $wednesdayScheduleId])
+        ->and(teachingScopeMyScheduleIds($this, $context['bakarAccount']))->toBe([$context['bakarJurumiyahScheduleId']]);
+});
+
+test('Jadwal Saya follows the chosen Semester Akademik', function () {
+    $context = setUpTeachingScopeContext($this);
+    $semesterTwoScheduleId = createTeachingScopeSchedule($this, $context, $context['ibtida'], $context['jurumiyah'], $context['ustadzAhmad'], 'tuesday', semester: 2);
+
+    expect(teachingScopeMyScheduleIds($this, $context['ahmadAccount']))->toBe([$context['ahmadSafinahScheduleId']])
+        ->and(teachingScopeMyScheduleIds($this, $context['ahmadAccount'], ['academic_year_id' => $context['academicYear']->id, 'semester' => 1]))
+        ->toBe([$context['ahmadSafinahScheduleId']])
+        ->and(teachingScopeMyScheduleIds($this, $context['ahmadAccount'], ['academic_year_id' => $context['academicYear']->id, 'semester' => 2]))
+        ->toBe([$semesterTwoScheduleId]);
+
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson('/api/v1/my-teaching-schedules?'.http_build_query(['academic_year_id' => $context['academicYear']->id, 'semester' => 2]))
+        ->assertOk()
+        ->assertJsonPath('data.academic_year.id', $context['academicYear']->id)
+        ->assertJsonPath('data.semester', 2);
+});
+
+test('a schedule moved to another Ustadz leaves the Jadwal Saya of the former Ustadz while staying in his Cakupan Mengajar', function (string $throughPath) {
+    $context = setUpTeachingScopeContext($this);
+    $ahmadScheduleId = $context['ahmadSafinahScheduleId'];
+
+    moveTeachingScopeScheduleToBakar($this, $context, $throughPath);
+
+    expect(teachingScopeMyScheduleIds($this, $context['ahmadAccount']))->toBe([])
+        ->and(teachingScopeMyScheduleIds($this, $context['bakarAccount']))->toBe([$ahmadScheduleId, $context['bakarJurumiyahScheduleId']]);
+
+    // The Absensi Pertemuan list follows the Cakupan Mengajar, riwayat pengajar included.
+    expect(teachingScopeScheduleIds($this->actingAs($context['ahmadAccount'])->getJson(teachingScopeAttendanceSchedulesUrl($context))->assertOk()))
+        ->toBe([$ahmadScheduleId]);
+})->with(['the schedule edit', 'the bulk ganti ustadz']);
+
+test('a deleted schedule leaves Jadwal Saya', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    $this->actingAs($context['pengurus'])->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")->assertOk();
+
+    expect(teachingScopeMyScheduleIds($this, $context['ahmadAccount']))->toBe([]);
+});
+
+test('pengurus and super_admin without a linked Ustadz get an empty Jadwal Saya, and a pengurus who teaches gets only his own schedules', function () {
+    $context = setUpTeachingScopeContext($this);
+    $multiRoleAccount = createTeachingScopeMultiRoleAccount($this, $context);
+    $multiRoleScheduleId = createTeachingScopeSchedule($this, $context, $context['tamhidi'], $context['jurumiyah'], $multiRoleAccount->teacher, 'wednesday');
+
+    expect(teachingScopeMyScheduleIds($this, $context['pengurus']))->toBe([])
+        ->and(teachingScopeMyScheduleIds($this, $context['superAdmin']))->toBe([])
+        ->and(teachingScopeMyScheduleIds($this, $multiRoleAccount))->toBe([$multiRoleScheduleId]);
+});
+
+test('a user holding the ustadz role without a linked Ustadz has an empty Jadwal Saya', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    $accountWithoutUstadz = User::factory()->create(['school_id' => $context['school']->id]);
+    $accountWithoutUstadz->assignRole('ustadz');
+
+    $this->actingAs($accountWithoutUstadz)
+        ->getJson('/api/v1/my-teaching-schedules')
+        ->assertOk()
+        ->assertJsonPath('data.academic_year.id', $context['academicYear']->id)
+        ->assertJsonPath('data.schedules', []);
+});
+
+test('Jadwal Saya opens with any one of its permissions', function (string $permission) {
+    $context = setUpTeachingScopeContext($this);
+
+    $account = User::factory()->create(['school_id' => $context['school']->id]);
+    $account->givePermissionTo($permission);
+
+    $this->actingAs($account)->getJson('/api/v1/my-teaching-schedules')->assertOk();
+})->with(['view-own-grades', 'view-own-attendance', 'view-own-memorization', 'view-schedules']);
+
+test('Jadwal Saya is refused without a teaching or schedule permission and without a session', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // The "semua" grade permission alone is neither a teaching nor a schedule permission.
+    $accountWithoutSchedulePermissions = User::factory()->create(['school_id' => $context['school']->id]);
+    $accountWithoutSchedulePermissions->givePermissionTo('view-grades');
+
+    $this->actingAs($accountWithoutSchedulePermissions)->getJson('/api/v1/my-teaching-schedules')->assertForbidden();
+
+    auth()->forgetGuards();
+    $this->getJson('/api/v1/my-teaching-schedules')->assertUnauthorized();
+});
+
+test('Jadwal Saya validates the semester selection and stays inside the active school', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ahmad = $context['ahmadAccount'];
+
+    $this->actingAs($ahmad)
+        ->getJson('/api/v1/my-teaching-schedules?semester=1')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['academic_year_id']);
+    $this->actingAs($ahmad)
+        ->getJson('/api/v1/my-teaching-schedules?'.http_build_query(['academic_year_id' => $context['academicYear']->id]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['semester']);
+    $this->actingAs($ahmad)
+        ->getJson('/api/v1/my-teaching-schedules?'.http_build_query(['academic_year_id' => $context['academicYear']->id, 'semester' => 3]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['semester']);
+
+    $otherSchool = School::factory()->inactive()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    $this->actingAs($ahmad)
+        ->getJson('/api/v1/my-teaching-schedules?'.http_build_query(['academic_year_id' => $otherAcademicYear->id, 'semester' => 1]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['academic_year_id']);
+
+    // Only reachable through a direct insert: a schedule of another school
+    // naming Ustadz Ahmad in the active semester.
+    TeachingSchedule::factory()->create([
+        'school_id' => $otherSchool->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'day_of_week' => 'thursday',
+        'time_slot_id' => $context['timeSlot']->id,
+        'class_level_id' => $context['ibtida']->id,
+        'subject_book_id' => $context['jurumiyah']->id,
+        'teacher_id' => $context['ustadzAhmad']->id,
+    ]);
+
+    expect(teachingScopeMyScheduleIds($this, $ahmad))->toBe([$context['ahmadSafinahScheduleId']]);
+});
+
+test('without an active academic year Jadwal Saya is empty and names no semester', function () {
+    $context = setUpTeachingScopeContext($this);
+    $context['academicYear']->update(['is_active' => false]);
+
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson('/api/v1/my-teaching-schedules')
+        ->assertOk()
+        ->assertJsonPath('data.academic_year', null)
+        ->assertJsonPath('data.semester', null)
+        ->assertJsonPath('data.schedules', []);
+});

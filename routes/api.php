@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\Akademik\GradeRecapController;
 use App\Http\Controllers\Api\Akademik\GradingFactorController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateController;
 use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
+use App\Http\Controllers\Api\Akademik\MyTeachingScheduleController;
 use App\Http\Controllers\Api\Akademik\ReportCardController;
 use App\Http\Controllers\Api\Akademik\ReportCardPdfController;
 use App\Http\Controllers\Api\Akademik\StudentGradeController;
@@ -268,6 +269,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/{teachingSchedule}', [AttendanceScheduleController::class, 'show'])
             ->middleware('permission:view-attendance|view-own-attendance');
     });
+
+    // Jadwal Saya: the Jadwal Mengajar the user's own Ustadz holds now
+    // (MyTeachingScheduleService), never the school's whole schedule
+    Route::get('/my-teaching-schedules', [MyTeachingScheduleController::class, 'index'])
+        ->middleware(['auth:sanctum', 'permission:view-own-grades|view-own-attendance|view-own-memorization|view-schedules']);
 
     // Attendance alerts (Pertemuan Bolong); a "milik sendiri" user sees the
     // schedules his Ustadz holds now (MissingSessionFinder)
