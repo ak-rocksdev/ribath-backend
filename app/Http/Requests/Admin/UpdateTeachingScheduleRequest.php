@@ -3,13 +3,27 @@
 namespace App\Http\Requests\Admin;
 
 use App\Models\TeachingSchedule;
+use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
+/**
+ * PUT /teaching-schedules/{teachingSchedule}. Tenancy is checked here,
+ * before validation, so a schedule of another school answers 404 and is
+ * never changed — nor recorded in the riwayat pengajar.
+ */
 class UpdateTeachingScheduleRequest extends FormRequest
 {
+    use EnsuresActiveSchoolTenancy;
+
     public function authorize(): bool
     {
+        $teachingSchedule = $this->route('teachingSchedule');
+
+        if ($teachingSchedule) {
+            $this->ensureBelongsToActiveSchool($teachingSchedule);
+        }
+
         return true;
     }
 

@@ -27,6 +27,9 @@ _Avoid_: mapel, mata pelajaran, subject
 **Jadwal Mengajar** (`TeachingSchedule`):
 Penugasan tetap satu Ustadz mengajar satu Kitab ke satu Kelas pada hari dan jam tertentu dalam satu Semester Akademik. Satu-satunya sumber kebenaran tentang siapa mengajar apa ke kelas mana.
 
+**Riwayat Pengajar** (`TeachingScheduleTeacherHistory`):
+Catatan otomatis Ustadz, Kelas, dan Kitab yang dipegang sebuah Jadwal Mengajar sebelum salah satunya diubah (edit jadwal atau "ganti ustadz" massal), pada Semester Akademik jadwal itu. Membuat pasangan Kelas × Kitab tetap masuk Cakupan Mengajar Ustadz sebelumnya sampai Rapor difinalkan (ADR 0005).
+
 **Kelas** (`ClassLevel`):
 Tingkat tempat Santri belajar (Tamhidi, Ibtida 1, Tahfidz 1, …).
 _Avoid_: tingkat, level, rombel

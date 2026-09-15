@@ -4,6 +4,7 @@ namespace App\Services\Akademik;
 
 use App\Models\School;
 use App\Models\TeachingSchedule;
+use App\Models\TeachingScheduleTeacherHistory;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
@@ -17,8 +18,10 @@ use InvalidArgumentException;
  *   restriction, even when the user also holds the "milik sendiri" one;
  * - only the "milik sendiri" permission (e.g. `manage-own-grades`) → the
  *   Kelas × Kitab pairs of the Jadwal Mengajar rows of that semester —
- *   active or deactivated — held by the Ustadz linked to the user; none
- *   when no Ustadz is linked;
+ *   active or deactivated — held by the Ustadz linked to the user, plus
+ *   the pairs the riwayat pengajar of that semester records for him (a
+ *   schedule since moved to another Ustadz, Kelas or Kitab); none when no
+ *   Ustadz is linked;
  * - neither → 403.
  *
  * Every Penilaian service asks this resolver instead of checking roles or
@@ -64,9 +67,11 @@ class TeachingScopeResolver
     }
 
     /**
-     * The distinct (class_level_id, subject_book_id) pairs of the active
-     * school's Jadwal Mengajar rows for the semester, active and
-     * deactivated, whose Ustadz is the one linked to the user.
+     * The (class_level_id, subject_book_id) pairs the Ustadz linked to the
+     * user teaches or taught in the semester, in the active school: those
+     * of his Jadwal Mengajar rows, active and deactivated, and those the
+     * riwayat pengajar records with him as the previous Ustadz (ADR 0005).
+     * A pair may appear twice; TeachingScope keeps it once.
      *
      * @return Collection<int, array{class_level_id: string, subject_book_id: string}>
      */
@@ -78,8 +83,10 @@ class TeachingScopeResolver
             return collect();
         }
 
-        return TeachingSchedule::query()
-            ->where('school_id', School::activeOrFail()->id)
+        $schoolId = School::activeOrFail()->id;
+
+        $currentSchedulePairs = TeachingSchedule::query()
+            ->where('school_id', $schoolId)
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
             ->where('teacher_id', $linkedTeacherId)
@@ -87,5 +94,20 @@ class TeachingScopeResolver
             ->distinct()
             ->get()
             ->map(fn (TeachingSchedule $schedule) => $schedule->only(['class_level_id', 'subject_book_id']));
+
+        $formerSchedulePairs = TeachingScheduleTeacherHistory::query()
+            ->where('school_id', $schoolId)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->where('previous_teacher_id', $linkedTeacherId)
+            ->select(['previous_class_level_id', 'previous_subject_book_id'])
+            ->distinct()
+            ->get()
+            ->map(fn (TeachingScheduleTeacherHistory $historyEntry) => [
+                'class_level_id' => $historyEntry->previous_class_level_id,
+                'subject_book_id' => $historyEntry->previous_subject_book_id,
+            ]);
+
+        return $currentSchedulePairs->concat($formerSchedulePairs);
     }
 }

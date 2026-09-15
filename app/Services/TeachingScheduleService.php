@@ -6,6 +6,7 @@ use App\Models\AcademicYear;
 use App\Models\School;
 use App\Models\Teacher;
 use App\Models\TeachingSchedule;
+use App\Models\TeachingScheduleTeacherHistory;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +23,12 @@ class TeachingScheduleService
         'saturday' => 'Sabtu',
         'sunday' => 'Ahad',
     ];
+
+    /**
+     * The attributes that say who teaches what to which class; a change of
+     * any of them is recorded in the riwayat pengajar (ADR 0005).
+     */
+    private const TEACHING_ASSIGNMENT_ATTRIBUTES = ['teacher_id', 'class_level_id', 'subject_book_id'];
 
     private const DAY_ORDER = [
         'monday' => 0, 'tuesday' => 1, 'wednesday' => 2, 'thursday' => 3,
@@ -107,7 +114,11 @@ class TeachingScheduleService
             excludeScheduleId: $teachingSchedule->id,
         );
 
-        $teachingSchedule->update($data);
+        DB::transaction(function () use ($teachingSchedule, $data) {
+            $teachingSchedule->fill($data);
+            $this->recordTeacherHistoryWhenAssignmentChanges($teachingSchedule);
+            $teachingSchedule->save();
+        });
 
         return $teachingSchedule->fresh()->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
     }
@@ -263,7 +274,9 @@ class TeachingScheduleService
                     continue;
                 }
 
-                $schedule->update(['teacher_id' => $data['target_teacher_id']]);
+                $schedule->teacher_id = $data['target_teacher_id'];
+                $this->recordTeacherHistoryWhenAssignmentChanges($schedule);
+                $schedule->save();
                 $updated++;
             }
         });
@@ -273,6 +286,32 @@ class TeachingScheduleService
             'conflicts' => $conflicts,
             'total' => $schedules->count(),
         ];
+    }
+
+    /**
+     * Riwayat pengajar (ADR 0005): when the pending (unsaved) changes of the
+     * schedule touch its Ustadz, Kelas or Kitab, record the values it had
+     * before them in its Semester Akademik, so the Cakupan Mengajar of the
+     * previous Ustadz keeps that Kelas × Kitab for the semester. A day or
+     * time change records nothing. Call inside the transaction that saves
+     * the schedule.
+     */
+    private function recordTeacherHistoryWhenAssignmentChanges(TeachingSchedule $teachingSchedule): void
+    {
+        if (! $teachingSchedule->isDirty(self::TEACHING_ASSIGNMENT_ATTRIBUTES)) {
+            return;
+        }
+
+        TeachingScheduleTeacherHistory::create([
+            'school_id' => $teachingSchedule->getOriginal('school_id'),
+            'teaching_schedule_id' => $teachingSchedule->id,
+            'academic_year_id' => $teachingSchedule->getOriginal('academic_year_id'),
+            'semester' => $teachingSchedule->getOriginal('semester'),
+            'previous_teacher_id' => $teachingSchedule->getOriginal('teacher_id'),
+            'previous_class_level_id' => $teachingSchedule->getOriginal('class_level_id'),
+            'previous_subject_book_id' => $teachingSchedule->getOriginal('subject_book_id'),
+            'changed_by' => auth()->id(),
+        ]);
     }
 
     public function findTeacherConflict(

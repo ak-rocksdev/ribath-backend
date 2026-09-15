@@ -11,21 +11,25 @@ use App\Models\Student;
 use App\Models\StudentGrade;
 use App\Models\SubjectBook;
 use App\Models\TeachingSchedule;
+use App\Models\TeachingScheduleTeacherHistory;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 /**
  * The Kelas × Kitab pairs that can be graded in a semester akademik: the
- * unique (class_level, subject_book) pairs of the active school's
- * teaching_schedules for that (academic_year_id, semester) that are either
+ * unique (class_level, subject_book) pairs taught in the active school for
+ * that (academic_year_id, semester) — by its teaching_schedules rows, or
+ * earlier by a schedule that has since moved to another Ustadz, Kelas or
+ * Kitab (the riwayat pengajar, ADR 0005) — that are either
  *
  * - scheduled by at least one active row, or
- * - "stopped": every row of the pair in the semester is deactivated (the
- *   "Hapus" action), but the pair already has Penilaian data recorded in
- *   that semester (a filled grade, a Tugas or a held Pertemuan) — so
- *   grades already entered can still be completed, while a schedule
- *   deleted before any data exists (e.g. created by mistake) disappears;
+ * - "stopped": no active row holds the pair — its rows are all
+ *   deactivated (the "Hapus" action) or only the riwayat pengajar names
+ *   it — but the pair already has Penilaian data recorded in that
+ *   semester (a filled grade, a Tugas or a held Pertemuan) — so grades
+ *   already entered can still be completed, while a schedule deleted or
+ *   corrected before any data exists (e.g. created by mistake) disappears;
  *
  * PLUS — per ADR 0003 — one (class_level, Tahfizh kitab) pair for every
  * class that has at least one santri with a non-deleted Target Hafalan for
@@ -41,8 +45,8 @@ class GradableSubjectService
 {
     /**
      * The gradable pairs of the semester (see class doc), ordered by class
-     * then kitab title. `is_schedule_stopped`: the pair is kept only by
-     * deactivated rows.
+     * then kitab title. `is_schedule_stopped`: no active row holds the pair;
+     * it is kept by deactivated rows or the riwayat pengajar.
      *
      * @return array<int, array{
      *     class_level_id: string,
@@ -68,24 +72,40 @@ class GradableSubjectService
             ->get()
             ->groupBy(fn (TeachingSchedule $schedule) => self::pairKey($schedule->class_level_id, $schedule->subject_book_id));
 
-        $hasStoppedPair = $schedulesByPairKey->contains(fn (Collection $pairSchedules) => ! $pairSchedules->contains('is_active', true));
+        $teacherHistoryByPairKey = $this->semesterTeacherHistoryQuery($academicYearId, $semester)
+            ->when($classLevelId, fn (Builder $query) => $query->where('previous_class_level_id', $classLevelId))
+            ->with([
+                'previousClassLevel:id,slug,label,sort_order',
+                'previousSubjectBook:id,title,grading_template_id',
+                'previousSubjectBook.gradingTemplate:id,code,name',
+                'previousTeacher:id,full_name',
+            ])
+            ->get()
+            ->groupBy(fn (TeachingScheduleTeacherHistory $historyEntry) => self::pairKey($historyEntry->previous_class_level_id, $historyEntry->previous_subject_book_id));
+
+        $taughtPairs = $schedulesByPairKey->keys()
+            ->merge($teacherHistoryByPairKey->keys())
+            ->unique()
+            ->mapWithKeys(fn (string $pairKey) => [$pairKey => $this->buildPairPayload(
+                $schedulesByPairKey->get($pairKey, collect()),
+                $teacherHistoryByPairKey->get($pairKey, collect()),
+            )]);
+
         // One batch of queries for the whole semester, only when a stopped pair needs it.
-        $pairKeysWithRecordedData = $hasStoppedPair
+        $pairKeysWithRecordedData = $taughtPairs->contains('is_schedule_stopped', true)
             ? $this->pairKeysWithRecordedPenilaianData($academicYearId, $semester, $classLevelId)
             : collect();
 
-        $schedulePairs = $schedulesByPairKey
-            ->filter(fn (Collection $pairSchedules, string $pairKey) => $pairSchedules->contains('is_active', true)
-                || $pairKeysWithRecordedData->has($pairKey))
-            ->map(fn (Collection $pairSchedules) => $this->buildPairPayload($pairSchedules));
-        [$stoppedSchedulePairs, $activeSchedulePairs] = $schedulePairs->partition(fn (array $pair) => $pair['is_schedule_stopped']);
+        $gradableTaughtPairs = $taughtPairs->filter(fn (array $pair, string $pairKey) => ! $pair['is_schedule_stopped']
+            || $pairKeysWithRecordedData->has($pairKey));
+        [$stoppedPairs, $activeSchedulePairs] = $gradableTaughtPairs->partition(fn (array $pair) => $pair['is_schedule_stopped']);
 
         // On a key clash: an active schedule wins (it carries the real
         // teachers), then the Tahfizh Target Hafalan pair (gradable because
-        // of the targets, not stopped), then a stopped schedule.
+        // of the targets, not stopped), then a stopped pair.
         $allPairs = $activeSchedulePairs
             ->union($this->tahfizhTargetPairs($academicYearId, $semester, $classLevelId))
-            ->union($stoppedSchedulePairs);
+            ->union($stoppedPairs);
 
         return $allPairs
             ->sortBy([
@@ -141,6 +161,15 @@ class GradableSubjectService
             ->where('semester', $semester);
     }
 
+    /** The active school's riwayat pengajar entries of the semester (ADR 0005). */
+    private function semesterTeacherHistoryQuery(string $academicYearId, int $semester): Builder
+    {
+        return TeachingScheduleTeacherHistory::query()
+            ->where('school_id', School::activeOrFail()->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester);
+    }
+
     /**
      * The pairs with Penilaian data recorded in the semester, as a
      * collection keyed by "<class_level_id>|<subject_book_id>", for the
@@ -186,24 +215,31 @@ class GradableSubjectService
     }
 
     /**
-     * @param  Collection<int, TeachingSchedule>  $pairSchedules  every row of the pair in the semester, active and deactivated
+     * @param  Collection<int, TeachingSchedule>  $pairSchedules  every row of the pair in the semester, active and deactivated (may be empty)
+     * @param  Collection<int, TeachingScheduleTeacherHistory>  $pairTeacherHistory  the riwayat pengajar entries naming the pair in the semester (may be empty)
      * @return array<string, mixed>
      */
-    private function buildPairPayload(Collection $pairSchedules): array
+    private function buildPairPayload(Collection $pairSchedules, Collection $pairTeacherHistory): array
     {
         $isScheduleStopped = ! $pairSchedules->contains('is_active', true);
-        // A scheduled pair names its current teachers; a stopped pair the ones who held it.
-        $teachingSchedules = $isScheduleStopped ? $pairSchedules : $pairSchedules->where('is_active', true);
+        // A scheduled pair names its current teachers; a stopped pair the ones
+        // who held it (its deactivated rows and the riwayat pengajar).
+        $teachers = $isScheduleStopped
+            ? $pairSchedules->pluck('teacher')->concat($pairTeacherHistory->pluck('previousTeacher'))
+            : $pairSchedules->where('is_active', true)->pluck('teacher');
 
-        /** @var TeachingSchedule $firstSchedule */
+        // Every pair comes from at least one schedule row or riwayat pengajar entry.
+        /** @var TeachingSchedule|null $firstSchedule */
         $firstSchedule = $pairSchedules->first();
-        $classLevel = $firstSchedule->classLevel;
-        $subjectBook = $firstSchedule->subjectBook;
+        /** @var TeachingScheduleTeacherHistory|null $firstHistoryEntry */
+        $firstHistoryEntry = $pairTeacherHistory->first();
+        $classLevel = $firstSchedule?->classLevel ?? $firstHistoryEntry?->previousClassLevel;
+        $subjectBook = $firstSchedule?->subjectBook ?? $firstHistoryEntry?->previousSubjectBook;
         $gradingTemplate = $subjectBook?->gradingTemplate;
 
         return [
-            'class_level_id' => $firstSchedule->class_level_id,
-            'subject_book_id' => $firstSchedule->subject_book_id,
+            'class_level_id' => $firstSchedule?->class_level_id ?? $firstHistoryEntry->previous_class_level_id,
+            'subject_book_id' => $firstSchedule?->subject_book_id ?? $firstHistoryEntry->previous_subject_book_id,
             'class_level' => $classLevel?->summary() ?? ['id' => null, 'slug' => null, 'label' => null],
             'subject_book' => [
                 'id' => $subjectBook?->id,
@@ -216,8 +252,7 @@ class GradableSubjectService
             ] : null,
             'is_gradable' => $gradingTemplate !== null,
             'is_schedule_stopped' => $isScheduleStopped,
-            'teachers' => $teachingSchedules
-                ->pluck('teacher')
+            'teachers' => $teachers
                 ->filter()
                 ->unique('id')
                 ->sortBy('full_name')

@@ -10,6 +10,8 @@ use App\Models\StudentGrade;
 use App\Models\SubjectBook;
 use App\Models\SubjectCategory;
 use App\Models\Teacher;
+use App\Models\TeachingSchedule;
+use App\Models\TeachingScheduleTeacherHistory;
 use App\Models\TimeSlot;
 use App\Models\User;
 use App\Services\Akademik\AcademicSemesterService;
@@ -25,7 +27,9 @@ use Spatie\Permission\Models\Role;
  * ticket 02, ADR 0004): an Akun Ustadz — only role `ustadz`, created
  * through "Beri Akses" — works on the Kelas × Kitab pairs of his own
  * Jadwal Mengajar in the chosen Semester Akademik; pengurus and a
- * pengurus who also teaches are never restricted.
+ * pengurus who also teaches are never restricted. Ticket 03 (ADR 0005):
+ * the riwayat pengajar keeps a pair in the Cakupan Mengajar of the Ustadz
+ * who held it earlier in the same semester.
  *
  * Every record the rules depend on is created through the real endpoints:
  * accounts via grant-access, schedules via /teaching-schedules, santri via
@@ -39,8 +43,9 @@ afterEach(function () {
 const TEACHING_SCOPE_OUTSIDE_MESSAGE = 'Kelas dan kitab ini di luar Cakupan Mengajar Anda.';
 
 /**
- * Tamhidi learns Safinatun Najah from Ustadz Ahmad and Ibtida 1 learns
- * Jurumiyah from Ustadz Bakar, both in semester 1; one santri per class.
+ * Tamhidi learns Safinatun Najah from Ustadz Ahmad on Monday and Ibtida 1
+ * learns Jurumiyah from Ustadz Bakar on Tuesday, both in semester 1 at the
+ * same time slot; one santri per class.
  *
  * @return array<string, mixed>
  */
@@ -96,7 +101,7 @@ function setUpTeachingScopeContext($testCase): array
     $context['bakarAccount'] = grantTeachingScopeAccess($testCase, $context, $ustadzBakar, 'bakar@example.com');
 
     $context['ahmadSafinahScheduleId'] = createTeachingScopeSchedule($testCase, $context, $tamhidi, $safinah, $ustadzAhmad, 'monday');
-    createTeachingScopeSchedule($testCase, $context, $ibtida, $jurumiyah, $ustadzBakar, 'monday');
+    createTeachingScopeSchedule($testCase, $context, $ibtida, $jurumiyah, $ustadzBakar, 'tuesday');
 
     $context['tamhidiSantri'] = createTeachingScopeStudent($testCase, $context, 'Ali', 'tamhidi');
     $context['ibtidaSantri'] = createTeachingScopeStudent($testCase, $context, 'Zaid', 'ibtida_1');
@@ -764,6 +769,295 @@ test('a deleted Tahfizh schedule with data is listed as the Target Hafalan pair,
     );
     expect($pair['is_schedule_stopped'])->toBeFalse()
         ->and($pair['teachers'])->toBe([]);
+});
+
+// ── Riwayat pengajar (ADR 0005) ──────────────────────────────────────────
+
+/** Changes a Jadwal Mengajar through the schedule edit (PUT /teaching-schedules/{id}), as pengurus. */
+function editTeachingScopeSchedule($testCase, array $context, string $scheduleId, array $changes): void
+{
+    $testCase->actingAs($context['pengurus'])
+        ->putJson("/api/v1/teaching-schedules/{$scheduleId}", $changes)
+        ->assertOk();
+}
+
+/** The bulk "ganti ustadz" (POST /teaching-schedules/replace-teacher) for semester 1. */
+function replaceTeachingScopeTeacher($testCase, array $context, Teacher $sourceTeacher, Teacher $targetTeacher): void
+{
+    $testCase->actingAs($context['pengurus'])
+        ->postJson('/api/v1/teaching-schedules/replace-teacher', [
+            'source_teacher_id' => $sourceTeacher->id,
+            'target_teacher_id' => $targetTeacher->id,
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+        ])
+        ->assertOk();
+}
+
+test('a schedule moved from Ustadz Ahmad to Ustadz Bakar through the edit lets both save grades that semester', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+
+    editTeachingScopeSchedule($this, $context, $context['ahmadSafinahScheduleId'], ['teacher_id' => $context['ustadzBakar']->id]);
+
+    // Ahmad keeps Tamhidi × Safinah through the riwayat pengajar; Bakar holds it now.
+    foreach ([$context['ahmadAccount'], $context['bakarAccount']] as $ustadzAccount) {
+        $safinahPair = teachingScopeFindPair(
+            $this->actingAs($ustadzAccount)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        );
+        expect($safinahPair)->not->toBeNull()
+            ->and($safinahPair['is_schedule_stopped'])->toBeFalse()
+            ->and(collect($safinahPair['teachers'])->pluck('full_name')->all())->toBe(['Ustadz Bakar']);
+
+        $this->actingAs($ustadzAccount)
+            ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertOk();
+    }
+
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => 70]],
+        ]))
+        ->assertOk();
+    $this->actingAs($context['bakarAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uas' => 85]],
+        ]))
+        ->assertOk();
+
+    // Who wrote what stays in the audit columns.
+    $gradeWritersByFactorCode = StudentGrade::where('student_id', $ali->id)->with('gradingFactor:id,code')->get()
+        ->mapWithKeys(fn (StudentGrade $grade) => [$grade->gradingFactor->code => $grade->created_by])
+        ->all();
+    expect($gradeWritersByFactorCode)->toBe([
+        'uts' => $context['ahmadAccount']->id,
+        'uas' => $context['bakarAccount']->id,
+    ]);
+
+    // Pengurus and a pengurus who also teaches are not restricted either way.
+    $pengurusYangMengajar = Teacher::factory()->create(['school_id' => $context['school']->id, 'full_name' => 'Ustadz Pengurus', 'user_id' => null]);
+    $multiRoleAccount = grantTeachingScopeAccess($this, $context, $pengurusYangMengajar, 'pengurus.ustadz@example.com');
+    $this->actingAs($context['superAdmin'])
+        ->postJson("/api/v1/users/{$multiRoleAccount->id}/roles", ['roles' => ['ustadz', 'pengurus_pesantren']])
+        ->assertOk();
+    foreach ([$context['pengurus'], $multiRoleAccount] as $unrestrictedUser) {
+        $this->actingAs($unrestrictedUser)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $ali->id, 'scores' => ['adab' => 3]],
+            ]))
+            ->assertOk();
+    }
+});
+
+test('the riwayat pengajar of one semester does not open the pair in another semester', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Semester 2: Bakar alone teaches Safinah to Tamhidi.
+    createTeachingScopeSchedule($this, $context, $context['tamhidi'], $context['safinah'], $context['ustadzBakar'], 'wednesday', semester: 2);
+    editTeachingScopeSchedule($this, $context, $context['ahmadSafinahScheduleId'], ['teacher_id' => $context['ustadzBakar']->id]);
+
+    expect(teachingScopeFindPair(
+        $this->actingAs($context['ahmadAccount'])->getJson(teachingScopeGradableSubjectsUrl($context, semester: 2))->assertOk(),
+        $context['tamhidi'],
+        $context['safinah'],
+    ))->toBeNull();
+
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uts' => 70]],
+        ], semester: 2))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+});
+
+test('a schedule moved through the bulk ganti ustadz lets both save grades that semester and leaves the other semester as it was', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+
+    // Ahmad also teaches Safinah to Tamhidi in semester 2; only semester 1 moves to Bakar.
+    createTeachingScopeSchedule($this, $context, $context['tamhidi'], $context['safinah'], $context['ustadzAhmad'], 'wednesday', semester: 2);
+    replaceTeachingScopeTeacher($this, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
+
+    foreach ([70 => $context['ahmadAccount'], 80 => $context['bakarAccount']] as $utsScore => $ustadzAccount) {
+        $this->actingAs($ustadzAccount)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $ali->id, 'scores' => ['uts' => $utsScore]],
+            ]))
+            ->assertOk();
+    }
+    expect(StudentGrade::where('student_id', $ali->id)->where('semester', 1)->value('updated_by'))->toBe($context['bakarAccount']->id);
+
+    // Semester 2 still belongs to Ahmad alone.
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => 90]],
+        ], semester: 2))
+        ->assertOk();
+    $this->actingAs($context['bakarAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => 60]],
+        ], semester: 2))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+});
+
+test('a schedule moved to another class keeps the old class with recorded grades for its Ustadz, marked stopped', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uts' => 70]],
+        ]))
+        ->assertOk();
+
+    // Pengurus moves Ahmad's Safinah lesson from Tamhidi to Ibtida 1.
+    editTeachingScopeSchedule($this, $context, $context['ahmadSafinahScheduleId'], ['class_level_id' => $context['ibtida']->id]);
+
+    $ahmadResponse = $this->actingAs($context['ahmadAccount'])->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk();
+    expect(teachingScopePairKeys($ahmadResponse))->toBe(collect([
+        teachingScopePairKey($context['tamhidi'], $context['safinah']),
+        teachingScopePairKey($context['ibtida'], $context['safinah']),
+    ])->sort()->values()->all());
+
+    foreach ([80 => $context['ahmadAccount'], 90 => $context['pengurus']] as $uasScore => $user) {
+        $oldClassPair = teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        );
+        expect($oldClassPair['is_schedule_stopped'])->toBeTrue()
+            ->and(collect($oldClassPair['teachers'])->pluck('full_name')->all())->toBe(['Ustadz Ahmad']);
+
+        $this->actingAs($user)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uas' => $uasScore]],
+            ]))
+            ->assertOk();
+    }
+});
+
+test('a schedule moved to another kitab before any data leaves the old pair ungradable for everyone', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Safinah was entered by mistake; pengurus corrects the kitab to Jurumiyah.
+    editTeachingScopeSchedule($this, $context, $context['ahmadSafinahScheduleId'], ['subject_book_id' => $context['jurumiyah']->id]);
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        expect(teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        ))->toBeNull();
+
+        // Still inside Ahmad's Cakupan Mengajar, so he gets the same answer as pengurus.
+        $this->actingAs($user)
+            ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['subject_book_id']);
+    }
+
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['jurumiyah']))
+        ->assertOk();
+});
+
+test('the riwayat pengajar of another school widens nothing', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Only reachable through a direct insert: the API records the riwayat
+    // pengajar for the active school alone. This entry names Ahmad and
+    // Ibtida 1 × Jurumiyah in the active semester, but another school.
+    $otherSchool = School::factory()->inactive()->create();
+    $otherSchoolSchedule = TeachingSchedule::factory()->create([
+        'school_id' => $otherSchool->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'time_slot_id' => $context['timeSlot']->id,
+        'class_level_id' => $context['ibtida']->id,
+        'subject_book_id' => $context['jurumiyah']->id,
+        'teacher_id' => $context['ustadzBakar']->id,
+    ]);
+    TeachingScheduleTeacherHistory::create([
+        'school_id' => $otherSchool->id,
+        'teaching_schedule_id' => $otherSchoolSchedule->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'previous_teacher_id' => $context['ustadzAhmad']->id,
+        'previous_class_level_id' => $context['ibtida']->id,
+        'previous_subject_book_id' => $context['jurumiyah']->id,
+    ]);
+
+    expect(teachingScopePairKeys(
+        $this->actingAs($context['ahmadAccount'])->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk()
+    ))->toBe([teachingScopePairKey($context['tamhidi'], $context['safinah'])]);
+
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeGridUrl($context, $context['ibtida'], $context['jurumiyah']))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+});
+
+test('a finalized Rapor ends the access of the former Ustadz as it does for everyone', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+
+    replaceTeachingScopeTeacher($this, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
+
+    // Bakar completes every factor of Safinah, Ali's only kitab: a held
+    // Pertemuan (Absensi), a scored Tugas, then the manual factors.
+    $this->actingAs($context['superAdmin'])
+        ->putJson("/api/v1/academic-years/{$context['academicYear']->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-31',
+        ])
+        ->assertOk();
+    $this->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/class-sessions', [
+            'teaching_schedule_id' => $context['ahmadSafinahScheduleId'],
+            'session_date' => '2025-09-08',
+            'attendances' => [['student_id' => $ali->id, 'status' => 'present', 'notes' => null]],
+        ])
+        ->assertCreated();
+    $taskId = $this->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/class-tasks', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'class_level_id' => $context['tamhidi']->id,
+            'subject_book_id' => $context['safinah']->id,
+            'title' => 'Hafalan Bab Thaharah',
+            'task_date' => '2025-08-01',
+        ])
+        ->assertCreated()
+        ->json('data.id');
+    $this->actingAs($context['superAdmin'])
+        ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 75]]])
+        ->assertOk();
+    $this->actingAs($context['bakarAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => 80, 'uas' => 85, 'keaktifan' => 3, 'adab' => 4]],
+        ]))
+        ->assertOk();
+
+    $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/report-cards/finalize', [
+            'student_id' => $ali->id,
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+        ])
+        ->assertOk();
+
+    foreach ([$context['ahmadAccount'], $context['bakarAccount']] as $ustadzAccount) {
+        $this->actingAs($ustadzAccount)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $ali->id, 'scores' => ['uts' => 60]],
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Rapor santri ini sudah final untuk semester tersebut.');
+    }
+    expect(StudentGrade::where('student_id', $ali->id)->whereHas('gradingFactor', fn ($query) => $query->where('code', 'uts'))->value('score'))->toEqual(80);
 });
 
 // ── Izin, validasi, tenancy ──────────────────────────────────────────────
