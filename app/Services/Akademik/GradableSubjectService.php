@@ -23,9 +23,9 @@ use Illuminate\Support\Collection;
  * - scheduled by at least one active row, or
  * - "stopped": every row of the pair in the semester is deactivated (the
  *   "Hapus" action), but the pair already has Penilaian data recorded in
- *   that semester (a grade, a Tugas or a Pertemuan) — so grades already
- *   entered can still be completed, while a schedule deleted before any
- *   data exists (e.g. created by mistake) disappears;
+ *   that semester (a filled grade, a Tugas or a held Pertemuan) — so
+ *   grades already entered can still be completed, while a schedule
+ *   deleted before any data exists (e.g. created by mistake) disappears;
  *
  * PLUS — per ADR 0003 — one (class_level, Tahfizh kitab) pair for every
  * class that has at least one santri with a non-deleted Target Hafalan for
@@ -152,11 +152,17 @@ class GradableSubjectService
 
     /**
      * The pairs with Penilaian data recorded in the semester, as a
-     * collection keyed by "<class_level_id>|<subject_book_id>": any
-     * student_grades row, any Tugas (class_tasks) and any Pertemuan
-     * (class_sessions, held or cancelled) of the active school for that
-     * (academic_year_id, semester) and class. Soft-deleted Tugas and
-     * Pertemuan do not count. Three queries, whatever the number of pairs.
+     * collection keyed by "<class_level_id>|<subject_book_id>", for the
+     * active school, that (academic_year_id, semester) and class:
+     *
+     * - a student_grades row with a score or a level (a cleared cell, kept
+     *   as a row with both NULL, does not count);
+     * - a Tugas (class_tasks);
+     * - a held Pertemuan (class_sessions) — cancelled ones do not count,
+     *   since a libur massal cancels every active schedule in its range.
+     *
+     * Soft-deleted Tugas and Pertemuan do not count. Three queries,
+     * whatever the number of pairs.
      *
      * @return Collection<string, true>
      */
@@ -164,7 +170,13 @@ class GradableSubjectService
     {
         $schoolId = School::activeOrFail()->id;
 
-        return collect([StudentGrade::query(), ClassTask::query(), ClassSession::query()])
+        $recordedDataQueries = [
+            StudentGrade::query()->where(fn (Builder $query) => $query->whereNotNull('score')->orWhereNotNull('scale_level')),
+            ClassTask::query(),
+            ClassSession::query()->where('status', ClassSession::STATUS_HELD),
+        ];
+
+        return collect($recordedDataQueries)
             ->flatMap(fn (Builder $recordedDataQuery) => $recordedDataQuery
                 ->where('school_id', $schoolId)
                 ->where('academic_year_id', $academicYearId)

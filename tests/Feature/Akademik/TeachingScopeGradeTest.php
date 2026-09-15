@@ -2,6 +2,7 @@
 
 use App\Models\AcademicYear;
 use App\Models\ClassLevel;
+use App\Models\ClassSession;
 use App\Models\GradingTemplate;
 use App\Models\School;
 use App\Models\Student;
@@ -524,6 +525,84 @@ test('a recorded Pertemuan alone keeps a stopped pair gradable', function () {
     $this->actingAs($context['pengurus'])
         ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
         ->assertOk();
+});
+
+test('a pair whose only schedule was deleted after a libur massal is gone for everyone', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpTeachingScopeContext($this);
+
+    // Libur massal cancels every active schedule in range (two Mondays for
+    // Ahmad's Safinah); the schedule is then deleted as a mistake.
+    $this->actingAs($context['superAdmin'])
+        ->putJson("/api/v1/academic-years/{$context['academicYear']->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-31',
+        ])
+        ->assertOk();
+    $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/class-sessions/cancel-range', [
+            'start_date' => '2025-09-01',
+            'end_date' => '2025-09-08',
+            'reason' => 'Libur Maulid Nabi',
+        ])
+        ->assertOk();
+    expect(ClassSession::where('teaching_schedule_id', $context['ahmadSafinahScheduleId'])->where('status', 'cancelled')->count())->toBe(2);
+
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
+        ->assertOk();
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        expect(teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        ))->toBeNull();
+
+        $this->actingAs($user)
+            ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['subject_book_id']);
+    }
+});
+
+test('a pair whose only data is a cleared score is gone for everyone once its schedule is deleted', function () {
+    $context = setUpTeachingScopeContext($this);
+    $bulkUrl = '/api/v1/student-grades/bulk';
+    $ali = $context['tamhidiSantri'];
+
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson($bulkUrl, teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => 70, 'adab' => 3]],
+        ]))
+        ->assertOk();
+    // Both cells cleared: the rows stay, with score and level NULL.
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson($bulkUrl, teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $ali->id, 'scores' => ['uts' => null, 'adab' => null]],
+        ]))
+        ->assertOk();
+    expect(StudentGrade::where('student_id', $ali->id)->count())->toBe(2)
+        ->and(StudentGrade::where('student_id', $ali->id)->whereNotNull('score')->count())->toBe(0);
+
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
+        ->assertOk();
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        expect(teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        ))->toBeNull();
+
+        $this->actingAs($user)
+            ->putJson($bulkUrl, teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $ali->id, 'scores' => ['uts' => 80]],
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['subject_book_id']);
+    }
 });
 
 test('a pair whose only schedule is deleted before any data is gone for everyone', function () {
