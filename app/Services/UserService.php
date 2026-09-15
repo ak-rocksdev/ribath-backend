@@ -2,16 +2,22 @@
 
 namespace App\Services;
 
+use App\Models\School;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Spatie\Permission\Models\Role;
 
 class UserService
 {
+    /**
+     * Login accounts of the active school. The role filter matches any of an
+     * account's roles, so a multi-role account shows under each of them.
+     */
     public function listUsers(array $filters): LengthAwarePaginator
     {
-        $query = User::with('roles');
+        $query = User::with('roles')->where('school_id', School::activeOrFail()->id);
 
         if (! empty($filters['search'])) {
             $searchTerm = mb_strtolower($filters['search']);
@@ -36,9 +42,49 @@ class UserService
             ->paginate($filters['per_page'] ?? 15);
     }
 
+    /**
+     * Account counts of the active school for the Akun Pengguna statistics:
+     * every role is listed, a multi-role account counts under each of its roles.
+     *
+     * @return array{total: int, active: int, inactive: int, by_role: array<string, int>}
+     */
+    public function summarizeUsers(): array
+    {
+        $activeSchoolId = School::activeOrFail()->id;
+
+        $totalAccounts = User::where('school_id', $activeSchoolId)->count();
+        $activeAccounts = User::where('school_id', $activeSchoolId)->where('is_active', true)->count();
+
+        $accountCountsByRoleId = User::query()
+            ->where('users.school_id', $activeSchoolId)
+            ->join(config('permission.table_names.model_has_roles').' as account_roles', function ($join) {
+                $join->on('account_roles.model_id', '=', 'users.id')
+                    ->where('account_roles.model_type', (new User)->getMorphClass());
+            })
+            ->groupBy('account_roles.role_id')
+            ->selectRaw('account_roles.role_id, COUNT(*) as account_count')
+            ->pluck('account_count', 'role_id');
+
+        $accountCountsByRole = Role::query()
+            ->orderBy('id')
+            ->pluck('name', 'id')
+            ->mapWithKeys(fn (string $roleName, int $roleId) => [
+                $roleName => (int) ($accountCountsByRoleId[$roleId] ?? 0),
+            ])
+            ->all();
+
+        return [
+            'total' => $totalAccounts,
+            'active' => $activeAccounts,
+            'inactive' => $totalAccounts - $activeAccounts,
+            'by_role' => $accountCountsByRole,
+        ];
+    }
+
     public function createUser(array $data): User
     {
         $user = User::create([
+            'school_id' => School::activeOrFail()->id,
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => Hash::make($data['password']),

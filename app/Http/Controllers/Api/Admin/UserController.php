@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\ListUsersRequest;
 use App\Http\Requests\Admin\ResetPasswordRequest;
 use App\Http\Requests\Admin\StoreUserRequest;
 use App\Http\Requests\Admin\UpdateUserRequest;
@@ -17,11 +18,16 @@ class UserController extends Controller
         private UserService $userService
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(ListUsersRequest $request): JsonResponse
     {
-        $users = $this->userService->listUsers($request->all());
+        $users = $this->userService->listUsers($request->validated());
 
         return $this->paginatedResponse($users, 'Users retrieved');
+    }
+
+    public function summary(): JsonResponse
+    {
+        return $this->successResponse($this->userService->summarizeUsers(), 'User summary retrieved');
     }
 
     public function store(StoreUserRequest $request): JsonResponse

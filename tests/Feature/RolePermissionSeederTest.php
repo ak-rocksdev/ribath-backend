@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\School;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Spatie\Permission\Models\Permission;
@@ -147,6 +148,23 @@ test('seeder creates admin user with super_admin role', function () {
     expect($adminUser)->not->toBeNull()
         ->and($adminUser->name)->toBe('Abdul Kadir Habsyi')
         ->and($adminUser->hasRole('super_admin'))->toBeTrue();
+});
+
+test('seeder gives the default admin the active school when a school exists', function () {
+    $inactiveSchool = School::factory()->inactive()->create();
+    $activeSchool = School::factory()->create();
+
+    $this->seed(RolePermissionSeeder::class);
+
+    expect(User::where('email', 'akhabsy110@gmail.com')->value('school_id'))
+        ->toBe($activeSchool->id)
+        ->not->toBe($inactiveSchool->id);
+});
+
+test('seeder creates the default admin without a school when no school exists', function () {
+    $this->seed(RolePermissionSeeder::class);
+
+    expect(User::where('email', 'akhabsy110@gmail.com')->value('school_id'))->toBeNull();
 });
 
 test('seeder is idempotent', function () {

@@ -1,11 +1,15 @@
 <?php
 
+use App\Models\School;
 use App\Models\User;
+use Database\Seeders\RolePermissionSeeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
 beforeEach(function () {
-    $this->seed(\Database\Seeders\RolePermissionSeeder::class);
+    $this->seed(RolePermissionSeeder::class);
+    // The account list and account creation belong to the active school.
+    $this->school = School::factory()->create();
 });
 
 function createUserWithSpecificPermissions(array $permissions): User
@@ -52,7 +56,7 @@ test('super_admin can access users', function () {
 // List Users
 test('list users returns paginated results', function () {
     $admin = createUserManagementAdmin();
-    User::factory()->count(20)->create();
+    User::factory()->count(20)->create(['school_id' => $this->school->id]);
 
     $response = $this->actingAs($admin)
         ->getJson('/api/v1/users')
@@ -65,8 +69,8 @@ test('list users returns paginated results', function () {
 
 test('list users can search by name', function () {
     $admin = createUserManagementAdmin();
-    User::factory()->create(['name' => 'John Unique Name']);
-    User::factory()->count(5)->create();
+    User::factory()->create(['school_id' => $this->school->id, 'name' => 'John Unique Name']);
+    User::factory()->count(5)->create(['school_id' => $this->school->id]);
 
     $response = $this->actingAs($admin)
         ->getJson('/api/v1/users?search=John Unique')
@@ -78,7 +82,7 @@ test('list users can search by name', function () {
 
 test('list users can search by email', function () {
     $admin = createUserManagementAdmin();
-    User::factory()->create(['email' => 'unique-search@test.com']);
+    User::factory()->create(['school_id' => $this->school->id, 'email' => 'unique-search@test.com']);
 
     $response = $this->actingAs($admin)
         ->getJson('/api/v1/users?search=unique-search@test')
@@ -89,7 +93,7 @@ test('list users can search by email', function () {
 
 test('list users can search by phone', function () {
     $admin = createUserManagementAdmin();
-    User::factory()->create(['phone' => '081234567890']);
+    User::factory()->create(['school_id' => $this->school->id, 'phone' => '081234567890']);
 
     $response = $this->actingAs($admin)
         ->getJson('/api/v1/users?search=081234567890')
@@ -100,9 +104,9 @@ test('list users can search by phone', function () {
 
 test('list users can filter by role', function () {
     $admin = createUserManagementAdmin();
-    $userWithRole = User::factory()->create();
+    $userWithRole = User::factory()->create(['school_id' => $this->school->id]);
     $userWithRole->assignRole('pengurus_pesantren');
-    User::factory()->count(3)->create();
+    User::factory()->count(3)->create(['school_id' => $this->school->id]);
 
     $response = $this->actingAs($admin)
         ->getJson('/api/v1/users?role=pengurus_pesantren')
@@ -113,8 +117,8 @@ test('list users can filter by role', function () {
 
 test('list users can filter by active status', function () {
     $admin = createUserManagementAdmin();
-    User::factory()->count(3)->create(['is_active' => true]);
-    User::factory()->count(2)->inactive()->create();
+    User::factory()->count(3)->create(['school_id' => $this->school->id, 'is_active' => true]);
+    User::factory()->count(2)->inactive()->create(['school_id' => $this->school->id]);
 
     $response = $this->actingAs($admin)
         ->getJson('/api/v1/users?is_active=false')

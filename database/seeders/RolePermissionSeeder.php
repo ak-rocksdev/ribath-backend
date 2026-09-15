@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\School;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
@@ -149,9 +150,14 @@ class RolePermissionSeeder extends Seeder
             'view-academic-years',
         ]);
 
+        // Joins the active school so the Akun Pengguna list (scoped to that
+        // school) shows it; a fresh database may not have a school yet.
+        $activeSchool = School::where('is_active', true)->first();
+
         $adminUser = User::firstOrCreate(
             ['email' => 'akhabsy110@gmail.com'],
             [
+                'school_id' => $activeSchool?->id,
                 'name' => 'Abdul Kadir Habsyi',
                 'password' => Hash::make('kadir9263606'),
             ]

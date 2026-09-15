@@ -78,6 +78,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/', [UserController::class, 'index'])->middleware('permission:view-users');
         Route::post('/', [UserController::class, 'store'])->middleware('permission:create-users');
         Route::post('/check-email', [UserController::class, 'checkEmail'])->middleware('permission:view-users');
+        Route::get('/summary', [UserController::class, 'summary'])->middleware('permission:view-users');
         Route::get('/{user}', [UserController::class, 'show'])->middleware('permission:view-users');
         Route::get('/{user}/relationships', [UserController::class, 'relationships'])->middleware('permission:view-users');
         Route::put('/{user}', [UserController::class, 'update'])->middleware('permission:edit-users');
