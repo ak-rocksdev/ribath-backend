@@ -739,9 +739,9 @@ test('a deleted Tahfizh schedule without data leaves the Tahfizh kitab gradable 
         ->deleteJson("/api/v1/teaching-schedules/{$tahfizhScheduleId}")
         ->assertOk();
 
-    // Pengurus, and Ahmad — whose deleted schedule keeps the pair in his
-    // Cakupan Mengajar — list the pair, load the grid and save UAS Tahfizh.
-    foreach ([90 => $context['pengurus'], 95 => $context['ahmadAccount']] as $uasTahfizhScore => $user) {
+    // Pengurus, and Bakar — the Pembimbing Tahfizh of the Tamhidi santri —
+    // list the pair, load the grid and save UAS Tahfizh.
+    foreach ([90 => $context['pengurus'], 95 => $context['bakarAccount']] as $uasTahfizhScore => $user) {
         $pair = teachingScopeFindPair(
             $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
             $context['tamhidi'],
@@ -761,6 +761,18 @@ test('a deleted Tahfizh schedule without data leaves the Tahfizh kitab gradable 
             ]))
             ->assertOk();
     }
+
+    // Ahmad's Jadwal Mengajar for the Kitab Tahfizh never opened the pair:
+    // it enters his Cakupan Mengajar only through his own santri bimbingan.
+    expect(teachingScopeFindPair(
+        $this->actingAs($context['ahmadAccount'])->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+        $context['tamhidi'],
+        $tahfizhBook,
+    ))->toBeNull();
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $tahfizhBook))
+        ->assertForbidden()
+        ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
 });
 
 test('a deleted Tahfizh schedule with data is listed as the Target Hafalan pair, not as stopped', function () {

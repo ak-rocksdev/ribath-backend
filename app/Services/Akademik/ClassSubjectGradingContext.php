@@ -10,8 +10,11 @@ use Illuminate\Support\Collection;
 /**
  * A validated Kelas × Kitab selection in one semester akademik, as resolved
  * by StudentGradeService::resolveClassSubjectContext(): the kitab (with its
- * grading template), the academic_semesters row, and the template's weight
- * rows for that semester (with gradingFactor, ordered by sort_order).
+ * grading template), the academic_semesters row, the template's weight
+ * rows for that semester (with gradingFactor, ordered by sort_order), and
+ * the Cakupan Mengajar it was checked against — which also narrows the
+ * Kitab Tahfizh roster to the santri bimbingan
+ * (StudentGradeService::listGradedStudents()).
  */
 final readonly class ClassSubjectGradingContext
 {
@@ -23,5 +26,6 @@ final readonly class ClassSubjectGradingContext
         public AcademicSemester $academicSemester,
         public Collection $templateFactors,
         public string $classLevelId,
+        public TeachingScope $teachingScope,
     ) {}
 }

@@ -6,8 +6,11 @@ use App\Exceptions\FinalizedReportCardException;
 use App\Models\AcademicSemester;
 use App\Models\MemorizationTarget;
 use App\Models\School;
+use App\Models\Student;
 use App\Services\Akademik\FinalizedReportCardGuard;
 use App\Services\Akademik\StudentGradeService;
+use App\Services\Akademik\TeachingScopeResolver;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Validation\ValidationException;
@@ -23,6 +26,12 @@ use Illuminate\Validation\ValidationException;
  * R5): the migration only adds a PARTIAL unique index (WHERE deleted_at IS
  * NULL) as a safety net; this service is what turns a violation into a
  * friendly 422 keyed by student_id.
+ *
+ * Reads follow the Cakupan Mengajar (ADR 0004): a Pembimbing Tahfizh
+ * holding only `view-own-memorization` reads the Target Hafalan of his
+ * santri bimbingan; writes stay with `manage-memorization` (the routes
+ * refuse the "milik sendiri" permission), so Target Hafalan and the
+ * choice of Pembimbing are decided by pengurus alone.
  */
 class MemorizationTargetService
 {
@@ -32,16 +41,23 @@ class MemorizationTargetService
 
     public function __construct(
         private FinalizedReportCardGuard $finalizedReportCardGuard,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
+     * The Target Hafalan of the semester — only those of the santri
+     * bimbingan for a user limited to his Cakupan Mengajar.
+     *
      * @return LengthAwarePaginator<int, array<string, mixed>>
+     *
+     * @throws AuthorizationException the user holds neither memorization view permission
      */
     public function list(string $academicYearId, int $semester, ?string $classLevelId = null, ?string $search = null, int $perPage = self::DEFAULT_PER_PAGE): LengthAwarePaginator
     {
         $school = School::activeOrFail();
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-memorization', $academicYearId, $semester);
 
-        $paginator = MemorizationTarget::query()
+        $paginator = $teachingScope->limitQueryToMentoredStudents(MemorizationTarget::query())
             ->where('school_id', $school->id)
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
@@ -60,6 +76,41 @@ class MemorizationTargetService
         $paginator->getCollection()->transform(fn (MemorizationTarget $target) => $this->present($target));
 
         return $paginator;
+    }
+
+    /**
+     * The santri bimbingan of the semester — the santri with a Target
+     * Hafalan, only those naming the user's Ustadz as Pembimbing Tahfizh
+     * for a user limited to his Cakupan Mengajar — ordered by name: the
+     * santri picker of Log Setoran for a Pembimbing Tahfizh.
+     *
+     * @return array<int, array{id: string, full_name: string, class_level: array{id: string, slug: string, label: string}|null}>
+     *
+     * @throws AuthorizationException the user holds neither memorization view permission
+     */
+    public function listMentoredStudents(string $academicYearId, int $semester): array
+    {
+        $school = School::activeOrFail();
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-memorization', $academicYearId, $semester);
+
+        $mentoredStudentIds = $teachingScope->limitQueryToMentoredStudents(MemorizationTarget::query())
+            ->where('school_id', $school->id)
+            ->where('academic_year_id', $academicYearId)
+            ->where('semester', $semester)
+            ->pluck('student_id');
+
+        return Student::query()
+            ->where('school_id', $school->id)
+            ->whereIn('id', $mentoredStudentIds)
+            ->with('classLevel:id,slug,label')
+            ->orderBy('full_name')
+            ->get(['id', 'full_name', 'class_level_id'])
+            ->map(fn (Student $student) => [
+                'id' => $student->id,
+                'full_name' => $student->full_name,
+                'class_level' => $student->classLevel?->summary(),
+            ])
+            ->all();
     }
 
     /**

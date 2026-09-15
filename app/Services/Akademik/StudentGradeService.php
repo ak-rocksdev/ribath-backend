@@ -146,10 +146,14 @@ class StudentGradeService
         $gridContext = $this->resolveClassSubjectContext($teachingScope, $academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $templateFactorsByCode = $gridContext->templateFactors->keyBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->code);
-        $gradedStudentIds = $this->listGradedStudents($gridContext)->pluck('id')->flip();
+        $rosterBeforeTeachingScope = $this->listRosterBeforeTeachingScope($gridContext);
+        $gradedStudentIds = $gridContext->teachingScope
+            ->rosterWithinScope($subjectBookId, $rosterBeforeTeachingScope)
+            ->pluck('id')
+            ->flip();
         $isTahfizhTemplate = $gridContext->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH;
 
-        $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $gradedStudentIds, $isTahfizhTemplate);
+        $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $gradedStudentIds, $rosterBeforeTeachingScope->pluck('id')->flip(), $isTahfizhTemplate);
         // A finalized santri's rows are rejected (ADR 0001); nothing is written.
         $this->finalizedReportCardGuard->assertEditableForStudents(collect($rows)->pluck('student_id'), $academicYearId, $semester);
 
@@ -247,13 +251,30 @@ class StudentGradeService
      * The roster graded for one Kelas × Kitab context: for a Tahfizh-
      * template kitab (ADR 0003) — the class's santri who have a
      * non-deleted Target Hafalan for that semester; for every other kitab
-     * — every santri of the class (listClassStudents()). The single place
-     * the grade grid, the class recap and the bulk-upsert validation get
-     * "who is graded for this kitab" from, so all three can never disagree.
+     * — every santri of the class (listClassStudents()); narrowed by the
+     * context's Cakupan Mengajar, so a Pembimbing Tahfizh limited to it
+     * gets only his santri bimbingan for the Kitab Tahfizh. The single
+     * place the grade grid, the class recap and the bulk-upsert validation
+     * get "who is graded for this kitab" from, so all three can never
+     * disagree.
      *
      * @return Collection<int, Student>
      */
     public function listGradedStudents(ClassSubjectGradingContext $context): Collection
+    {
+        return $context->teachingScope->rosterWithinScope(
+            $context->subjectBook->id,
+            $this->listRosterBeforeTeachingScope($context),
+        );
+    }
+
+    /**
+     * The roster of listGradedStudents() for every user, before the
+     * Cakupan Mengajar narrows it.
+     *
+     * @return Collection<int, Student>
+     */
+    private function listRosterBeforeTeachingScope(ClassSubjectGradingContext $context): Collection
     {
         if ($context->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH) {
             return $this->listStudentsWithMemorizationTarget(
@@ -366,7 +387,7 @@ class StudentGradeService
             throw ValidationException::withMessages(['semester' => self::MESSAGE_SEMESTER_NOT_CONFIGURED]);
         }
 
-        return new ClassSubjectGradingContext($subjectBook, $academicSemester, $templateFactors, $classLevelId);
+        return new ClassSubjectGradingContext($subjectBook, $academicSemester, $templateFactors, $classLevelId, $teachingScope);
     }
 
     /**
@@ -398,11 +419,12 @@ class StudentGradeService
     /**
      * @param  array<int, array{student_id: string, scores: array<string, mixed>}>  $rows
      * @param  Collection<string, GradingTemplateFactor>  $templateFactorsByCode
-     * @param  Collection<string, int>  $gradedStudentIds  student ids graded for this kitab (as keys) — listGradedStudents()
+     * @param  Collection<string, int>  $gradedStudentIds  student ids graded for this kitab by the current user (as keys) — listGradedStudents()
+     * @param  Collection<string, int>  $rosterStudentIdsBeforeTeachingScope  the same roster before the Cakupan Mengajar narrowed it (as keys)
      *
      * @throws ValidationException
      */
-    private function assertGridRowsAreValid(array $rows, Collection $templateFactorsByCode, Collection $gradedStudentIds, bool $isTahfizhTemplate = false): void
+    private function assertGridRowsAreValid(array $rows, Collection $templateFactorsByCode, Collection $gradedStudentIds, Collection $rosterStudentIdsBeforeTeachingScope, bool $isTahfizhTemplate = false): void
     {
         $errors = [];
         $seenStudentIds = [];
@@ -419,7 +441,10 @@ class StudentGradeService
             $seenStudentIds[$studentId] = true;
 
             if (! $gradedStudentIds->has($studentId)) {
-                $errors[$studentId] = $notInRosterMessage;
+                // On the roster, but not a santri bimbingan of this Pembimbing Tahfizh.
+                $errors[$studentId] = $rosterStudentIdsBeforeTeachingScope->has($studentId)
+                    ? OutsideTeachingScopeException::MESSAGE_STUDENT
+                    : $notInRosterMessage;
 
                 continue;
             }

@@ -46,6 +46,7 @@ use App\Http\Controllers\Api\Public\PublicPsbController;
 use App\Http\Controllers\Api\Public\StudentCompletionController;
 use App\Http\Controllers\Api\Tahfidz\MemorizationLogController;
 use App\Http\Controllers\Api\Tahfidz\MemorizationTargetController;
+use App\Http\Controllers\Api\Tahfidz\MentoredStudentController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -109,8 +110,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/{student}/class-change-impact', [StudentController::class, 'classChangeImpact'])->middleware('permission:edit-students');
         Route::post('/{student}/documents', [StudentController::class, 'uploadDocument'])->middleware('permission:edit-students');
         Route::delete('/{student}/documents/{documentType}', [StudentController::class, 'deleteDocument'])->middleware('permission:edit-students');
+        // Progres hafalan; a "milik sendiri" user sees his santri bimbingan only (ADR 0004)
         Route::get('/{student}/memorization-progress', [MemorizationLogController::class, 'progress'])
-            ->middleware('permission:view-memorization');
+            ->middleware('permission:view-memorization|view-own-memorization');
     });
 
     // Schools routes
@@ -280,10 +282,11 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-attendance|view-own-attendance');
     });
 
-    // Target Hafalan routes (Tahfidz: siapa yang ikut penilaian Tahfizh semester ini — ADR 0003)
+    // Target Hafalan routes (Tahfidz: siapa yang ikut penilaian Tahfizh semester ini — ADR 0003).
+    // A "milik sendiri" user reads the targets of his santri bimbingan; writes stay with pengurus.
     Route::prefix('memorization-targets')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [MemorizationTargetController::class, 'index'])
-            ->middleware('permission:view-memorization');
+            ->middleware('permission:view-memorization|view-own-memorization');
         Route::post('/', [MemorizationTargetController::class, 'store'])
             ->middleware('permission:manage-memorization');
         Route::put('/{memorizationTarget}', [MemorizationTargetController::class, 'update'])
@@ -292,16 +295,21 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-memorization');
     });
 
-    // Log Setoran dan Murajaah routes (Tahfidz: dated Halaman entries + Progres)
+    // Santri bimbingan (Tahfidz: the santri picker of Log Setoran)
+    Route::get('/mentored-students', [MentoredStudentController::class, 'index'])
+        ->middleware(['auth:sanctum', 'permission:view-memorization|view-own-memorization']);
+
+    // Log Setoran dan Murajaah routes (Tahfidz: dated Halaman entries + Progres);
+    // a "milik sendiri" user works on the logs of his santri bimbingan (ADR 0004)
     Route::prefix('memorization-logs')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [MemorizationLogController::class, 'index'])
-            ->middleware('permission:view-memorization');
+            ->middleware('permission:view-memorization|view-own-memorization');
         Route::post('/', [MemorizationLogController::class, 'store'])
-            ->middleware('permission:manage-memorization');
+            ->middleware('permission:manage-memorization|manage-own-memorization');
         Route::put('/{memorizationLog}', [MemorizationLogController::class, 'update'])
-            ->middleware('permission:manage-memorization');
+            ->middleware('permission:manage-memorization|manage-own-memorization');
         Route::delete('/{memorizationLog}', [MemorizationLogController::class, 'destroy'])
-            ->middleware('permission:manage-memorization');
+            ->middleware('permission:manage-memorization|manage-own-memorization');
     });
 
     // Time Slots routes

@@ -5,6 +5,7 @@ namespace App\Http\Requests\Tahfidz;
 use App\Models\MemorizationLog;
 use App\Models\School;
 use App\Models\Teacher;
+use App\Services\Tahfidz\MemorizationLogService;
 use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -14,19 +15,22 @@ use Illuminate\Validation\Rule;
  * PUT /memorization-logs/{memorizationLog}. student_id, academic_year_id
  * and semester are fixed at creation (same convention as ClassTask and
  * MemorizationTarget) — only teacher_id, log_date, type and the
- * Halaman/kualitas/notes fields can change. Tenancy is checked here
- * (authorize()), before the service can act on a foreign row.
+ * Halaman/kualitas/notes fields can change. authorize() hides a log of
+ * another school or of a santri outside the user's santri bimbingan
+ * behind a 404 before the body is validated; the service repeats the
+ * Cakupan Mengajar check.
  */
 class UpdateMemorizationLogRequest extends FormRequest
 {
     use EnsuresActiveSchoolTenancy;
 
-    public function authorize(): bool
+    public function authorize(MemorizationLogService $memorizationLogService): bool
     {
         $memorizationLog = $this->route('memorizationLog');
 
         if ($memorizationLog) {
             $this->ensureBelongsToActiveSchool($memorizationLog);
+            $memorizationLogService->ensureLogWithinTeachingScope($memorizationLog, 'manage-memorization');
         }
 
         return true;

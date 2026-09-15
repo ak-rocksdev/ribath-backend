@@ -3,6 +3,7 @@
 namespace App\Services\Tahfidz;
 
 use App\Exceptions\FinalizedReportCardException;
+use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\AcademicSemester;
 use App\Models\MemorizationLog;
 use App\Models\MemorizationTarget;
@@ -13,7 +14,10 @@ use App\Services\Akademik\Calculation\MemorizationFactorCalculator;
 use App\Services\Akademik\FinalizedReportCardGuard;
 use App\Services\Akademik\StudentGradeService;
 use App\Services\Akademik\TahfizhSubjectBookResolver;
+use App\Services\Akademik\TeachingScope;
+use App\Services\Akademik\TeachingScopeResolver;
 use App\Support\BusinessDate;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
@@ -32,6 +36,16 @@ use Illuminate\Validation\ValidationException;
  * Tahfizh kitab (TahfizhSubjectBookResolver) — never taken from client
  * input, so a school without one gets a friendly 422 instead of a
  * broken foreign key.
+ *
+ * Cakupan Mengajar (ADR 0004): a Pembimbing Tahfizh holding only the
+ * "milik sendiri" memorization permissions lists, records, changes and
+ * deletes the logs of his santri bimbingan only, and sees only their
+ * Progres. Membership is checked in the Semester Akademik the log belongs
+ * to (its academic_year_id and semester). A santri chosen in the request
+ * outside it is refused with 403; a log or santri bound to the route
+ * outside it is not found (404), like tenancy — see
+ * ensureLogWithinTeachingScope(). He is always recorded as the Ustadz
+ * penyimak, whatever teacher_id the request names.
  */
 class MemorizationLogService
 {
@@ -54,17 +68,26 @@ class MemorizationLogService
     public function __construct(
         private TahfizhSubjectBookResolver $tahfizhSubjectBookResolver,
         private FinalizedReportCardGuard $finalizedReportCardGuard,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
      * @param  array{academic_year_id: string, semester: int|string, student_id?: string|null, type?: string|null, date_from?: string|null, date_to?: string|null}  $filters
      * @return LengthAwarePaginator<int, array<string, mixed>>
+     *
+     * @throws AuthorizationException the user holds neither memorization view permission
+     * @throws OutsideTeachingScopeException the student_id filter is not one of the santri bimbingan
      */
     public function list(array $filters, int $perPage = self::DEFAULT_PER_PAGE): LengthAwarePaginator
     {
         $school = School::activeOrFail();
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-memorization', $filters['academic_year_id'], (int) $filters['semester']);
 
-        $paginator = MemorizationLog::query()
+        if (! empty($filters['student_id'])) {
+            $teachingScope->assertIncludesMentoredStudent($filters['student_id']);
+        }
+
+        $paginator = $teachingScope->limitQueryToMentoredStudents(MemorizationLog::query())
             ->where('school_id', $school->id)
             ->where('academic_year_id', $filters['academic_year_id'])
             ->where('semester', (int) $filters['semester'])
@@ -87,12 +110,16 @@ class MemorizationLogService
      *
      * @throws ValidationException
      * @throws FinalizedReportCardException the santri's Rapor is final for the semester
+     * @throws OutsideTeachingScopeException the santri is not one of the santri bimbingan
      */
     public function create(array $data): array
     {
         $school = School::activeOrFail();
         $academicYearId = $data['academic_year_id'];
         $semester = (int) $data['semester'];
+
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('manage-memorization', $academicYearId, $semester);
+        $teachingScope->assertIncludesMentoredStudent($data['student_id']);
 
         $this->finalizedReportCardGuard->assertEditable($data['student_id'], $academicYearId, $semester);
         $tahfizhBook = $this->tahfizhSubjectBookOrFail();
@@ -106,7 +133,7 @@ class MemorizationLogService
             'subject_book_id' => $tahfizhBook->id,
             'academic_year_id' => $academicYearId,
             'semester' => $semester,
-            'teacher_id' => $data['teacher_id'],
+            'teacher_id' => $teachingScope->listeningTeacherIdFor($data['teacher_id']),
             'log_date' => $data['log_date'],
             'type' => $data['type'],
             'juz' => $data['juz'] ?? null,
@@ -131,6 +158,8 @@ class MemorizationLogService
      */
     public function update(MemorizationLog $log, array $data): array
     {
+        $teachingScope = $this->ensureLogWithinTeachingScope($log, 'manage-memorization');
+
         $this->finalizedReportCardGuard->assertEditable($log->student_id, $log->academic_year_id, $log->semester);
 
         if (array_key_exists('log_date', $data)) {
@@ -148,7 +177,7 @@ class MemorizationLogService
         }
 
         $log->fill([
-            'teacher_id' => $data['teacher_id'] ?? $log->teacher_id,
+            'teacher_id' => $teachingScope->listeningTeacherIdFor($data['teacher_id'] ?? $log->teacher_id),
             'log_date' => $data['log_date'] ?? $log->log_date,
             'type' => $data['type'] ?? $log->type,
             'juz' => array_key_exists('juz', $data) ? $data['juz'] : $log->juz,
@@ -173,6 +202,8 @@ class MemorizationLogService
      */
     public function delete(MemorizationLog $log): void
     {
+        $this->ensureLogWithinTeachingScope($log, 'manage-memorization');
+
         $this->finalizedReportCardGuard->assertEditable($log->student_id, $log->academic_year_id, $log->semester);
 
         $log->updated_by = auth()->id();
@@ -200,6 +231,12 @@ class MemorizationLogService
     public function progressForStudent(Student $student, string $academicYearId, int $semester): array
     {
         $school = School::activeOrFail();
+
+        // The santri is bound to the route: outside the santri bimbingan he is not found.
+        abort_unless(
+            $this->teachingScopeResolver->forCurrentUser('view-memorization', $academicYearId, $semester)->includesMentoredStudent($student->id),
+            404,
+        );
 
         $target = MemorizationTarget::query()
             ->where('school_id', $school->id)
@@ -242,6 +279,23 @@ class MemorizationLogService
             'average_review_quality' => $factorResult->reviewQuality,
             'recent_logs' => $logs->take(10)->map(fn (MemorizationLog $log) => $this->present($log))->values()->all(),
         ];
+    }
+
+    /**
+     * A log of a santri outside the user's santri bimbingan — in the
+     * Semester Akademik the log belongs to — is not found (404), the same
+     * answer as a log of another school.
+     *
+     * @param  string  $allDataPermission  `manage-memorization` to change or delete the log
+     * @return TeachingScope the Cakupan Mengajar the log was found in
+     */
+    public function ensureLogWithinTeachingScope(MemorizationLog $log, string $allDataPermission): TeachingScope
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $log->academic_year_id, $log->semester);
+
+        abort_unless($teachingScope->includesMentoredStudent($log->student_id), 404);
+
+        return $teachingScope;
     }
 
     /**

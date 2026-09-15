@@ -30,6 +30,7 @@ class AuthService
                 'is_active' => $user->is_active,
                 'roles' => $user->getRoleNames(),
                 'permissions' => $user->getAllPermissions()->pluck('name'),
+                'teacher' => $this->linkedTeacherSummary($user),
             ],
             'token' => $token,
             'session_timeout_minutes' => config('auth.frontend_session_timeout'),
@@ -52,8 +53,25 @@ class AuthService
             'is_active' => $user->is_active,
             'roles' => $user->getRoleNames(),
             'permissions' => $user->getAllPermissions()->pluck('name'),
+            'teacher' => $this->linkedTeacherSummary($user),
             'session_timeout_minutes' => config('auth.frontend_session_timeout'),
             'token_expires_in_minutes' => config('sanctum.expiration'),
+        ];
+    }
+
+    /**
+     * The Ustadz linked to an Akun Ustadz — the Ustadz penyimak the Log
+     * Setoran form locks to — or null for an account without one.
+     *
+     * @return array{id: string, full_name: string}|null
+     */
+    private function linkedTeacherSummary(User $user): ?array
+    {
+        $linkedTeacher = $user->teacher;
+
+        return $linkedTeacher === null ? null : [
+            'id' => $linkedTeacher->id,
+            'full_name' => $linkedTeacher->full_name,
         ];
     }
 

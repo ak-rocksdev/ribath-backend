@@ -3,6 +3,7 @@
 namespace App\Services\Akademik;
 
 use App\Exceptions\FinalizedReportCardException;
+use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\AcademicSemester;
 use App\Models\ClassTask;
 use App\Models\School;
@@ -35,7 +36,11 @@ use Illuminate\Validation\ValidationException;
  * grade permissions works on the Tugas of his own Kelas × Kitab pairs. A
  * pair chosen in the request outside the scope is refused with 403
  * (resolveClassSubjectContext); a Tugas bound to the route outside it is
- * not found (404), like tenancy — see ensureWithinTeachingScope().
+ * not found (404), like tenancy — see ensureWithinTeachingScope(). For the
+ * Kitab Tahfizh a Pembimbing Tahfizh limited to his Cakupan Mengajar sees
+ * and scores only his santri bimbingan of the class
+ * (TeachingScope::rosterWithinScope()); a score for another santri of the
+ * class is refused per santri.
  */
 class ClassTaskService
 {
@@ -64,7 +69,7 @@ class ClassTaskService
         $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-grades', $academicYearId, $semester);
         $this->studentGradeService->resolveClassSubjectContext($teachingScope, $academicYearId, $semester, $classLevelId, $subjectBookId);
 
-        $students = $this->studentGradeService->listClassStudents($classLevelId);
+        $students = $this->listRosterWithinScope($teachingScope, $classLevelId, $subjectBookId);
 
         $tasks = ClassTask::query()
             ->where('school_id', School::activeOrFail()->id)
@@ -122,16 +127,16 @@ class ClassTaskService
             'updated_by' => auth()->id(),
         ]);
 
-        $students = $this->studentGradeService->listClassStudents($data['class_level_id']);
+        $students = $this->listRosterWithinScope($teachingScope, $data['class_level_id'], $data['subject_book_id']);
 
         return $this->present($task, $students, collect());
     }
 
     public function show(ClassTask $task): array
     {
-        $this->ensureWithinTeachingScope($task, 'view-grades');
+        $teachingScope = $this->ensureWithinTeachingScope($task, 'view-grades');
 
-        return $this->present($task);
+        return $this->present($task, $this->listTaskRosterWithinScope($task, $teachingScope));
     }
 
     /**
@@ -141,7 +146,7 @@ class ClassTaskService
      */
     public function update(ClassTask $task, array $data): array
     {
-        $this->ensureWithinTeachingScope($task, 'manage-grades');
+        $teachingScope = $this->ensureWithinTeachingScope($task, 'manage-grades');
 
         if (array_key_exists('task_date', $data)) {
             $academicSemester = AcademicSemester::findByPair($task->academic_year_id, $task->semester);
@@ -159,9 +164,7 @@ class ClassTaskService
             $task->save();
         }
 
-        $students = $this->studentGradeService->listClassStudents($task->class_level_id);
-
-        return $this->present($task, $students);
+        return $this->present($task, $this->listTaskRosterWithinScope($task, $teachingScope));
     }
 
     public function delete(ClassTask $task): void
@@ -184,9 +187,9 @@ class ClassTaskService
      */
     public function getScores(ClassTask $task): array
     {
-        $this->ensureWithinTeachingScope($task, 'view-grades');
+        $teachingScope = $this->ensureWithinTeachingScope($task, 'view-grades');
 
-        $students = $this->studentGradeService->listClassStudents($task->class_level_id);
+        $students = $this->listTaskRosterWithinScope($task, $teachingScope);
 
         $scores = StudentTaskScore::query()
             ->where('class_task_id', $task->id)
@@ -226,18 +229,18 @@ class ClassTaskService
      */
     public function upsertScores(ClassTask $task, array $rows): array
     {
-        $this->ensureWithinTeachingScope($task, 'manage-grades');
+        $teachingScope = $this->ensureWithinTeachingScope($task, 'manage-grades');
 
         $classStudents = $this->studentGradeService->listClassStudents($task->class_level_id);
-        $classStudentIds = $classStudents->pluck('id')->flip();
+        $rosterStudents = $teachingScope->rosterWithinScope($task->subject_book_id, $classStudents);
 
         $enrollmentDateRule = new EnrollmentDateRule;
-        $expectedStudentIds = $classStudents
+        $expectedStudentIds = $rosterStudents
             ->filter(fn (Student $student) => $enrollmentDateRule->isExpectedOn($student, $task->task_date))
             ->pluck('id')
             ->flip();
 
-        $this->assertScoreRowsAreValid($rows, $classStudentIds, $expectedStudentIds);
+        $this->assertScoreRowsAreValid($rows, $classStudents->pluck('id')->flip(), $rosterStudents->pluck('id')->flip(), $expectedStudentIds);
         // A finalized santri's rows are rejected (ADR 0001); Tugas CRUD itself stays allowed.
         $this->finalizedReportCardGuard->assertEditableForStudents(collect($rows)->pluck('student_id'), $task->academic_year_id, $task->semester);
 
@@ -308,12 +311,35 @@ class ClassTaskService
      * semester counts (ADR 0005).
      *
      * @param  string  $allDataPermission  `view-grades` to read the Tugas, `manage-grades` to change or score it
+     * @return TeachingScope the Cakupan Mengajar the Tugas was found in
      */
-    public function ensureWithinTeachingScope(ClassTask $task, string $allDataPermission): void
+    public function ensureWithinTeachingScope(ClassTask $task, string $allDataPermission): TeachingScope
     {
         $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $task->academic_year_id, $task->semester);
 
         abort_unless($teachingScope->includesClassSubjectPair($task->class_level_id, $task->subject_book_id), 404);
+
+        return $teachingScope;
+    }
+
+    /**
+     * The santri a Tugas of the pair is scored for: every santri of the
+     * class, or — for the Kitab Tahfizh of a Pembimbing Tahfizh limited to
+     * his Cakupan Mengajar — his santri bimbingan among them.
+     *
+     * @return Collection<int, Student>
+     */
+    private function listRosterWithinScope(TeachingScope $teachingScope, string $classLevelId, string $subjectBookId): Collection
+    {
+        return $teachingScope->rosterWithinScope($subjectBookId, $this->studentGradeService->listClassStudents($classLevelId));
+    }
+
+    /**
+     * @return Collection<int, Student>
+     */
+    private function listTaskRosterWithinScope(ClassTask $task, TeachingScope $teachingScope): Collection
+    {
+        return $this->listRosterWithinScope($teachingScope, $task->class_level_id, $task->subject_book_id);
     }
 
     private function assertTaskDateWithinSemester(?AcademicSemester $academicSemester, string $taskDate): void
@@ -332,11 +358,12 @@ class ClassTaskService
     /**
      * @param  array<int, array{student_id: string, score: mixed}>  $rows
      * @param  Collection<string, int>  $classStudentIds  every student of the class
-     * @param  Collection<string, int>  $expectedStudentIds  students this task is expected of (EnrollmentDateRule)
+     * @param  Collection<string, int>  $rosterStudentIds  the students of the class the current user may score (listRosterWithinScope())
+     * @param  Collection<string, int>  $expectedStudentIds  students of that roster this task is expected of (EnrollmentDateRule)
      *
      * @throws ValidationException
      */
-    private function assertScoreRowsAreValid(array $rows, Collection $classStudentIds, Collection $expectedStudentIds): void
+    private function assertScoreRowsAreValid(array $rows, Collection $classStudentIds, Collection $rosterStudentIds, Collection $expectedStudentIds): void
     {
         $errors = [];
         $seenStudentIds = [];
@@ -354,6 +381,12 @@ class ClassTaskService
 
             if (! $classStudentIds->has($studentId)) {
                 $errors[$studentId] = self::MESSAGE_STUDENT_NOT_IN_CLASS;
+
+                continue;
+            }
+
+            if (! $rosterStudentIds->has($studentId)) {
+                $errors[$studentId] = OutsideTeachingScopeException::MESSAGE_STUDENT;
 
                 continue;
             }
@@ -377,13 +410,11 @@ class ClassTaskService
     }
 
     /**
-     * @param  Collection<int, Student>|null  $students  the class's students; queried fresh when omitted (e.g. a single-task `show`)
+     * @param  Collection<int, Student>  $students  the roster the Tugas is scored for (listRosterWithinScope())
      * @return array<string, mixed>
      */
-    private function present(ClassTask $task, ?Collection $students = null, ?Collection $scoredStudentIds = null): array
+    private function present(ClassTask $task, Collection $students, ?Collection $scoredStudentIds = null): array
     {
-        $students ??= $this->studentGradeService->listClassStudents($task->class_level_id);
-
         $enrollmentDateRule = new EnrollmentDateRule;
         $expectedStudentIds = $students
             ->filter(fn (Student $student) => $enrollmentDateRule->isExpectedOn($student, $task->task_date))
