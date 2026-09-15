@@ -13,6 +13,7 @@ use App\Models\TimeSlot;
 use App\Models\User;
 use App\Services\Akademik\AcademicSemesterService;
 use App\Services\Akademik\GradingDefaultsInstaller;
+use Carbon\Carbon;
 use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
@@ -29,6 +30,10 @@ use Spatie\Permission\Models\Role;
  * accounts via grant-access, schedules via /teaching-schedules, santri via
  * POST /students.
  */
+
+afterEach(function () {
+    Carbon::setTestNow();
+});
 
 const TEACHING_SCOPE_OUTSIDE_MESSAGE = 'Kelas dan kitab ini di luar Cakupan Mengajar Anda.';
 
@@ -203,6 +208,17 @@ function teachingScopePairKeys($response): array
         ->sort()
         ->values()
         ->all();
+}
+
+/**
+ * The pair of a gradable-subjects response for (class, kitab), or null when not listed.
+ *
+ * @return array<string, mixed>|null
+ */
+function teachingScopeFindPair($response, ClassLevel $classLevel, SubjectBook $subjectBook): ?array
+{
+    return collect($response->json('data'))
+        ->first(fn (array $pair) => $pair['class_level_id'] === $classLevel->id && $pair['subject_book_id'] === $subjectBook->id);
 }
 
 function teachingScopePairKey(ClassLevel $classLevel, SubjectBook $subjectBook): string
@@ -400,7 +416,9 @@ test('a deactivated schedule keeps its pair in the Cakupan Mengajar of the ustad
     $response = $this->actingAs($context['ahmadAccount'])
         ->getJson(teachingScopeGradableSubjectsUrl($context))
         ->assertOk();
-    expect(teachingScopePairKeys($response))->toContain(teachingScopePairKey($context['tamhidi'], $awamil));
+    $awamilPair = teachingScopeFindPair($response, $context['tamhidi'], $awamil);
+    expect($awamilPair)->not->toBeNull()
+        ->and($awamilPair['is_schedule_stopped'])->toBeFalse();
 
     $this->actingAs($context['ahmadAccount'])
         ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $awamil, [
@@ -409,27 +427,178 @@ test('a deactivated schedule keeps its pair in the Cakupan Mengajar of the ustad
         ->assertOk();
 });
 
-test('a pair whose every schedule is deactivated is no longer gradable, for the ustadz as for pengurus', function () {
+test('a pair whose only schedule is deleted after grades were saved stays gradable for its ustadz and for pengurus', function () {
     $context = setUpTeachingScopeContext($this);
 
-    // Penilaian rule: the gradable pairs come from active schedules. The
-    // pair stays inside Ahmad's Cakupan Mengajar, so he gets the same
-    // "not scheduled" answer as pengurus instead of a 403.
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uts' => 70]],
+        ]))
+        ->assertOk();
+
+    // Pengurus stops the kitab mid-semester ("Hapus" deactivates the row).
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
+        ->assertOk();
+
+    foreach ([80 => $context['ahmadAccount'], 90 => $context['pengurus']] as $uasScore => $user) {
+        $pair = teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        );
+        expect($pair)->not->toBeNull()
+            ->and($pair['is_schedule_stopped'])->toBeTrue()
+            ->and(collect($pair['teachers'])->pluck('full_name')->all())->toBe(['Ustadz Ahmad']);
+
+        $this->actingAs($user)
+            ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertOk()
+            ->assertJsonPath('data.grades.'.$context['tamhidiSantri']->id.'.uts.score', 70);
+
+        $this->actingAs($user)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uas' => $uasScore]],
+            ]))
+            ->assertOk();
+    }
+
+    // The stopped kitab stays on the santri's recap, the source of the Rapor.
+    $recapSubjectTitles = collect(
+        $this->actingAs($context['pengurus'])
+            ->getJson("/api/v1/grade-recaps/student/{$context['tamhidiSantri']->id}?".http_build_query([
+                'academic_year_id' => $context['academicYear']->id,
+                'semester' => 1,
+            ]))
+            ->assertOk()
+            ->json('data.subjects')
+    )->pluck('subject_book.title')->all();
+    expect($recapSubjectTitles)->toContain('Safinatun Najah');
+});
+
+test('a Tugas alone keeps a stopped pair gradable', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    $this->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/class-tasks', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'class_level_id' => $context['tamhidi']->id,
+            'subject_book_id' => $context['safinah']->id,
+            'title' => 'Hafalan Bab Thaharah',
+            'task_date' => '2025-08-01',
+        ])
+        ->assertCreated();
+
     $this->actingAs($context['pengurus'])
         ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
         ->assertOk();
 
     $this->actingAs($context['ahmadAccount'])
-        ->getJson(teachingScopeGradableSubjectsUrl($context))
-        ->assertOk()
-        ->assertJsonCount(0, 'data');
+        ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertOk();
+});
+
+test('a recorded Pertemuan alone keeps a stopped pair gradable', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpTeachingScopeContext($this);
+
+    $this->actingAs($context['superAdmin'])
+        ->putJson("/api/v1/academic-years/{$context['academicYear']->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-31',
+        ])
+        ->assertOk();
+    $this->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/class-sessions', [
+            'teaching_schedule_id' => $context['ahmadSafinahScheduleId'],
+            'session_date' => '2025-09-08',
+            'attendances' => [['student_id' => $context['tamhidiSantri']->id, 'status' => 'present', 'notes' => null]],
+        ])
+        ->assertCreated();
+
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
+        ->assertOk();
+
+    $this->actingAs($context['pengurus'])
+        ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertOk();
+});
+
+test('a pair whose only schedule is deleted before any data is gone for everyone', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Created by mistake and deleted before anything was recorded.
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
+        ->assertOk();
 
     foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        $pair = teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        );
+        expect($pair)->toBeNull();
+
+        // Inside Ahmad's Cakupan Mengajar (scope is checked first), so he
+        // gets the same "not scheduled" answer as pengurus.
         $this->actingAs($user)
             ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah']))
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['subject_book_id']);
+        $this->actingAs($user)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+                ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uts' => 80]],
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['subject_book_id']);
     }
+
+    expect(StudentGrade::count())->toBe(0);
+});
+
+test('schedules and data of another semester never keep a pair alive', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Semester 2: Ahmad teaches Safinah to Tamhidi, grades are saved, then
+    // that schedule is deleted too — semester 2 keeps the pair (stopped).
+    $semesterTwoScheduleId = createTeachingScopeSchedule($this, $context, $context['tamhidi'], $context['safinah'], $context['ustadzAhmad'], 'wednesday', semester: 2);
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $context['safinah'], [
+            ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uts' => 75]],
+        ], semester: 2))
+        ->assertOk();
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$semesterTwoScheduleId}")
+        ->assertOk();
+
+    // Semester 1: the pair's only schedule is deleted before any semester-1 data.
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$context['ahmadSafinahScheduleId']}")
+        ->assertOk();
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        $semesterOnePair = teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context, semester: 1))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        );
+        expect($semesterOnePair)->toBeNull();
+
+        $semesterTwoPair = teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context, semester: 2))->assertOk(),
+            $context['tamhidi'],
+            $context['safinah'],
+        );
+        expect($semesterTwoPair['is_schedule_stopped'])->toBeTrue();
+    }
+
+    $this->actingAs($context['pengurus'])
+        ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah'], semester: 1))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['subject_book_id']);
 });
 
 // ── Izin, validasi, tenancy ──────────────────────────────────────────────
