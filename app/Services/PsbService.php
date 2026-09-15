@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\RegistrationCreated;
+use App\Models\ClassLevel;
 use App\Models\Registration;
 use App\Models\RegistrationPeriod;
 use App\Models\School;
@@ -84,6 +85,7 @@ class PsbService
                 'gender' => $registration->gender,
                 'program' => $registration->preferred_program,
                 'class_level' => $classLevelSlug,
+                'class_level_id' => ClassLevel::idForSchoolSlug($registration->school_id, $classLevelSlug),
                 'status' => 'active',
                 'entry_date' => $entryDate,
             ]);

@@ -1,0 +1,384 @@
+<?php
+
+use App\Models\AcademicSemester;
+use App\Models\AcademicYear;
+use App\Models\School;
+use App\Models\User;
+use App\Services\Akademik\AcademicSemesterService;
+use Database\Seeders\RolePermissionSeeder;
+use Database\Seeders\SchoolSeeder;
+
+function createSchoolAndUserForSemesters(): array
+{
+    (new RolePermissionSeeder)->run();
+    (new SchoolSeeder)->run();
+
+    $user = User::factory()->create();
+    $user->assignRole('super_admin');
+
+    $school = School::where('is_active', true)->first();
+
+    return [$user, $school];
+}
+
+// ── Auto-creation on academic year creation ─────────────────────────────
+
+test('creating an academic year auto-creates two semesters', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $response = $this->actingAs($user)
+        ->postJson('/api/v1/academic-years', [
+            'name' => '2025/2026',
+            'start_date' => '2025-07-01',
+            'end_date' => '2026-06-30',
+        ]);
+
+    $response->assertCreated();
+
+    $academicYearId = $response->json('data.id');
+
+    expect(AcademicSemester::where('academic_year_id', $academicYearId)->count())->toBe(2);
+
+    $this->assertDatabaseHas('academic_semesters', [
+        'academic_year_id' => $academicYearId,
+        'semester' => 1,
+        'school_id' => $school->id,
+        'uts_enabled' => true,
+    ]);
+
+    $this->assertDatabaseHas('academic_semesters', [
+        'academic_year_id' => $academicYearId,
+        'semester' => 2,
+        'school_id' => $school->id,
+        'uts_enabled' => true,
+    ]);
+});
+
+// ── Index ────────────────────────────────────────────────────────────────
+
+test('academic years index includes semesters', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/academic-years');
+
+    $response->assertOk()
+        ->assertJsonStructure([
+            'data' => [
+                '*' => ['id', 'semesters' => ['*' => ['id', 'semester', 'uts_enabled']]],
+            ],
+        ]);
+});
+
+test('active academic year endpoint includes semesters', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id, 'is_active' => true]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->getJson('/api/v1/academic-years/active');
+
+    $response->assertOk()
+        ->assertJsonCount(2, 'data.semesters');
+});
+
+test('semester dates are serialized as plain Y-m-d dates wherever semesters are returned', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create([
+        'school_id' => $school->id,
+        'is_active' => true,
+        'start_date' => '2025-07-01',
+        'end_date' => '2026-06-30',
+    ]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+    app(AcademicSemesterService::class)->updateSemester($academicYear, 1, [
+        'start_date' => '2025-07-01',
+        'end_date' => '2025-12-20',
+        'midterm_exam_date' => '2025-09-15',
+    ]);
+
+    $active = $this->actingAs($user)->getJson('/api/v1/academic-years/active')->assertOk();
+    $semesterOne = collect($active->json('data.semesters'))->firstWhere('semester', 1);
+    expect($semesterOne['start_date'])->toBe('2025-07-01')
+        ->and($semesterOne['end_date'])->toBe('2025-12-20')
+        ->and($semesterOne['midterm_exam_date'])->toBe('2025-09-15');
+
+    $listed = $this->actingAs($user)->getJson("/api/v1/academic-years/{$academicYear->id}/semesters")->assertOk();
+    expect(collect($listed->json('data'))->firstWhere('semester', 1)['start_date'])->toBe('2025-07-01');
+
+    // The academic year's own dates keep their existing output (other screens consume it).
+    expect($active->json('data.start_date'))->toBe('2025-07-01T00:00:00.000000Z');
+});
+
+test('can list semesters for an academic year', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->getJson("/api/v1/academic-years/{$academicYear->id}/semesters");
+
+    $response->assertOk()
+        ->assertJsonPath('success', true)
+        ->assertJsonCount(2, 'data');
+});
+
+test('listing semesters requires permission', function () {
+    (new RolePermissionSeeder)->run();
+    (new SchoolSeeder)->run();
+
+    $school = School::where('is_active', true)->first();
+    $user = User::factory()->create();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->getJson("/api/v1/academic-years/{$academicYear->id}/semesters");
+
+    $response->assertForbidden();
+});
+
+test('listing semesters for another schools academic year returns 404', function () {
+    [$user] = createSchoolAndUserForSemesters();
+
+    $otherSchool = School::factory()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($otherAcademicYear);
+
+    $response = $this->actingAs($user)
+        ->getJson("/api/v1/academic-years/{$otherAcademicYear->id}/semesters");
+
+    $response->assertNotFound();
+});
+
+// ── Update ───────────────────────────────────────────────────────────────
+
+test('can update a semester dates and uts flag', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-20',
+            'midterm_exam_date' => '2025-09-15',
+            'uts_enabled' => false,
+        ]);
+
+    $response->assertOk()
+        ->assertJsonPath('success', true)
+        ->assertJsonPath('data.semester', 1)
+        ->assertJsonPath('data.start_date', '2025-07-01')
+        ->assertJsonPath('data.end_date', '2025-12-20')
+        ->assertJsonPath('data.midterm_exam_date', '2025-09-15')
+        ->assertJsonPath('data.uts_enabled', false);
+
+    $this->assertDatabaseHas('academic_semesters', [
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+        'uts_enabled' => false,
+    ]);
+});
+
+test('can partially update a semester and prior dates are preserved for cross-field validation', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-20',
+        ])->assertOk();
+
+    // Sending only a new end_date earlier than the stored start_date must fail.
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'end_date' => '2025-06-01',
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['end_date']);
+});
+
+test('updating a semester fails when end_date is before start_date', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'start_date' => '2025-12-20',
+            'end_date' => '2025-07-01',
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['end_date']);
+});
+
+test('updating a semester fails when midterm_exam_date is outside start and end date', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-20',
+            'midterm_exam_date' => '2026-01-05',
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['midterm_exam_date']);
+});
+
+test('updating a semester allows midterm_exam_date equal to start_date or end_date', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'start_date' => '2025-07-01',
+            'end_date' => '2025-12-20',
+            'midterm_exam_date' => '2025-07-01',
+        ]);
+
+    $response->assertOk();
+});
+
+test('updating a semester fails with invalid uts_enabled value', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'uts_enabled' => 'not-a-boolean',
+        ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonValidationErrors(['uts_enabled']);
+});
+
+test('updating a semester with an invalid semester number returns 404', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/3", [
+            'uts_enabled' => false,
+        ]);
+
+    $response->assertNotFound();
+});
+
+test('updating a semester requires permission', function () {
+    (new RolePermissionSeeder)->run();
+    (new SchoolSeeder)->run();
+
+    $school = School::where('is_active', true)->first();
+    $user = User::factory()->create();
+
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($academicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$academicYear->id}/semesters/1", [
+            'uts_enabled' => false,
+        ]);
+
+    $response->assertForbidden();
+});
+
+test('updating a semester for another schools academic year returns 404', function () {
+    [$user] = createSchoolAndUserForSemesters();
+
+    $otherSchool = School::factory()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($otherAcademicYear);
+
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$otherAcademicYear->id}/semesters/1", [
+            'uts_enabled' => false,
+        ]);
+
+    $response->assertNotFound();
+});
+
+test('updating a semester for another schools academic year returns 404 even when the body would fail cross-field validation against that schools stored dates', function () {
+    // Regression test for a cross-tenant oracle: withValidator()'s
+    // after-hook reads the stored semester to merge partial PUT bodies
+    // for the after_or_equal/between checks. If tenancy were only
+    // enforced in the controller (which runs after validation), a
+    // request against a foreign academic year would surface as 422
+    // (validation failure) instead of a uniform 404 whenever the
+    // submitted body happens to conflict with that other school's real
+    // stored dates — leaking their existence. Tenancy must be enforced
+    // before any of that data is read, so this must be 404 regardless.
+    [$user] = createSchoolAndUserForSemesters();
+
+    $otherSchool = School::factory()->create();
+    $otherAcademicYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id]);
+    app(AcademicSemesterService::class)->createSemestersForAcademicYear($otherAcademicYear);
+    app(AcademicSemesterService::class)->updateSemester($otherAcademicYear, 1, [
+        'start_date' => '2026-07-01',
+        'end_date' => '2026-12-31',
+    ]);
+
+    // Only end_date is sent, and it's before the OTHER school's stored
+    // start_date (2026-07-01) — a naive merge-then-validate would 422 here.
+    $response = $this->actingAs($user)
+        ->putJson("/api/v1/academic-years/{$otherAcademicYear->id}/semesters/1", [
+            'end_date' => '2026-01-01',
+        ]);
+
+    $response->assertNotFound();
+});
+
+// ── Migration backfill ───────────────────────────────────────────────────
+
+test('migration backfills semesters for pre-existing academic years', function () {
+    [$user, $school] = createSchoolAndUserForSemesters();
+
+    // Simulate legacy data: an academic year created before this feature
+    // existed, so it has no academic_semesters rows.
+    $academicYear = AcademicYear::factory()->create(['school_id' => $school->id]);
+
+    expect(AcademicSemester::where('academic_year_id', $academicYear->id)->count())->toBe(0);
+
+    $migration = require base_path('database/migrations/2026_09_13_100000_create_academic_semesters_table.php');
+    $migration->backfillExistingAcademicYears();
+
+    expect(AcademicSemester::where('academic_year_id', $academicYear->id)->count())->toBe(2);
+
+    $this->assertDatabaseHas('academic_semesters', [
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+    ]);
+    $this->assertDatabaseHas('academic_semesters', [
+        'academic_year_id' => $academicYear->id,
+        'semester' => 2,
+    ]);
+
+    // Running it again must not create duplicates.
+    $migration->backfillExistingAcademicYears();
+
+    expect(AcademicSemester::where('academic_year_id', $academicYear->id)->count())->toBe(2);
+});

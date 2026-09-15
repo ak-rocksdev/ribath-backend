@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\ClassLevel;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\User;
@@ -160,6 +161,27 @@ test('create student manually assigns the active school', function () {
     expect($createdStudent->school_id)->toBe($activeSchool->id);
 });
 
+test('create student resolves class_level_id from the class_level slug', function () {
+    $admin = createStudentAdmin();
+    $activeSchool = School::where('is_active', true)->firstOrFail();
+    $classLevel = ClassLevel::where('school_id', $activeSchool->id)->where('slug', 'tamhidi')->firstOrFail();
+
+    $response = $this->actingAs($admin)
+        ->postJson('/api/v1/students', [
+            'full_name' => 'Santri Kelas Tamhidi',
+            'birth_date' => '2010-05-15',
+            'gender' => 'L',
+            'program' => 'tahfidz',
+            'entry_date' => '2026-01-15',
+            'class_level' => 'tamhidi',
+            'address' => 'Jl. Test No. 123',
+        ])
+        ->assertStatus(201);
+
+    $createdStudent = Student::findOrFail($response->json('data.id'));
+    expect($createdStudent->class_level_id)->toBe($classLevel->id);
+});
+
 test('create student with guardian link', function () {
     $admin = createStudentAdmin();
     $guardian = User::factory()->create();
@@ -284,6 +306,20 @@ test('update student', function () {
         ->assertJsonPath('data.full_name', 'Updated Student Name')
         ->assertJsonPath('data.class_level', 'ibtida_1')
         ->assertJsonPath('data.address', 'New Address');
+});
+
+test('update student resolves class_level_id from the class_level slug', function () {
+    $admin = createStudentAdmin();
+    $activeSchool = School::where('is_active', true)->firstOrFail();
+    $classLevel = ClassLevel::where('school_id', $activeSchool->id)->where('slug', 'ibtida_1')->firstOrFail();
+    $student = Student::factory()->create(['school_id' => $activeSchool->id, 'class_level' => 'tamhidi', 'class_level_id' => null]);
+
+    $this->actingAs($admin)
+        ->putJson("/api/v1/students/{$student->id}", [
+            'class_level' => 'ibtida_1',
+        ])
+        ->assertStatus(200)
+        ->assertJsonPath('data.class_level_id', $classLevel->id);
 });
 
 test('update student with nested relations', function () {

@@ -7,29 +7,44 @@ use App\Http\Controllers\Api\Admin\NotificationController;
 use App\Http\Controllers\Api\Admin\RoleController;
 use App\Http\Controllers\Api\Admin\SchoolController;
 use App\Http\Controllers\Api\Admin\StudentController;
-use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\SubjectBookController;
 use App\Http\Controllers\Api\Admin\SubjectCategoryController;
+use App\Http\Controllers\Api\Admin\TeacherController;
 use App\Http\Controllers\Api\Admin\TeachingScheduleController;
 use App\Http\Controllers\Api\Admin\TeachingScheduleExportController;
 use App\Http\Controllers\Api\Admin\TimeSlotController;
 use App\Http\Controllers\Api\Admin\UserController;
+use App\Http\Controllers\Api\Akademik\AcademicSemesterController;
+use App\Http\Controllers\Api\Akademik\AttendanceAlertController;
+use App\Http\Controllers\Api\Akademik\AttendanceRecapController;
+use App\Http\Controllers\Api\Akademik\ClassSessionController;
+use App\Http\Controllers\Api\Akademik\ClassTaskController;
+use App\Http\Controllers\Api\Akademik\GradableSubjectController;
+use App\Http\Controllers\Api\Akademik\GradeRecapController;
+use App\Http\Controllers\Api\Akademik\GradingFactorController;
+use App\Http\Controllers\Api\Akademik\GradingTemplateController;
+use App\Http\Controllers\Api\Akademik\GradingTemplateFactorController;
+use App\Http\Controllers\Api\Akademik\ReportCardController;
+use App\Http\Controllers\Api\Akademik\ReportCardPdfController;
+use App\Http\Controllers\Api\Akademik\StudentGradeController;
 use App\Http\Controllers\Api\Auth\AuthController;
+use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\CashBookActivityLogController;
 use App\Http\Controllers\Api\Keuangan\CashBookCategoryController;
 use App\Http\Controllers\Api\Keuangan\CashBookEntryController;
-use App\Http\Controllers\Api\Keuangan\BillController;
 use App\Http\Controllers\Api\Keuangan\FeeActivityLogController;
 use App\Http\Controllers\Api\Keuangan\FeeScheduleController;
+use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\Keuangan\FeeUnassignedStudentsController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeAssignmentController;
 use App\Http\Controllers\Api\Keuangan\StudentFeeExceptionController;
 use App\Http\Controllers\Api\Keuangan\StudentPaymentController;
-use App\Http\Controllers\Api\Keuangan\FeeTypeController;
 use App\Http\Controllers\Api\PSB\RegistrationController;
 use App\Http\Controllers\Api\PSB\RegistrationPeriodController;
 use App\Http\Controllers\Api\Public\PublicPsbController;
 use App\Http\Controllers\Api\Public\StudentCompletionController;
+use App\Http\Controllers\Api\Tahfidz\MemorizationLogController;
+use App\Http\Controllers\Api\Tahfidz\MemorizationTargetController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -91,6 +106,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/{student}/status', [StudentController::class, 'updateStatus'])->middleware('permission:edit-students');
         Route::post('/{student}/documents', [StudentController::class, 'uploadDocument'])->middleware('permission:edit-students');
         Route::delete('/{student}/documents/{documentType}', [StudentController::class, 'deleteDocument'])->middleware('permission:edit-students');
+        Route::get('/{student}/memorization-progress', [MemorizationLogController::class, 'progress'])
+            ->middleware('permission:view-memorization');
     });
 
     // Schools routes
@@ -135,6 +152,134 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-academic-years');
         Route::patch('/{academicYear}/semester', [AcademicYearController::class, 'switchSemester'])
             ->middleware('permission:manage-academic-years');
+        Route::get('/{academicYear}/semesters', [AcademicSemesterController::class, 'index'])
+            ->middleware('permission:view-academic-years');
+        Route::put('/{academicYear}/semesters/{semester}', [AcademicSemesterController::class, 'update'])
+            ->middleware('permission:manage-academic-years')
+            ->whereIn('semester', ['1', '2']);
+    });
+
+    // Grading Settings routes (Penilaian: template, faktor, bobot per semester)
+    Route::prefix('grading-templates')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [GradingTemplateController::class, 'index'])
+            ->middleware('permission:view-grades');
+    });
+
+    Route::prefix('grading-factors')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [GradingFactorController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::put('/{gradingFactor}', [GradingFactorController::class, 'update'])
+            ->middleware('permission:manage-grading-settings');
+    });
+
+    Route::prefix('grading-template-factors')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [GradingTemplateFactorController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::put('/', [GradingTemplateFactorController::class, 'update'])
+            ->middleware('permission:manage-grading-settings');
+    });
+
+    // Grade grid routes (Penilaian: Input Nilai per Kelas × Kitab)
+    Route::get('/gradable-subjects', [GradableSubjectController::class, 'index'])
+        ->middleware(['auth:sanctum', 'permission:view-grades']);
+
+    Route::prefix('student-grades')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [StudentGradeController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::put('/bulk', [StudentGradeController::class, 'bulkUpsert'])
+            ->middleware('permission:manage-grades');
+    });
+
+    // Grade recap routes (Penilaian: Rekap Nilai, computed live)
+    Route::prefix('grade-recaps')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/class', [GradeRecapController::class, 'classSubject'])
+            ->middleware('permission:view-grades');
+        Route::get('/student/{student}', [GradeRecapController::class, 'student'])
+            ->middleware('permission:view-grades');
+    });
+
+    // Rapor routes (Penilaian: finalization snapshot and its cancellation — ADR 0001)
+    Route::prefix('report-cards')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [ReportCardController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::post('/finalize', [ReportCardController::class, 'finalize'])
+            ->middleware('permission:manage-grades');
+        Route::get('/{reportCard}', [ReportCardController::class, 'show'])
+            ->middleware('permission:view-grades');
+        Route::get('/{reportCard}/pdf', [ReportCardPdfController::class, 'show'])
+            ->middleware('permission:view-grades');
+        Route::post('/{reportCard}/unfinalize', [ReportCardController::class, 'unfinalize'])
+            ->middleware('permission:manage-grades');
+    });
+
+    // Class task routes (Penilaian: Tugas per Kelas × Kitab)
+    Route::prefix('class-tasks')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [ClassTaskController::class, 'index'])
+            ->middleware('permission:view-grades');
+        Route::post('/', [ClassTaskController::class, 'store'])
+            ->middleware('permission:manage-grades');
+        Route::get('/{classTask}', [ClassTaskController::class, 'show'])
+            ->middleware('permission:view-grades');
+        Route::put('/{classTask}', [ClassTaskController::class, 'update'])
+            ->middleware('permission:manage-grades');
+        Route::delete('/{classTask}', [ClassTaskController::class, 'destroy'])
+            ->middleware('permission:manage-grades');
+        Route::get('/{classTask}/scores', [ClassTaskController::class, 'scores'])
+            ->middleware('permission:view-grades');
+        Route::put('/{classTask}/scores/bulk', [ClassTaskController::class, 'bulkUpsertScores'])
+            ->middleware('permission:manage-grades');
+    });
+
+    // Class session routes (Absensi: Pertemuan & Absensi per jadwal mengajar)
+    Route::prefix('class-sessions')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [ClassSessionController::class, 'index'])
+            ->middleware('permission:view-attendance');
+        Route::post('/', [ClassSessionController::class, 'store'])
+            ->middleware('permission:manage-attendance');
+        Route::post('/cancel', [ClassSessionController::class, 'cancel'])
+            ->middleware('permission:manage-attendance');
+        Route::get('/{classSession}', [ClassSessionController::class, 'show'])
+            ->middleware('permission:view-attendance');
+        Route::put('/{classSession}/attendances', [ClassSessionController::class, 'updateAttendances'])
+            ->middleware('permission:manage-attendance');
+        Route::post('/cancel-range', [ClassSessionController::class, 'cancelRange'])
+            ->middleware('permission:manage-attendance');
+    });
+
+    // Attendance alerts (Pertemuan Bolong)
+    Route::prefix('attendance-alerts')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [AttendanceAlertController::class, 'index'])
+            ->middleware('permission:view-attendance');
+    });
+
+    // Attendance recap (Absensi: Rekap Kehadiran per Kelas × Kitab)
+    Route::prefix('attendance-recaps')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [AttendanceRecapController::class, 'index'])
+            ->middleware('permission:view-attendance');
+    });
+
+    // Target Hafalan routes (Tahfidz: siapa yang ikut penilaian Tahfizh semester ini — ADR 0003)
+    Route::prefix('memorization-targets')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [MemorizationTargetController::class, 'index'])
+            ->middleware('permission:view-memorization');
+        Route::post('/', [MemorizationTargetController::class, 'store'])
+            ->middleware('permission:manage-memorization');
+        Route::put('/{memorizationTarget}', [MemorizationTargetController::class, 'update'])
+            ->middleware('permission:manage-memorization');
+        Route::delete('/{memorizationTarget}', [MemorizationTargetController::class, 'destroy'])
+            ->middleware('permission:manage-memorization');
+    });
+
+    // Log Setoran dan Murajaah routes (Tahfidz: dated Halaman entries + Progres)
+    Route::prefix('memorization-logs')->middleware(['auth:sanctum'])->group(function () {
+        Route::get('/', [MemorizationLogController::class, 'index'])
+            ->middleware('permission:view-memorization');
+        Route::post('/', [MemorizationLogController::class, 'store'])
+            ->middleware('permission:manage-memorization');
+        Route::put('/{memorizationLog}', [MemorizationLogController::class, 'update'])
+            ->middleware('permission:manage-memorization');
+        Route::delete('/{memorizationLog}', [MemorizationLogController::class, 'destroy'])
+            ->middleware('permission:manage-memorization');
     });
 
     // Time Slots routes
@@ -191,6 +336,8 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:view-schedules');
         Route::post('/', [TeachingScheduleController::class, 'store'])
             ->middleware('permission:manage-schedules');
+        Route::get('/{teachingSchedule}/expected-students', [ClassSessionController::class, 'expectedStudents'])
+            ->middleware('permission:view-attendance');
         Route::get('/{teachingSchedule}', [TeachingScheduleController::class, 'show'])
             ->middleware('permission:view-schedules');
         Route::put('/{teachingSchedule}', [TeachingScheduleController::class, 'update'])

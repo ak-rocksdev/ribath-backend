@@ -67,6 +67,15 @@ class RolePermissionSeeder extends Seeder
             'manage-student-fees',
             'view-student-fees',
             'record-payments',
+
+            // Penilaian (grading), Absensi (attendance), Tahfidz (memorization)
+            'manage-grading-settings',
+            'view-grades',
+            'manage-grades',
+            'view-attendance',
+            'manage-attendance',
+            'view-memorization',
+            'manage-memorization',
         ];
 
         foreach ($permissions as $permissionName) {
@@ -110,6 +119,13 @@ class RolePermissionSeeder extends Seeder
             'manage-student-fees',
             'view-student-fees',
             'record-payments',
+            'manage-grading-settings',
+            'view-grades',
+            'manage-grades',
+            'view-attendance',
+            'manage-attendance',
+            'view-memorization',
+            'manage-memorization',
         ]);
 
         $adminUser = User::firstOrCreate(

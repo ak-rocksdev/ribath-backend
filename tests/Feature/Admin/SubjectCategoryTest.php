@@ -389,12 +389,15 @@ test('seeder creates expected subject categories', function () {
 
     $categories = SubjectCategory::where('school_id', $school->id)->orderBy('sort_order')->get();
 
-    expect($categories)->toHaveCount(10);
+    expect($categories)->toHaveCount(11);
     expect($categories[0]->slug)->toBe('nahwu');
     expect($categories[0]->color)->toBe('bg-blue-100');
     expect($categories[1]->slug)->toBe('shorof');
     expect($categories[9]->slug)->toBe('lughah');
     expect($categories[9]->sort_order)->toBe(10);
+    expect($categories[10]->slug)->toBe('tahfizh');
+    expect($categories[10]->color)->toBe('bg-emerald-100');
+    expect($categories[10]->sort_order)->toBe(11);
 });
 
 test('seeder is idempotent', function () {
@@ -408,5 +411,5 @@ test('seeder is idempotent', function () {
 
     $categories = SubjectCategory::where('school_id', $school->id)->get();
 
-    expect($categories)->toHaveCount(10);
+    expect($categories)->toHaveCount(11);
 });

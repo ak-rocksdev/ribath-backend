@@ -15,6 +15,7 @@ class SubjectBook extends Model
     protected $fillable = [
         'school_id',
         'subject_category_id',
+        'grading_template_id',
         'title',
         'class_levels',
         'semesters',
@@ -43,8 +44,18 @@ class SubjectBook extends Model
         return $this->belongsTo(SubjectCategory::class);
     }
 
+    public function gradingTemplate(): BelongsTo
+    {
+        return $this->belongsTo(GradingTemplate::class);
+    }
+
     public function teachingSchedules(): HasMany
     {
         return $this->hasMany(TeachingSchedule::class);
+    }
+
+    public function studentGrades(): HasMany
+    {
+        return $this->hasMany(StudentGrade::class);
     }
 }

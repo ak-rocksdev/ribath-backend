@@ -1,8 +1,15 @@
 <?php
 
 use App\Models\AcademicYear;
+use App\Models\GradingFactor;
+use App\Models\GradingTemplateFactor;
 use App\Models\School;
+use App\Models\Student;
+use App\Models\StudentGrade;
+use App\Models\SubjectBook;
+use App\Models\SubjectCategory;
 use App\Models\User;
+use App\Services\Akademik\GradingDefaultsInstaller;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 
@@ -331,6 +338,74 @@ test('can delete an academic year without dependents', function () {
         ->assertJsonPath('success', true);
 
     $this->assertDatabaseMissing('academic_years', ['id' => $academicYear->id]);
+});
+
+test('can delete a new empty academic year that already has default grading weights', function () {
+    [$user, $school] = createSchoolAndUser();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+
+    $createResponse = $this->actingAs($user)
+        ->postJson('/api/v1/academic-years', [
+            'name' => '2030/2031',
+            'start_date' => '2030-07-01',
+            'end_date' => '2031-06-30',
+        ]);
+    $createResponse->assertCreated();
+    $academicYearId = $createResponse->json('data.id');
+
+    expect(GradingTemplateFactor::where('academic_year_id', $academicYearId)->count())->toBeGreaterThan(0);
+
+    $response = $this->actingAs($user)
+        ->deleteJson("/api/v1/academic-years/{$academicYearId}");
+
+    $response->assertOk()
+        ->assertJsonPath('success', true);
+
+    $this->assertDatabaseMissing('academic_years', ['id' => $academicYearId]);
+    $this->assertDatabaseMissing('academic_semesters', ['academic_year_id' => $academicYearId]);
+    $this->assertDatabaseMissing('grading_template_factors', ['academic_year_id' => $academicYearId]);
+});
+
+test('cannot delete an academic year that already has grading data', function () {
+    [$user, $school] = createSchoolAndUser();
+    app(GradingDefaultsInstaller::class)->installForSchool($school);
+
+    $createResponse = $this->actingAs($user)
+        ->postJson('/api/v1/academic-years', [
+            'name' => '2030/2031',
+            'start_date' => '2030-07-01',
+            'end_date' => '2031-06-30',
+        ]);
+    $createResponse->assertCreated();
+    $academicYearId = $createResponse->json('data.id');
+
+    $subjectCategory = SubjectCategory::factory()->create(['school_id' => $school->id]);
+    $subjectBook = SubjectBook::factory()->create([
+        'school_id' => $school->id,
+        'subject_category_id' => $subjectCategory->id,
+    ]);
+    $student = Student::factory()->create(['school_id' => $school->id]);
+    $ujianAkhirFactor = GradingFactor::where('school_id', $school->id)->where('code', 'uas')->firstOrFail();
+
+    StudentGrade::create([
+        'school_id' => $school->id,
+        'student_id' => $student->id,
+        'subject_book_id' => $subjectBook->id,
+        'grading_factor_id' => $ujianAkhirFactor->id,
+        'academic_year_id' => $academicYearId,
+        'semester' => 1,
+        'score' => 80,
+    ]);
+
+    $response = $this->actingAs($user)
+        ->deleteJson("/api/v1/academic-years/{$academicYearId}");
+
+    $response->assertStatus(422)
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'Tahun ajaran tidak bisa dihapus karena sudah memiliki data penilaian.');
+
+    $this->assertDatabaseHas('academic_years', ['id' => $academicYearId]);
+    expect(GradingTemplateFactor::where('academic_year_id', $academicYearId)->count())->toBeGreaterThan(0);
 });
 
 // Note: Test for "cannot delete with teaching schedules" is skipped because

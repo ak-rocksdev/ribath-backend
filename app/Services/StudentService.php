@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ClassLevel;
 use App\Models\School;
 use App\Models\Student;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -48,7 +49,9 @@ class StudentService
         // way PsbService takes it from the registration. Without it the student
         // is saved with school_id NULL and every tenancy-guarded endpoint (fee
         // assignments, bills, payments) returns 404 for them.
-        $data['school_id'] = School::activeOrFail()->id;
+        $activeSchool = School::activeOrFail();
+        $data['school_id'] = $activeSchool->id;
+        $this->resolveClassLevelId($data, $activeSchool->id);
 
         $student = Student::create($data);
         $this->syncProfileCompletionTimestamp($student);
@@ -66,6 +69,8 @@ class StudentService
                 unset($data[$key]);
             }
         }
+
+        $this->resolveClassLevelId($data, $student->school_id);
 
         return DB::transaction(function () use ($student, $data, $relationData) {
             // Update core student fields
@@ -113,6 +118,24 @@ class StudentService
         $student->update(['status' => $status]);
 
         return $student->fresh()->load(['guardian', 'registration']);
+    }
+
+    /**
+     * When a class_level slug is given without an explicit class_level_id,
+     * resolve it from the class_levels table for the given school so new or
+     * updated students never end up with a NULL class_level_id again.
+     */
+    private function resolveClassLevelId(array &$data, ?string $schoolId): void
+    {
+        if (empty($data['class_level']) || array_key_exists('class_level_id', $data) || $schoolId === null) {
+            return;
+        }
+
+        $classLevelId = ClassLevel::idForSchoolSlug($schoolId, $data['class_level']);
+
+        if ($classLevelId !== null) {
+            $data['class_level_id'] = $classLevelId;
+        }
     }
 
     private function syncProfileCompletionTimestamp(Student $student): void
