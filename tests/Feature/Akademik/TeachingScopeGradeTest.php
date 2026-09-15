@@ -164,6 +164,38 @@ function createTeachingScopeStudent($testCase, array $context, string $fullName,
     return Student::findOrFail($response->json('data.id'));
 }
 
+/**
+ * The school's Tahfizh kitab (template `tahfizh`), taught to Tamhidi by
+ * Ustadz Ahmad through a Jadwal Mengajar, with a Target Hafalan for the
+ * Tamhidi santri whose Pembimbing Tahfizh is Ustadz Bakar.
+ *
+ * @return array{tahfizhBook: SubjectBook, scheduleId: string}
+ */
+function setUpTeachingScopeTahfizhSchedule($testCase, array $context): array
+{
+    $tahfizhTemplate = GradingTemplate::where('school_id', $context['school']->id)->where('code', 'tahfizh')->firstOrFail();
+    $tahfizhBook = SubjectBook::factory()->create([
+        'school_id' => $context['school']->id,
+        'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $context['school']->id])->id,
+        'grading_template_id' => $tahfizhTemplate->id,
+        'title' => "Tahfizh Al-Qur'an",
+    ]);
+
+    $scheduleId = createTeachingScopeSchedule($testCase, $context, $context['tamhidi'], $tahfizhBook, $context['ustadzAhmad'], 'friday');
+
+    $testCase->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/memorization-targets', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'student_id' => $context['tamhidiSantri']->id,
+            'target_pages' => 40,
+            'teacher_id' => $context['ustadzBakar']->id,
+        ])
+        ->assertCreated();
+
+    return ['tahfizhBook' => $tahfizhBook, 'scheduleId' => $scheduleId];
+}
+
 function teachingScopeGradableSubjectsUrl(array $context, int $semester = 1): string
 {
     return '/api/v1/gradable-subjects?'.http_build_query([
@@ -678,6 +710,60 @@ test('schedules and data of another semester never keep a pair alive', function 
         ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $context['safinah'], semester: 1))
         ->assertUnprocessable()
         ->assertJsonValidationErrors(['subject_book_id']);
+});
+
+test('a deleted Tahfizh schedule without data leaves the Tahfizh kitab gradable through its Target Hafalan', function () {
+    $context = setUpTeachingScopeContext($this);
+    ['tahfizhBook' => $tahfizhBook, 'scheduleId' => $tahfizhScheduleId] = setUpTeachingScopeTahfizhSchedule($this, $context);
+
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$tahfizhScheduleId}")
+        ->assertOk();
+
+    // Pengurus, and Ahmad — whose deleted schedule keeps the pair in his
+    // Cakupan Mengajar — list the pair, load the grid and save UAS Tahfizh.
+    foreach ([90 => $context['pengurus'], 95 => $context['ahmadAccount']] as $uasTahfizhScore => $user) {
+        $pair = teachingScopeFindPair(
+            $this->actingAs($user)->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+            $context['tamhidi'],
+            $tahfizhBook,
+        );
+        expect($pair)->not->toBeNull()
+            ->and($pair['is_schedule_stopped'])->toBeFalse();
+
+        $this->actingAs($user)
+            ->getJson(teachingScopeGridUrl($context, $context['tamhidi'], $tahfizhBook))
+            ->assertOk()
+            ->assertJsonPath('data.students.0.id', $context['tamhidiSantri']->id);
+
+        $this->actingAs($user)
+            ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $tahfizhBook, [
+                ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uas_tahfizh' => $uasTahfizhScore]],
+            ]))
+            ->assertOk();
+    }
+});
+
+test('a deleted Tahfizh schedule with data is listed as the Target Hafalan pair, not as stopped', function () {
+    $context = setUpTeachingScopeContext($this);
+    ['tahfizhBook' => $tahfizhBook, 'scheduleId' => $tahfizhScheduleId] = setUpTeachingScopeTahfizhSchedule($this, $context);
+
+    $this->actingAs($context['pengurus'])
+        ->putJson('/api/v1/student-grades/bulk', teachingScopeBulkPayload($context, $context['tamhidi'], $tahfizhBook, [
+            ['student_id' => $context['tamhidiSantri']->id, 'scores' => ['uas_tahfizh' => 80]],
+        ]))
+        ->assertOk();
+    $this->actingAs($context['pengurus'])
+        ->deleteJson("/api/v1/teaching-schedules/{$tahfizhScheduleId}")
+        ->assertOk();
+
+    $pair = teachingScopeFindPair(
+        $this->actingAs($context['pengurus'])->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk(),
+        $context['tamhidi'],
+        $tahfizhBook,
+    );
+    expect($pair['is_schedule_stopped'])->toBeFalse()
+        ->and($pair['teachers'])->toBe([]);
 });
 
 // ── Izin, validasi, tenancy ──────────────────────────────────────────────

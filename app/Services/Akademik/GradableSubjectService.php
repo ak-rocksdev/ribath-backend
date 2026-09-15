@@ -32,14 +32,18 @@ use Illuminate\Support\Collection;
  * that semester (Tahfizh has no teaching_schedules row; the JSON
  * class_levels on subject_books is deliberately not used either).
  *
- * listForSemester() and isGradablePair() share these rules, so any later
- * rule is added in one place. listForCurrentUser() narrows the list to the
+ * listForSemester() is the one definition: isGradablePair() is derived
+ * from it, so the list and the grid/save guard can never disagree. listForCurrentUser() narrows the list to the
  * pairs the current user may work on (TeachingScopeResolver, Cakupan
  * Mengajar).
  */
 class GradableSubjectService
 {
     /**
+     * The gradable pairs of the semester (see class doc), ordered by class
+     * then kitab title. `is_schedule_stopped`: the pair is kept only by
+     * deactivated rows.
+     *
      * @return array<int, array{
      *     class_level_id: string,
      *     subject_book_id: string,
@@ -49,7 +53,7 @@ class GradableSubjectService
      *     is_gradable: bool,
      *     is_schedule_stopped: bool,
      *     teachers: array<int, array{id: string, full_name: string}>
-     * }>  is_schedule_stopped: the pair is kept only by deactivated rows (see class doc)
+     * }>
      */
     public function listForSemester(string $academicYearId, int $semester, ?string $classLevelId = null): array
     {
@@ -74,12 +78,14 @@ class GradableSubjectService
             ->filter(fn (Collection $pairSchedules, string $pairKey) => $pairSchedules->contains('is_active', true)
                 || $pairKeysWithRecordedData->has($pairKey))
             ->map(fn (Collection $pairSchedules) => $this->buildPairPayload($pairSchedules));
+        [$stoppedSchedulePairs, $activeSchedulePairs] = $schedulePairs->partition(fn (array $pair) => $pair['is_schedule_stopped']);
 
-        // Schedule-based pairs win on a key clash (they carry real teacher
-        // info); tahfizhTargetPairs() only adds classes not already covered.
-        $allPairs = $schedulePairs->union(
-            $this->tahfizhTargetPairs($academicYearId, $semester, $classLevelId)
-        );
+        // On a key clash: an active schedule wins (it carries the real
+        // teachers), then the Tahfizh Target Hafalan pair (gradable because
+        // of the targets, not stopped), then a stopped schedule.
+        $allPairs = $activeSchedulePairs
+            ->union($this->tahfizhTargetPairs($academicYearId, $semester, $classLevelId))
+            ->union($stoppedSchedulePairs);
 
         return $allPairs
             ->sortBy([
@@ -115,30 +121,15 @@ class GradableSubjectService
     }
 
     /**
-     * Whether (class_level, subject_book) is gradable in the semester —
-     * scheduled by an active teaching_schedule of the active school, OR
-     * stopped (only deactivated rows) with Penilaian data already recorded
-     * for the pair in the semester, OR (per ADR 0003) the pair is the
-     * Tahfizh kitab and the class has at least one santri with a
-     * non-deleted Target Hafalan for the semester. Used to validate grade
-     * grid reads and writes.
+     * Whether (class_level, subject_book) is listed by listForSemester() for
+     * the class — scheduled, stopped with recorded data, or the Tahfizh
+     * kitab of a class with Target Hafalan (see class doc). Used to validate
+     * grade grid reads and writes.
      */
     public function isGradablePair(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): bool
     {
-        $pairSchedulesQuery = $this->semesterSchedulesQuery($academicYearId, $semester)
-            ->where('class_level_id', $classLevelId)
-            ->where('subject_book_id', $subjectBookId);
-
-        if ((clone $pairSchedulesQuery)->where('is_active', true)->exists()) {
-            return true;
-        }
-
-        if ($pairSchedulesQuery->exists()) {
-            return $this->pairKeysWithRecordedPenilaianData($academicYearId, $semester, $classLevelId, $subjectBookId)
-                ->has(self::pairKey($classLevelId, $subjectBookId));
-        }
-
-        return $this->isTahfizhTargetPair($academicYearId, $semester, $classLevelId, $subjectBookId);
+        return collect($this->listForSemester($academicYearId, $semester, $classLevelId))
+            ->contains(fn (array $pair) => $pair['subject_book_id'] === $subjectBookId);
     }
 
     /** The active school's teaching_schedules of the semester, active and deactivated. */
@@ -166,7 +157,7 @@ class GradableSubjectService
      *
      * @return Collection<string, true>
      */
-    private function pairKeysWithRecordedPenilaianData(string $academicYearId, int $semester, ?string $onlyClassLevelId = null, ?string $onlySubjectBookId = null): Collection
+    private function pairKeysWithRecordedPenilaianData(string $academicYearId, int $semester, ?string $onlyClassLevelId): Collection
     {
         $schoolId = School::activeOrFail()->id;
 
@@ -183,7 +174,6 @@ class GradableSubjectService
                 ->where('semester', $semester)
                 ->whereNotNull('class_level_id')
                 ->when($onlyClassLevelId, fn (Builder $query) => $query->where('class_level_id', $onlyClassLevelId))
-                ->when($onlySubjectBookId, fn (Builder $query) => $query->where('subject_book_id', $onlySubjectBookId))
                 ->distinct()
                 ->get(['class_level_id', 'subject_book_id'])
                 ->map(fn ($recordedRow) => self::pairKey($recordedRow->class_level_id, $recordedRow->subject_book_id)))
@@ -283,17 +273,6 @@ class GradableSubjectService
                     'subject_book_title' => $tahfizhBook->title,
                 ],
             ]);
-    }
-
-    private function isTahfizhTargetPair(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): bool
-    {
-        $tahfizhBook = $this->tahfizhSubjectBook();
-
-        if ($tahfizhBook === null || $tahfizhBook->id !== $subjectBookId) {
-            return false;
-        }
-
-        return $this->classLevelsWithMemorizationTargets($academicYearId, $semester, $classLevelId)->isNotEmpty();
     }
 
     public function __construct(
