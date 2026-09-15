@@ -84,4 +84,16 @@ class UpdateStudentRequest extends FormRequest
             'additional_info.post_graduation_hopes' => ['nullable', 'string', 'max:2000'],
         ];
     }
+
+    /**
+     * Messages of the fields the Kelas & Program correction dialog shows
+     * under its inputs.
+     */
+    public function messages(): array
+    {
+        return [
+            'class_level.exists' => 'Kelas tidak ditemukan di pesantren ini.',
+            'program.in' => 'Program harus tahfidz atau regular.',
+        ];
+    }
 }

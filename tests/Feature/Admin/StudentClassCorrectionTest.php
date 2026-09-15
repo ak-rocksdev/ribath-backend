@@ -252,7 +252,7 @@ test('a kelas that only exists in another school is rejected', function () {
     $this->actingAs($context['admin'])
         ->putJson("/api/v1/students/{$student->id}", ['class_level' => 'kelas_sekolah_lain'])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors(['class_level']);
+        ->assertJsonPath('errors.class_level.0', 'Kelas tidak ditemukan di pesantren ini.');
 
     expect($student->fresh()->class_level_id)->toBe($context['oldClass']->id);
 });
@@ -264,7 +264,7 @@ test('correcting kelas and program validates the program', function () {
     $this->actingAs($context['admin'])
         ->putJson("/api/v1/students/{$student->id}", ['class_level' => 'ibtida_1', 'program' => 'kilat'])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors(['program']);
+        ->assertJsonPath('errors.program.0', 'Program harus tahfidz atau regular.');
 });
 
 test('correcting kelas and program requires edit-students', function () {
