@@ -100,3 +100,15 @@ _Avoid_: murid, siswa, student (di UI)
 **Ustadz** (`Teacher`):
 Pengajar yang tercantum di Jadwal Mengajar.
 _Avoid_: guru (di UI), pengajar
+
+**Akun Ustadz**:
+User yang tertaut ke data Ustadz dan memegang role `ustadz`; dengannya Ustadz login dan bekerja di dalam Cakupan Mengajar-nya.
+_Avoid_: akun guru, user pengajar
+
+**Cakupan Mengajar**:
+Semua pasangan Kelas × Kitab yang pernah dipegang seorang Ustadz di Jadwal Mengajar pada satu Semester Akademik (termasuk yang sudah dialihkan ke Ustadz lain), ditambah santri bimbingannya sebagai Pembimbing Tahfizh. Akun Ustadz hanya bisa melihat dan mengubah data penilaian di dalam cakupan ini.
+_Avoid_: scope, kelas saya, hak akses guru
+
+**Pembimbing Tahfizh**:
+Ustadz yang ditetapkan pada Target Hafalan seorang Santri; ia menyimak Setoran dan Murajaah serta menginput UAS Tahfizh santri tersebut.
+_Avoid_: musyrif, penyimak (sebagai nama peran)
