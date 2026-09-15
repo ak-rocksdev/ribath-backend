@@ -384,7 +384,7 @@ test('Akun Ustadz from grant access may read academic years but not manage teach
         'password' => 'password123',
     ])->assertStatus(201);
 
-    $ustadzAccount = User::where('email', 'ustadz@example.com')->firstOrFail();
+    $ustadzAccount = completeFirstLoginPasswordChange($this, User::where('email', 'ustadz@example.com')->firstOrFail(), 'password123');
 
     $this->actingAs($ustadzAccount)->getJson('/api/v1/academic-years')->assertOk();
     $this->actingAs($ustadzAccount)->getJson('/api/v1/teachers')->assertForbidden();

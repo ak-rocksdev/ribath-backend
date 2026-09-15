@@ -28,6 +28,7 @@ class AuthService
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'is_active' => $user->is_active,
+                'must_change_password' => $user->must_change_password,
                 'roles' => $user->getRoleNames(),
                 'permissions' => $user->getAllPermissions()->pluck('name'),
                 'teacher' => $this->linkedTeacherSummary($user),
@@ -51,6 +52,7 @@ class AuthService
             'email' => $user->email,
             'phone' => $user->phone,
             'is_active' => $user->is_active,
+            'must_change_password' => $user->must_change_password,
             'roles' => $user->getRoleNames(),
             'permissions' => $user->getAllPermissions()->pluck('name'),
             'teacher' => $this->linkedTeacherSummary($user),
@@ -75,10 +77,12 @@ class AuthService
         ];
     }
 
+    /** The user's own password change; it also completes a required one (wajib ganti password). */
     public function changePassword(User $user, string $newPassword): void
     {
         $user->update([
             'password' => Hash::make($newPassword),
+            'must_change_password' => false,
         ]);
     }
 }

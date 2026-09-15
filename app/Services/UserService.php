@@ -134,10 +134,16 @@ class UserService
         return $user->fresh()->load('roles');
     }
 
+    /**
+     * An admin sets a new password for the account: its tokens are revoked and
+     * the user must change the password at the next login (wajib ganti
+     * password), so the password the admin handed over does not stay.
+     */
     public function resetPassword(User $user, string $newPassword): void
     {
         $user->update([
             'password' => Hash::make($newPassword),
+            'must_change_password' => true,
         ]);
 
         $user->tokens()->delete();

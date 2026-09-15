@@ -1,5 +1,9 @@
 <?php
 
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
 /*
 |--------------------------------------------------------------------------
 | Test Case
@@ -11,8 +15,8 @@
 |
 */
 
-pest()->extend(Tests\TestCase::class)
-    ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)
+pest()->extend(TestCase::class)
+    ->use(RefreshDatabase::class)
     ->in('Feature');
 
 /*
@@ -44,4 +48,27 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/** The password an Akun Ustadz picks when he changes his temporary one at the first login. */
+const PASSWORD_CHOSEN_AT_FIRST_LOGIN = 'password-pilihan-123';
+
+/**
+ * Wajib ganti password: an account made through "Beri Akses" must change its
+ * temporary password before any other endpoint answers. Changes it through
+ * PUT /auth/change-password, as the user does at his first login, and returns
+ * the account as stored now — use the returned model, since an older copy
+ * still carries the requirement.
+ */
+function completeFirstLoginPasswordChange($testCase, User $account, string $temporaryPassword): User
+{
+    $testCase->actingAs($account)
+        ->putJson('/api/v1/auth/change-password', [
+            'current_password' => $temporaryPassword,
+            'new_password' => PASSWORD_CHOSEN_AT_FIRST_LOGIN,
+            'new_password_confirmation' => PASSWORD_CHOSEN_AT_FIRST_LOGIN,
+        ])
+        ->assertOk();
+
+    return $account->fresh();
 }

@@ -22,7 +22,13 @@ class User extends Authenticatable
         'password',
         'phone',
         'is_active',
+        'must_change_password',
         'school_id',
+    ];
+
+    /** A new account is not required to change its password unless "Beri Akses" or a reset says so. */
+    protected $attributes = [
+        'must_change_password' => false,
     ];
 
     protected $hidden = [
@@ -36,6 +42,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            'must_change_password' => 'boolean',
         ];
     }
 
@@ -56,6 +63,6 @@ class User extends Authenticatable
 
     public function appNotifications(): HasMany
     {
-        return $this->hasMany(\App\Models\Notification::class);
+        return $this->hasMany(Notification::class);
     }
 }

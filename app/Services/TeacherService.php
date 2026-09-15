@@ -64,6 +64,9 @@ class TeacherService
                 'email' => $email,
                 'password' => Hash::make($password),
                 'school_id' => $teacher->school_id,
+                // The temporary password is handed over outside the app; the Ustadz
+                // must change it at his first login (wajib ganti password).
+                'must_change_password' => true,
             ]);
 
             // Seeded by RolePermissionSeeder with the "milik sendiri" permissions; a

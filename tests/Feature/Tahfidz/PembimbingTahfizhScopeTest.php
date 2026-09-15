@@ -157,7 +157,7 @@ function createPembimbingTeacher(School $school, string $fullName): Teacher
     ]);
 }
 
-/** Creates the Akun Ustadz through "Beri Akses" (POST /teachers/{teacher}/grant-access). */
+/** Creates the Akun Ustadz through "Beri Akses" (POST /teachers/{teacher}/grant-access) and makes its first-login password change. */
 function grantPembimbingAccess($testCase, array $context, Teacher $teacher, string $email): User
 {
     $testCase->actingAs($context['superAdmin'])
@@ -167,7 +167,7 @@ function grantPembimbingAccess($testCase, array $context, Teacher $teacher, stri
         ])
         ->assertCreated();
 
-    return User::where('email', $email)->firstOrFail();
+    return completeFirstLoginPasswordChange($testCase, User::where('email', $email)->firstOrFail(), 'password123');
 }
 
 /** A pengurus who also teaches: "Beri Akses" for his Ustadz, then roles ustadz + pengurus_pesantren. */
@@ -836,7 +836,7 @@ test('an Akun Ustadz gets the same validation and tenancy answers on Log Setoran
 test('the profile of an Akun Ustadz names his Ustadz, the Ustadz penyimak of his Setoran', function () {
     $context = setUpPembimbingTahfizhContext($this);
 
-    $this->postJson('/api/v1/auth/login', ['email' => 'ahmad@example.com', 'password' => 'password123'])
+    $this->postJson('/api/v1/auth/login', ['email' => 'ahmad@example.com', 'password' => PASSWORD_CHOSEN_AT_FIRST_LOGIN])
         ->assertOk()
         ->assertJsonPath('data.user.teacher.id', $context['ustadzAhmad']->id)
         ->assertJsonPath('data.user.teacher.full_name', 'Ustadz Ahmad');

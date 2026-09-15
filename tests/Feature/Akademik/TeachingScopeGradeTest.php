@@ -135,7 +135,7 @@ function createTeachingScopeSubjectBook(School $school, string $title): SubjectB
     ]);
 }
 
-/** Creates the Akun Ustadz through "Beri Akses" (POST /teachers/{teacher}/grant-access). */
+/** Creates the Akun Ustadz through "Beri Akses" (POST /teachers/{teacher}/grant-access) and makes its first-login password change. */
 function grantTeachingScopeAccess($testCase, array $context, Teacher $teacher, string $email): User
 {
     $testCase->actingAs($context['superAdmin'])
@@ -145,7 +145,7 @@ function grantTeachingScopeAccess($testCase, array $context, Teacher $teacher, s
         ])
         ->assertCreated();
 
-    return User::where('email', $email)->firstOrFail();
+    return completeFirstLoginPasswordChange($testCase, User::where('email', $email)->firstOrFail(), 'password123');
 }
 
 /** Creates a Jadwal Mengajar through POST /teaching-schedules; returns its id. */

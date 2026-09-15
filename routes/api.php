@@ -48,6 +48,7 @@ use App\Http\Controllers\Api\Public\StudentCompletionController;
 use App\Http\Controllers\Api\Tahfidz\MemorizationLogController;
 use App\Http\Controllers\Api\Tahfidz\MemorizationTargetController;
 use App\Http\Controllers\Api\Tahfidz\MentoredStudentController;
+use App\Http\Middleware\EnsureRequiredPasswordChangeIsCompleted;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -56,11 +57,16 @@ Route::prefix('v1')->group(function () {
     Route::prefix('auth')->group(function () {
         Route::post('login', [AuthController::class, 'login']);
 
-        Route::middleware('auth:sanctum')->group(function () {
-            Route::post('logout', [AuthController::class, 'logout']);
-            Route::get('me', [AuthController::class, 'me']);
-            Route::put('change-password', [AuthController::class, 'changePassword']);
-        });
+        // Open while a password change is required (wajib ganti password): the
+        // client reads the requirement from the profile, then changes the
+        // password or logs out.
+        Route::middleware('auth:sanctum')
+            ->withoutMiddleware(EnsureRequiredPasswordChangeIsCompleted::class)
+            ->group(function () {
+                Route::post('logout', [AuthController::class, 'logout']);
+                Route::get('me', [AuthController::class, 'me']);
+                Route::put('change-password', [AuthController::class, 'changePassword']);
+            });
     });
 
     // PSB Registration Management routes

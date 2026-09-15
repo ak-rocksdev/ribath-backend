@@ -44,7 +44,7 @@ beforeEach(function () {
         ->assertOk();
 });
 
-/** Creates an Akun Ustadz for a new teacher of the active school through "Beri Akses". */
+/** Creates an Akun Ustadz for a new teacher of the active school through "Beri Akses" and makes its first-login password change. */
 function grantAkunUstadz(TestCase $testCase, string $email): User
 {
     $teacher = Teacher::factory()->create(['school_id' => $testCase->school->id, 'user_id' => null]);
@@ -56,7 +56,7 @@ function grantAkunUstadz(TestCase $testCase, string $email): User
         ])
         ->assertCreated();
 
-    return User::where('email', $email)->firstOrFail();
+    return completeFirstLoginPasswordChange($testCase, User::where('email', $email)->firstOrFail(), 'password123');
 }
 
 function listedEmails(TestResponse $response): array
