@@ -3,6 +3,7 @@
 use App\Models\School;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -174,5 +175,71 @@ test('seeder is idempotent', function () {
     expect(Role::count())->toBe(3)
         ->and(Permission::count())->toBe(50)
         ->and(Role::findByName('ustadz')->permissions()->count())->toBe(7)
+        ->and(User::where('email', 'akhabsy110@gmail.com')->count())->toBe(1);
+});
+
+// ── The default admin's password comes from SEED_ADMIN_PASSWORD ──────────
+
+/**
+ * Runs the seeder as if APP_ENV were $environment, with SEED_ADMIN_PASSWORD
+ * set to $seedAdminPassword. Called directly: `db:seed` would stop at the
+ * production confirmation prompt.
+ */
+function seedRolesAndPermissionsIn($testCase, string $environment, ?string $seedAdminPassword): void
+{
+    config(['app.seed_admin_password' => $seedAdminPassword]);
+    app()->detectEnvironment(fn () => $environment);
+
+    (new RolePermissionSeeder)->run();
+}
+
+test('the default admin gets the password from SEED_ADMIN_PASSWORD', function () {
+    seedRolesAndPermissionsIn($this, 'production', 'kata-sandi-dari-env-789');
+
+    $adminUser = User::where('email', 'akhabsy110@gmail.com')->firstOrFail();
+    expect(Hash::check('kata-sandi-dari-env-789', $adminUser->password))->toBeTrue()
+        ->and($adminUser->must_change_password)->toBeFalse()
+        ->and($adminUser->hasRole('super_admin'))->toBeTrue();
+});
+
+test('in production without SEED_ADMIN_PASSWORD no admin is created, while roles and permissions are', function () {
+    seedRolesAndPermissionsIn($this, 'production', null);
+
+    expect(User::where('email', 'akhabsy110@gmail.com')->exists())->toBeFalse()
+        ->and(User::count())->toBe(0)
+        ->and(Role::count())->toBe(3)
+        ->and(Permission::count())->toBe(50);
+
+    seedRolesAndPermissionsIn($this, 'production', '');
+
+    expect(User::count())->toBe(0);
+});
+
+test('in production without SEED_ADMIN_PASSWORD an existing admin keeps his password and his role', function () {
+    $existingAdmin = User::factory()->create([
+        'email' => 'akhabsy110@gmail.com',
+        'password' => Hash::make('password-yang-sudah-ada'),
+    ]);
+
+    seedRolesAndPermissionsIn($this, 'production', null);
+
+    expect(Hash::check('password-yang-sudah-ada', $existingAdmin->fresh()->password))->toBeTrue()
+        ->and($existingAdmin->fresh()->hasRole('super_admin'))->toBeTrue()
+        ->and(User::count())->toBe(1);
+});
+
+test('outside production without SEED_ADMIN_PASSWORD the admin gets the documented development password', function () {
+    seedRolesAndPermissionsIn($this, 'local', null);
+
+    $adminUser = User::where('email', 'akhabsy110@gmail.com')->firstOrFail();
+    expect(Hash::check(RolePermissionSeeder::DEVELOPMENT_ADMIN_PASSWORD, $adminUser->password))->toBeTrue()
+        ->and($adminUser->must_change_password)->toBeFalse();
+});
+
+test('the seeder never overwrites the password of an existing admin', function () {
+    seedRolesAndPermissionsIn($this, 'production', 'kata-sandi-pertama-111');
+    seedRolesAndPermissionsIn($this, 'production', 'kata-sandi-kedua-222');
+
+    expect(Hash::check('kata-sandi-pertama-111', User::where('email', 'akhabsy110@gmail.com')->firstOrFail()->password))->toBeTrue()
         ->and(User::where('email', 'akhabsy110@gmail.com')->count())->toBe(1);
 });

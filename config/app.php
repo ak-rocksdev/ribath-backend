@@ -123,4 +123,17 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Default Admin Password (seeding)
+    |--------------------------------------------------------------------------
+    |
+    | The password RolePermissionSeeder gives the default super_admin account
+    | when it creates it. In production an unset value means the account is
+    | not created; elsewhere the seeder falls back to a development password.
+    |
+    */
+
+    'seed_admin_password' => env('SEED_ADMIN_PASSWORD'),
+
 ];

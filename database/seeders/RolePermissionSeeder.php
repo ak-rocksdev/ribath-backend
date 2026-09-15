@@ -6,12 +6,18 @@ use App\Models\School;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionSeeder extends Seeder
 {
+    public const DEFAULT_ADMIN_EMAIL = 'akhabsy110@gmail.com';
+
+    /** The default admin's password outside production when SEED_ADMIN_PASSWORD is not set (see .env.example). */
+    public const DEVELOPMENT_ADMIN_PASSWORD = 'password';
+
     public function run(): void
     {
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
@@ -150,18 +156,45 @@ class RolePermissionSeeder extends Seeder
             'view-academic-years',
         ]);
 
-        // Joins the active school so the Akun Pengguna list (scoped to that
-        // school) shows it; a fresh database may not have a school yet.
-        $activeSchool = School::where('is_active', true)->first();
+        $this->seedDefaultAdmin($superAdmin);
+    }
 
-        $adminUser = User::firstOrCreate(
-            ['email' => 'akhabsy110@gmail.com'],
-            [
+    /**
+     * The default super_admin account. Its password comes from
+     * SEED_ADMIN_PASSWORD (config app.seed_admin_password) and is used only
+     * when the account is created — an existing admin keeps his password
+     * and only gets the role again. In production without it, no admin is
+     * created (a warning says so); elsewhere the documented development
+     * password is used. Never required to change the password
+     * (must_change_password stays false).
+     */
+    private function seedDefaultAdmin(Role $superAdmin): void
+    {
+        $adminUser = User::where('email', self::DEFAULT_ADMIN_EMAIL)->first();
+
+        if ($adminUser === null) {
+            $seedAdminPassword = (string) config('app.seed_admin_password');
+
+            if ($seedAdminPassword === '' && app()->environment('production')) {
+                $warning = 'SEED_ADMIN_PASSWORD is not set: the default super_admin account was not created.';
+                $this->command?->warn($warning);
+                Log::warning($warning);
+
+                return;
+            }
+
+            // Joins the active school so the Akun Pengguna list (scoped to that
+            // school) shows it; a fresh database may not have a school yet.
+            $activeSchool = School::where('is_active', true)->first();
+
+            $adminUser = User::create([
+                'email' => self::DEFAULT_ADMIN_EMAIL,
                 'school_id' => $activeSchool?->id,
                 'name' => 'Abdul Kadir Habsyi',
-                'password' => Hash::make('kadir9263606'),
-            ]
-        );
+                'password' => Hash::make($seedAdminPassword !== '' ? $seedAdminPassword : self::DEVELOPMENT_ADMIN_PASSWORD),
+            ]);
+        }
+
         $adminUser->assignRole($superAdmin);
     }
 }
