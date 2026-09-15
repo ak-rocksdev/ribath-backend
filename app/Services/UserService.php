@@ -116,11 +116,18 @@ class UserService
         return $user->load('roles');
     }
 
+    /** An edit that deactivates the account (is_active to false) revokes its tokens, as the status toggle does. */
     public function updateUser(User $user, array $data): User
     {
-        $user->update($data);
+        return DB::transaction(function () use ($user, $data) {
+            $user->update($data);
 
-        return $user->fresh()->load('roles');
+            if ($user->wasChanged('is_active') && ! $user->is_active) {
+                $user->tokens()->delete();
+            }
+
+            return $user->fresh()->load('roles');
+        });
     }
 
     public function toggleActiveStatus(User $user): User

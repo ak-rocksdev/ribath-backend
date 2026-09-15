@@ -8,6 +8,7 @@ use App\Http\Requests\Auth\LoginRequest;
 use App\Services\AuthService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
 {
@@ -45,9 +46,13 @@ class AuthController extends Controller
 
     public function changePassword(ChangePasswordRequest $changePasswordRequest): JsonResponse
     {
+        $user = $changePasswordRequest->user();
+        $currentAccessToken = $user->currentAccessToken();
+
         $this->authService->changePassword(
-            $changePasswordRequest->user(),
+            $user,
             $changePasswordRequest->validated('new_password'),
+            $currentAccessToken instanceof PersonalAccessToken ? $currentAccessToken : null,
         );
 
         return $this->successResponse(null, 'Password changed successfully');

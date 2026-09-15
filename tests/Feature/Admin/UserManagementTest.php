@@ -280,6 +280,48 @@ test('deactivating user revokes tokens', function () {
     expect($user->fresh()->tokens()->count())->toBe(0);
 });
 
+test('deactivating a user through the account edit revokes its tokens', function () {
+    $admin = createUserManagementAdmin();
+    $user = User::factory()->create(['school_id' => $this->school->id, 'is_active' => true]);
+    $token = $user->createToken('test-token')->plainTextToken;
+
+    $this->actingAs($admin)
+        ->putJson("/api/v1/users/{$user->id}", ['name' => $user->name, 'is_active' => false])
+        ->assertStatus(200)
+        ->assertJsonPath('data.is_active', false);
+
+    expect($user->fresh()->tokens()->count())->toBe(0);
+
+    app('auth')->forgetGuards();
+    $this->withHeader('Authorization', "Bearer {$token}")->getJson('/api/v1/auth/me')->assertStatus(401);
+});
+
+test('an account edit that keeps the user active leaves its tokens', function () {
+    $admin = createUserManagementAdmin();
+    $user = User::factory()->create(['school_id' => $this->school->id, 'is_active' => true]);
+    $user->createToken('test-token');
+
+    $this->actingAs($admin)
+        ->putJson("/api/v1/users/{$user->id}", ['name' => 'Nama Baru', 'is_active' => true])
+        ->assertStatus(200);
+
+    expect($user->fresh()->tokens()->count())->toBe(1);
+});
+
+test('the token of a deactivated account is rejected even when it was never revoked', function () {
+    $user = User::factory()->create(['school_id' => $this->school->id, 'is_active' => true]);
+    $token = $user->createToken('test-token')->plainTextToken;
+
+    $this->withHeader('Authorization', "Bearer {$token}")->getJson('/api/v1/auth/me')->assertOk();
+
+    // Deactivated outside the endpoints that revoke tokens.
+    User::whereKey($user->id)->update(['is_active' => false]);
+    app('auth')->forgetGuards();
+
+    $this->withHeader('Authorization', "Bearer {$token}")->getJson('/api/v1/auth/me')->assertStatus(401);
+    expect($user->tokens()->count())->toBe(1);
+});
+
 // Reset Password
 test('reset user password', function () {
     $admin = createUserManagementAdmin();

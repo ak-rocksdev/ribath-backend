@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthService
 {
@@ -77,12 +79,24 @@ class AuthService
         ];
     }
 
-    /** The user's own password change; it also completes a required one (wajib ganti password). */
-    public function changePassword(User $user, string $newPassword): void
+    /**
+     * The user's own password change; it also completes a required one (wajib
+     * ganti password). Every other session of the account is signed out — a
+     * token obtained with the old (e.g. temporary) password must not outlive
+     * it — while the session that made the change keeps working. Without a
+     * token session (null) every token is revoked.
+     */
+    public function changePassword(User $user, string $newPassword, ?PersonalAccessToken $currentAccessToken): void
     {
-        $user->update([
-            'password' => Hash::make($newPassword),
-            'must_change_password' => false,
-        ]);
+        DB::transaction(function () use ($user, $newPassword, $currentAccessToken) {
+            $user->update([
+                'password' => Hash::make($newPassword),
+                'must_change_password' => false,
+            ]);
+
+            $user->tokens()
+                ->when($currentAccessToken !== null, fn ($tokensQuery) => $tokensQuery->whereKeyNot($currentAccessToken->getKey()))
+                ->delete();
+        });
     }
 }

@@ -10,6 +10,7 @@ use App\Models\FeeType;
 use App\Models\StudentFeeAssignment;
 use App\Models\StudentFeeException;
 use App\Models\StudentPayment;
+use App\Models\User;
 use App\Observers\BillObserver;
 use App\Observers\CashBookCategoryObserver;
 use App\Observers\CashBookEntryObserver;
@@ -21,6 +22,8 @@ use App\Observers\StudentPaymentObserver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Sanctum\PersonalAccessToken;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -34,6 +37,14 @@ class AppServiceProvider extends ServiceProvider
         Gate::before(function ($user, $ability) {
             return $user->hasRole('super_admin') ? true : null;
         });
+
+        // A deactivated account's token is refused on every request, also a
+        // token no deactivation path revoked (e.g. is_active changed elsewhere).
+        Sanctum::authenticateAccessTokensUsing(
+            fn (PersonalAccessToken $accessToken, bool $isValid) => $isValid
+                && $accessToken->tokenable instanceof User
+                && $accessToken->tokenable->is_active
+        );
 
         CashBookEntry::observe(CashBookEntryObserver::class);
         CashBookCategory::observe(CashBookCategoryObserver::class);

@@ -233,6 +233,19 @@ test('changing the password switches the requirement off and opens every page ag
         ->assertJsonPath('data.user.must_change_password', false);
 });
 
+test('changing the password signs out every other session, the one that changed it stays', function () {
+    grantAccessWithTemporaryPassword($this, $this->teacher);
+    $otherSessionToken = loginThroughApi($this, 'ustadz@example.com', TEMPORARY_PASSWORD)->assertOk()->json('data.token');
+    $changingSessionToken = loginThroughApi($this, 'ustadz@example.com', TEMPORARY_PASSWORD)->assertOk()->json('data.token');
+
+    changePasswordWithToken($this, $changingSessionToken, TEMPORARY_PASSWORD, CHOSEN_PASSWORD)->assertOk();
+
+    requestWithToken($this, $otherSessionToken, 'GET', '/api/v1/auth/me')->assertUnauthorized();
+    requestWithToken($this, $otherSessionToken, 'GET', '/api/v1/academic-years')->assertUnauthorized();
+    requestWithToken($this, $changingSessionToken, 'GET', '/api/v1/academic-years')->assertOk();
+    expect(User::where('email', 'ustadz@example.com')->firstOrFail()->tokens()->count())->toBe(1);
+});
+
 test('a wrong current password is refused and the requirement stays on', function () {
     grantAccessWithTemporaryPassword($this, $this->teacher);
     $token = loginThroughApi($this, 'ustadz@example.com', TEMPORARY_PASSWORD)->json('data.token');
