@@ -38,7 +38,9 @@ class UserService
             $query->where('is_active', filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN));
         }
 
+        // id breaks created_at ties, so accounts created in the same second keep one order across pages.
         return $query->orderBy('created_at', 'desc')
+            ->orderByDesc('id')
             ->paginate($filters['per_page'] ?? 15);
     }
 

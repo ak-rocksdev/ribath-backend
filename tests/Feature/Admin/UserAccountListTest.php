@@ -173,6 +173,18 @@ test('the list paginates with the requested page size', function () {
         ->and($response->json('data'))->toHaveCount(1);
 });
 
+test('accounts created at the same moment keep one order across pages, newest id first', function () {
+    User::query()->update(['created_at' => '2026-09-01 08:00:00']);
+
+    $firstPage = $this->actingAs($this->superAdmin)->getJson('/api/v1/users?per_page=2&page=1')->assertOk();
+    $secondPage = $this->actingAs($this->superAdmin)->getJson('/api/v1/users?per_page=2&page=2')->assertOk();
+
+    $listedIds = collect($firstPage->json('data'))->concat($secondPage->json('data'))->pluck('id')->all();
+    $expectedIds = User::where('school_id', $this->school->id)->orderByDesc('id')->pluck('id')->all();
+
+    expect($listedIds)->toBe($expectedIds);
+});
+
 // --- Validation ---
 
 test('the list validates its filters', function (string $query, string $invalidField) {
