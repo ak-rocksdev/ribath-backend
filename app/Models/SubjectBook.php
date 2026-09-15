@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -47,6 +48,22 @@ class SubjectBook extends Model
     public function gradingTemplate(): BelongsTo
     {
         return $this->belongsTo(GradingTemplate::class);
+    }
+
+    /**
+     * Kitab Tahfizh: any kitab graded with the Tahfizh template (ADR 0003).
+     * The one definition, as a query scope here and on a loaded kitab in
+     * usesTahfizhTemplate().
+     */
+    public function scopeTahfizh(Builder $query): Builder
+    {
+        return $query->whereHas('gradingTemplate', fn (Builder $templateQuery) => $templateQuery->where('code', GradingTemplate::CODE_TAHFIZH));
+    }
+
+    /** Whether this kitab is a Kitab Tahfizh (see scopeTahfizh()); expects gradingTemplate to be loaded. */
+    public function usesTahfizhTemplate(): bool
+    {
+        return $this->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH;
     }
 
     public function teachingSchedules(): HasMany

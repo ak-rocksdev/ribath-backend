@@ -12,22 +12,23 @@ use LogicException;
  * TeachingScopeResolver: either everything (the user holds the "semua"
  * permission) or only his Cakupan Mengajar (the "milik sendiri"
  * permission alone, ADR 0004) — a set of Kelas × Kitab pairs plus his
- * santri bimbingan as Pembimbing Tahfizh. For the Kitab Tahfizh the
- * Cakupan Mengajar is counted per santri: its roster is the santri
- * bimbingan, and he records their Setoran as the Ustadz penyimak.
+ * santri bimbingan as Pembimbing Tahfizh. For a Kitab Tahfizh (any kitab
+ * with the Tahfizh template) the grade and Setoran scope is counted per
+ * santri: its roster is the santri bimbingan, and he records their new
+ * Setoran as the Ustadz penyimak.
  */
 final class TeachingScope
 {
     /**
      * @param  array<string, true>|null  $classSubjectPairKeys  "<class_level_id>|<subject_book_id>" => true; null when unrestricted
      * @param  array<string, true>|null  $mentoredStudentIds  student id => true; null when unrestricted
-     * @param  string|null  $tahfizhSubjectBookId  the Kitab Tahfizh whose roster is the santri bimbingan; null when unrestricted or the school has none
+     * @param  array<string, true>|null  $tahfizhSubjectBookIds  subject book id => true for every Kitab Tahfizh whose roster is the santri bimbingan; null when unrestricted
      * @param  string|null  $ownTeacherId  the Ustadz linked to the user; null when unrestricted or none is linked
      */
     private function __construct(
         private readonly ?array $classSubjectPairKeys,
         private readonly ?array $mentoredStudentIds,
-        private readonly ?string $tahfizhSubjectBookId,
+        private readonly ?array $tahfizhSubjectBookIds,
         private readonly ?string $ownTeacherId,
     ) {}
 
@@ -40,9 +41,9 @@ final class TeachingScope
      * @param  string|null  $ownTeacherId  the Ustadz linked to the user (null: no Ustadz, so the scope is empty)
      * @param  iterable<array{class_level_id: string, subject_book_id: string}>  $classSubjectPairs
      * @param  iterable<string>  $mentoredStudentIds  the santri bimbingan
-     * @param  string|null  $tahfizhSubjectBookId  the school's Kitab Tahfizh
+     * @param  iterable<string>  $tahfizhSubjectBookIds  the Kitab Tahfizh whose roster the santri bimbingan are (empty: no roster is narrowed)
      */
-    public static function limitedTo(?string $ownTeacherId, iterable $classSubjectPairs, iterable $mentoredStudentIds, ?string $tahfizhSubjectBookId): self
+    public static function limitedTo(?string $ownTeacherId, iterable $classSubjectPairs, iterable $mentoredStudentIds, iterable $tahfizhSubjectBookIds): self
     {
         $classSubjectPairKeys = [];
 
@@ -50,13 +51,9 @@ final class TeachingScope
             $classSubjectPairKeys[self::pairKey($classSubjectPair['class_level_id'], $classSubjectPair['subject_book_id'])] = true;
         }
 
-        $mentoredStudentIdKeys = [];
+        $mentoredStudentIdKeys = self::keysOf($mentoredStudentIds);
 
-        foreach ($mentoredStudentIds as $mentoredStudentId) {
-            $mentoredStudentIdKeys[$mentoredStudentId] = true;
-        }
-
-        return new self($classSubjectPairKeys, $mentoredStudentIdKeys, $tahfizhSubjectBookId, $ownTeacherId);
+        return new self($classSubjectPairKeys, $mentoredStudentIdKeys, self::keysOf($tahfizhSubjectBookIds), $ownTeacherId);
     }
 
     public function includesClassSubjectPair(string $classLevelId, string $subjectBookId): bool
@@ -106,8 +103,8 @@ final class TeachingScope
     }
 
     /**
-     * The part of a Kitab's roster the user may see and grade: for the
-     * Kitab Tahfizh of a limited scope, the santri bimbingan among
+     * The part of a Kitab's roster the user may see and grade: for a
+     * Kitab Tahfizh of a limited grade scope, the santri bimbingan among
      * $students; for every other Kitab, or when unrestricted, $students
      * unchanged (the pair itself is checked by assertIncludesClassSubjectPair()).
      *
@@ -118,7 +115,7 @@ final class TeachingScope
      */
     public function rosterWithinScope(string $subjectBookId, Collection $students): Collection
     {
-        if ($this->mentoredStudentIds === null || $subjectBookId !== $this->tahfizhSubjectBookId) {
+        if ($this->tahfizhSubjectBookIds === null || ! isset($this->tahfizhSubjectBookIds[$subjectBookId])) {
             return $students;
         }
 
@@ -128,13 +125,13 @@ final class TeachingScope
     }
 
     /**
-     * The Ustadz penyimak to record on a Setoran or Murajaah: the one the
-     * request names for an unrestricted user; the user's own Ustadz for a
-     * limited one, whatever the request names (spec: "dipaksa ke ustadz
-     * miliknya"). Called only after the santri was found among the santri
-     * bimbingan, which a user without a linked Ustadz never has.
+     * The Ustadz penyimak of a new Setoran or Murajaah: the one the request
+     * names for an unrestricted user; the user's own Ustadz for a limited
+     * one, whatever the request names (spec: "dipaksa ke ustadz miliknya").
+     * Called only after the santri was found among the santri bimbingan,
+     * which a user without a linked Ustadz never has.
      */
-    public function listeningTeacherIdFor(string $requestedTeacherId): string
+    public function listeningTeacherIdForNewLog(string $requestedTeacherId): string
     {
         if ($this->mentoredStudentIds === null) {
             return $requestedTeacherId;
@@ -142,6 +139,36 @@ final class TeachingScope
 
         return $this->ownTeacherId
             ?? throw new LogicException('A Cakupan Mengajar without a linked Ustadz has no santri bimbingan.');
+    }
+
+    /**
+     * The Ustadz penyimak of a changed Setoran or Murajaah: the one the
+     * request names (or the stored one) for an unrestricted user; always
+     * the stored one for a limited user — who listened is not his to
+     * change, whatever the request names.
+     */
+    public function listeningTeacherIdForChangedLog(string $storedTeacherId, ?string $requestedTeacherId): string
+    {
+        if ($this->mentoredStudentIds === null) {
+            return $requestedTeacherId ?? $storedTeacherId;
+        }
+
+        return $storedTeacherId;
+    }
+
+    /**
+     * @param  iterable<string>  $ids
+     * @return array<string, true>
+     */
+    private static function keysOf(iterable $ids): array
+    {
+        $keys = [];
+
+        foreach ($ids as $id) {
+            $keys[$id] = true;
+        }
+
+        return $keys;
     }
 
     private static function pairKey(string $classLevelId, string $subjectBookId): string

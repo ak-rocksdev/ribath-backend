@@ -82,9 +82,11 @@ class MemorizationTargetService
      * The santri bimbingan of the semester — the santri with a Target
      * Hafalan, only those naming the user's Ustadz as Pembimbing Tahfizh
      * for a user limited to his Cakupan Mengajar — ordered by name: the
-     * santri picker of Log Setoran for a Pembimbing Tahfizh.
+     * santri picker of Log Setoran for a Pembimbing Tahfizh. A Setoran is
+     * recorded for an active santri only, so `is_active_student` lets the
+     * picker leave the others to the list filter.
      *
-     * @return array<int, array{id: string, full_name: string, class_level: array{id: string, slug: string, label: string}|null}>
+     * @return array<int, array{id: string, full_name: string, is_active_student: bool, class_level: array{id: string, slug: string, label: string}|null}>
      *
      * @throws AuthorizationException the user holds neither memorization view permission
      */
@@ -104,10 +106,11 @@ class MemorizationTargetService
             ->whereIn('id', $mentoredStudentIds)
             ->with('classLevel:id,slug,label')
             ->orderBy('full_name')
-            ->get(['id', 'full_name', 'class_level_id'])
+            ->get(['id', 'full_name', 'status', 'class_level_id'])
             ->map(fn (Student $student) => [
                 'id' => $student->id,
                 'full_name' => $student->full_name,
+                'is_active_student' => $student->status === Student::STATUS_ACTIVE,
                 'class_level' => $student->classLevel?->summary(),
             ])
             ->all();

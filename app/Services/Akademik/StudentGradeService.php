@@ -7,7 +7,6 @@ use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
-use App\Models\GradingTemplate;
 use App\Models\GradingTemplateFactor;
 use App\Models\MemorizationTarget;
 use App\Models\School;
@@ -151,7 +150,7 @@ class StudentGradeService
             ->rosterWithinScope($subjectBookId, $rosterBeforeTeachingScope)
             ->pluck('id')
             ->flip();
-        $isTahfizhTemplate = $gridContext->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH;
+        $isTahfizhTemplate = $gridContext->subjectBook->usesTahfizhTemplate();
 
         $this->assertGridRowsAreValid($rows, $templateFactorsByCode, $gradedStudentIds, $rosterBeforeTeachingScope->pluck('id')->flip(), $isTahfizhTemplate);
         // A finalized santri's rows are rejected (ADR 0001); nothing is written.
@@ -276,7 +275,7 @@ class StudentGradeService
      */
     private function listRosterBeforeTeachingScope(ClassSubjectGradingContext $context): Collection
     {
-        if ($context->subjectBook->gradingTemplate?->code === GradingTemplate::CODE_TAHFIZH) {
+        if ($context->subjectBook->usesTahfizhTemplate()) {
             return $this->listStudentsWithMemorizationTarget(
                 $context->classLevelId,
                 $context->academicSemester->academic_year_id,

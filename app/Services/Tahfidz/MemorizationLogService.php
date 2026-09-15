@@ -44,8 +44,9 @@ use Illuminate\Validation\ValidationException;
  * to (its academic_year_id and semester). A santri chosen in the request
  * outside it is refused with 403; a log or santri bound to the route
  * outside it is not found (404), like tenancy — see
- * ensureLogWithinTeachingScope(). He is always recorded as the Ustadz
- * penyimak, whatever teacher_id the request names.
+ * ensureLogWithinTeachingScope(). He is recorded as the Ustadz penyimak of
+ * every new log, whatever teacher_id the request names; a changed log
+ * keeps its stored penyimak.
  */
 class MemorizationLogService
 {
@@ -133,7 +134,7 @@ class MemorizationLogService
             'subject_book_id' => $tahfizhBook->id,
             'academic_year_id' => $academicYearId,
             'semester' => $semester,
-            'teacher_id' => $teachingScope->listeningTeacherIdFor($data['teacher_id']),
+            'teacher_id' => $teachingScope->listeningTeacherIdForNewLog($data['teacher_id']),
             'log_date' => $data['log_date'],
             'type' => $data['type'],
             'juz' => $data['juz'] ?? null,
@@ -177,7 +178,7 @@ class MemorizationLogService
         }
 
         $log->fill([
-            'teacher_id' => $teachingScope->listeningTeacherIdFor($data['teacher_id'] ?? $log->teacher_id),
+            'teacher_id' => $teachingScope->listeningTeacherIdForChangedLog($log->teacher_id, $data['teacher_id'] ?? null),
             'log_date' => $data['log_date'] ?? $log->log_date,
             'type' => $data['type'] ?? $log->type,
             'juz' => array_key_exists('juz', $data) ? $data['juz'] : $log->juz,

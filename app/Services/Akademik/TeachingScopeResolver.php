@@ -5,6 +5,7 @@ namespace App\Services\Akademik;
 use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Models\Student;
+use App\Models\SubjectBook;
 use App\Models\TeachingSchedule;
 use App\Models\TeachingScheduleTeacherHistory;
 use App\Models\User;
@@ -26,11 +27,14 @@ use InvalidArgumentException;
  *     pengajar of that semester records for him (a schedule since moved
  *     to another Ustadz, Kelas or Kitab);
  *   - his santri bimbingan: the santri whose non-deleted Target Hafalan of
- *     that semester names him as Pembimbing Tahfizh. The Kitab Tahfizh is
- *     counted per santri (ADR 0003): its pair enters the scope only for
- *     the classes of his santri bimbingan — a Jadwal Mengajar or riwayat
- *     pengajar for the Kitab Tahfizh alone does not — and its roster is
- *     his santri bimbingan (TeachingScope::rosterWithinScope());
+ *     that semester names him as Pembimbing Tahfizh. For grades and
+ *     Setoran a Kitab Tahfizh (SubjectBook::scopeTahfizh()) is counted
+ *     per santri (ADR 0003): its pairs enter the scope only for the
+ *     classes of his santri bimbingan — a Jadwal Mengajar or riwayat
+ *     pengajar for a Kitab Tahfizh alone does not — and its roster is his
+ *     santri bimbingan (TeachingScope::rosterWithinScope()). Absensi
+ *     follows the Jadwal Mengajar only: a schedule of a Kitab Tahfizh is
+ *     recorded by whoever holds (or held) it, like any other;
  * - neither → 403.
  *
  * Every Penilaian and Tahfidz service asks this resolver instead of
@@ -50,9 +54,13 @@ class TeachingScopeResolver
         'manage-memorization' => 'manage-own-memorization',
     ];
 
-    public function __construct(
-        private TahfizhSubjectBookResolver $tahfizhSubjectBookResolver,
-    ) {}
+    /** The "semua" permissions whose scope counts a Kitab Tahfizh per santri bimbingan (grades, Setoran). */
+    private const ALL_DATA_PERMISSIONS_COUNTING_TAHFIZH_PER_MENTORED_STUDENT = [
+        'view-grades',
+        'manage-grades',
+        'view-memorization',
+        'manage-memorization',
+    ];
 
     /**
      * @param  string  $allDataPermission  the "semua" permission the action needs, e.g. `manage-grades`
@@ -70,18 +78,24 @@ class TeachingScopeResolver
         $linkedTeacherId = $user->teacher?->id;
 
         if ($linkedTeacherId === null) {
-            return TeachingScope::limitedTo(null, [], [], null);
+            return TeachingScope::limitedTo(null, [], [], []);
         }
 
         $schoolId = School::activeOrFail()->id;
-        $tahfizhSubjectBookId = $this->tahfizhSubjectBookResolver->resolve()?->id;
+        $taughtClassSubjectPairs = $this->classSubjectPairsTaughtBy($linkedTeacherId, $schoolId, $academicYearId, $semester);
+
+        if (! in_array($allDataPermission, self::ALL_DATA_PERMISSIONS_COUNTING_TAHFIZH_PER_MENTORED_STUDENT, true)) {
+            return TeachingScope::limitedTo($linkedTeacherId, $taughtClassSubjectPairs, [], []);
+        }
+
+        $tahfizhSubjectBookIds = SubjectBook::query()->where('school_id', $schoolId)->tahfizh()->pluck('id');
         $mentoredStudentIds = $this->studentIdsMentoredBy($linkedTeacherId, $schoolId, $academicYearId, $semester);
 
-        $classSubjectPairs = $this->classSubjectPairsTaughtBy($linkedTeacherId, $schoolId, $academicYearId, $semester)
-            ->reject(fn (array $pair) => $pair['subject_book_id'] === $tahfizhSubjectBookId)
-            ->concat($this->tahfizhPairsOfMentoredStudents($mentoredStudentIds, $schoolId, $tahfizhSubjectBookId));
+        $classSubjectPairs = $taughtClassSubjectPairs
+            ->reject(fn (array $pair) => $tahfizhSubjectBookIds->contains($pair['subject_book_id']))
+            ->concat($this->tahfizhPairsOfMentoredStudents($mentoredStudentIds, $schoolId, $tahfizhSubjectBookIds));
 
-        return TeachingScope::limitedTo($linkedTeacherId, $classSubjectPairs, $mentoredStudentIds, $tahfizhSubjectBookId);
+        return TeachingScope::limitedTo($linkedTeacherId, $classSubjectPairs, $mentoredStudentIds, $tahfizhSubjectBookIds);
     }
 
     /**
@@ -193,16 +207,18 @@ class TeachingScopeResolver
     }
 
     /**
-     * One (class, Kitab Tahfizh) pair for each current class of the santri
-     * bimbingan (not soft-deleted), mirroring how GradableSubjectService
-     * derives the Kitab Tahfizh pairs from Target Hafalan.
+     * A (class, Kitab Tahfizh) pair for each current class of the santri
+     * bimbingan (not soft-deleted) and each Kitab Tahfizh of the school —
+     * the same classes GradableSubjectService derives its Kitab Tahfizh
+     * pairs from; whether a pair is gradable at all stays its decision.
      *
      * @param  Collection<int, string>  $mentoredStudentIds
+     * @param  Collection<int, string>  $tahfizhSubjectBookIds
      * @return Collection<int, array{class_level_id: string, subject_book_id: string}>
      */
-    private function tahfizhPairsOfMentoredStudents(Collection $mentoredStudentIds, string $schoolId, ?string $tahfizhSubjectBookId): Collection
+    private function tahfizhPairsOfMentoredStudents(Collection $mentoredStudentIds, string $schoolId, Collection $tahfizhSubjectBookIds): Collection
     {
-        if ($tahfizhSubjectBookId === null || $mentoredStudentIds->isEmpty()) {
+        if ($tahfizhSubjectBookIds->isEmpty() || $mentoredStudentIds->isEmpty()) {
             return collect();
         }
 
@@ -212,9 +228,10 @@ class TeachingScopeResolver
             ->whereNotNull('class_level_id')
             ->distinct()
             ->pluck('class_level_id')
-            ->map(fn (string $classLevelId) => [
-                'class_level_id' => $classLevelId,
-                'subject_book_id' => $tahfizhSubjectBookId,
+            ->crossJoin($tahfizhSubjectBookIds)
+            ->map(fn (array $classAndBook) => [
+                'class_level_id' => $classAndBook[0],
+                'subject_book_id' => $classAndBook[1],
             ]);
     }
 }

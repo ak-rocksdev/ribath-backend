@@ -2,6 +2,7 @@
 
 use App\Models\AcademicYear;
 use App\Models\ClassLevel;
+use App\Models\GradingTemplate;
 use App\Models\MemorizationLog;
 use App\Models\MemorizationTarget;
 use App\Models\School;
@@ -9,6 +10,7 @@ use App\Models\Student;
 use App\Models\StudentGrade;
 use App\Models\StudentTaskScore;
 use App\Models\SubjectBook;
+use App\Models\SubjectCategory;
 use App\Models\Teacher;
 use App\Models\TimeSlot;
 use App\Models\User;
@@ -122,19 +124,27 @@ function setUpPembimbingTahfizhContext($testCase): array
     $context['umarTargetId'] = createPembimbingTarget($testCase, $context, $context['umar'], $context['ustadzBakar']);
     $context['zaidTargetId'] = createPembimbingTarget($testCase, $context, $context['zaid'], $context['ustadzBakar']);
 
-    $testCase->actingAs($superAdmin)
-        ->postJson('/api/v1/teaching-schedules', [
-            'academic_year_id' => $academicYear->id,
-            'semester' => 1,
-            'day_of_week' => 'friday',
-            'time_slot_id' => TimeSlot::factory()->create(['school_id' => $school->id])->id,
-            'class_level_id' => $context['tamhidi']->id,
-            'subject_book_id' => $context['tahfizhBook']->id,
-            'teacher_id' => $context['ustadzChalid']->id,
-        ])
-        ->assertCreated();
+    $context['timeSlot'] = TimeSlot::factory()->create(['school_id' => $school->id]);
+    $context['chalidTahfizhScheduleId'] = createPembimbingSchedule($testCase, $context, $context['tahfizhBook'], $context['ustadzChalid'], 'friday');
 
     return $context;
+}
+
+/** A Jadwal Mengajar in Tamhidi, semester 1, through POST /teaching-schedules; returns its id. */
+function createPembimbingSchedule($testCase, array $context, SubjectBook $subjectBook, Teacher $teacher, string $dayOfWeek): string
+{
+    return $testCase->actingAs($context['superAdmin'])
+        ->postJson('/api/v1/teaching-schedules', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'day_of_week' => $dayOfWeek,
+            'time_slot_id' => $context['timeSlot']->id,
+            'class_level_id' => $context['tamhidi']->id,
+            'subject_book_id' => $subjectBook->id,
+            'teacher_id' => $teacher->id,
+        ])
+        ->assertCreated()
+        ->json('data.id');
 }
 
 function createPembimbingTeacher(School $school, string $fullName): Teacher
@@ -617,7 +627,7 @@ test('the Log Setoran list of a Pembimbing holds only the logs of his santri bim
         ->and($listedNames($multiRoleAccount))->toBe(['Ali', 'Umar', 'Zaid']);
 });
 
-test('a log outside the bimbingan is not found on update and delete; inside it the penyimak is forced on update', function () {
+test('a log outside the bimbingan is not found on update and delete; inside it the stored penyimak is kept on update', function () {
     $context = setUpPembimbingTahfizhContext($this);
     $ahmad = $context['ahmadAccount'];
     $umarLogId = createPembimbingLog($this, $context['pengurus'], $context, $context['umar'], $context['ustadzBakar']);
@@ -629,15 +639,27 @@ test('a log outside the bimbingan is not found on update and delete; inside it t
     expect(MemorizationLog::find($umarLogId))->not->toBeNull()
         ->and(MemorizationLog::findOrFail($umarLogId)->quality_score)->toBe(85);
 
+    // Bakar listened to Ali's Setoran: Ahmad's edit keeps him, with or without a teacher_id in the request.
     $this->actingAs($ahmad)
-        ->putJson("/api/v1/memorization-logs/{$aliLogId}", ['quality_score' => 90, 'teacher_id' => $context['ustadzBakar']->id])
+        ->putJson("/api/v1/memorization-logs/{$aliLogId}", ['quality_score' => 90])
         ->assertOk()
         ->assertJsonPath('data.quality_score', 90)
-        ->assertJsonPath('data.teacher.id', $context['ustadzAhmad']->id);
+        ->assertJsonPath('data.teacher.id', $context['ustadzBakar']->id);
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/memorization-logs/{$aliLogId}", ['quality_score' => 92, 'teacher_id' => $context['ustadzAhmad']->id])
+        ->assertOk()
+        ->assertJsonPath('data.quality_score', 92)
+        ->assertJsonPath('data.teacher.id', $context['ustadzBakar']->id);
     $aliLog = MemorizationLog::findOrFail($aliLogId);
-    expect($aliLog->teacher_id)->toBe($context['ustadzAhmad']->id)
+    expect($aliLog->teacher_id)->toBe($context['ustadzBakar']->id)
         ->and($aliLog->created_by)->toBe($context['pengurus']->id)
         ->and($aliLog->updated_by)->toBe($ahmad->id);
+
+    // Pengurus still change the penyimak.
+    $this->actingAs($context['pengurus'])
+        ->putJson("/api/v1/memorization-logs/{$aliLogId}", ['teacher_id' => $context['ustadzAhmad']->id])
+        ->assertOk()
+        ->assertJsonPath('data.teacher.id', $context['ustadzAhmad']->id);
 
     $this->actingAs($ahmad)->deleteJson("/api/v1/memorization-logs/{$aliLogId}")->assertOk();
     expect(MemorizationLog::find($aliLogId))->toBeNull()
@@ -712,6 +734,7 @@ test('the santri bimbingan endpoint lists the santri whose Setoran the user may 
         ->assertJsonCount(1, 'data')
         ->assertJsonPath('data.0.id', $context['ali']->id)
         ->assertJsonPath('data.0.full_name', 'Ali')
+        ->assertJsonPath('data.0.is_active_student', true)
         ->assertJsonPath('data.0.class_level.slug', 'tamhidi');
 
     $bakarResponse = $this->actingAs($context['bakarAccount'])->getJson($url)->assertOk();
@@ -828,4 +851,163 @@ test('the profile of an Akun Ustadz names his Ustadz, the Ustadz penyimak of his
         ->getJson('/api/v1/auth/me')
         ->assertOk()
         ->assertJsonPath('data.teacher', null);
+});
+
+test('an inactive santri bimbingan stays listed, marked, since a Setoran needs an active santri', function () {
+    $context = setUpPembimbingTahfizhContext($this);
+
+    $this->actingAs($context['superAdmin'])
+        ->patchJson("/api/v1/students/{$context['umar']->id}/status", ['status' => Student::STATUS_WITHDRAWN])
+        ->assertOk();
+
+    $bakarList = collect($this->actingAs($context['bakarAccount'])
+        ->getJson('/api/v1/mentored-students?'.pembimbingSemesterQuery($context))
+        ->assertOk()
+        ->json('data'))
+        ->mapWithKeys(fn (array $mentoredStudent) => [$mentoredStudent['full_name'] => $mentoredStudent['is_active_student']])
+        ->all();
+
+    expect($bakarList)->toBe(['Umar' => false, 'Zaid' => true]);
+});
+
+test('the santri bimbingan endpoint stays within the active school', function () {
+    $context = setUpPembimbingTahfizhContext($this);
+    $otherSchool = School::factory()->create(['is_active' => false]);
+    $otherSchoolYear = AcademicYear::factory()->create(['school_id' => $otherSchool->id, 'name' => '2025/2026']);
+    $otherSchoolStudent = Student::factory()->create(['school_id' => $otherSchool->id, 'full_name' => 'Santri Pesantren Lain']);
+    // A target of another school naming Ahmad cannot make its santri his santri bimbingan.
+    MemorizationTarget::create([
+        'school_id' => $otherSchool->id,
+        'student_id' => $otherSchoolStudent->id,
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+        'target_pages' => 20,
+        'teacher_id' => $context['ustadzAhmad']->id,
+    ]);
+
+    $ahmadNames = pembimbingNames(
+        $this->actingAs($context['ahmadAccount'])->getJson('/api/v1/mentored-students?'.pembimbingSemesterQuery($context))->assertOk()->json('data'),
+        'full_name',
+    );
+    $pengurusNames = pembimbingNames(
+        $this->actingAs($context['pengurus'])->getJson('/api/v1/mentored-students?'.pembimbingSemesterQuery($context))->assertOk()->json('data'),
+        'full_name',
+    );
+    expect($ahmadNames)->toBe(['Ali'])
+        ->and($pengurusNames)->toBe(['Ali', 'Umar', 'Zaid']);
+
+    foreach ([$context['ahmadAccount'], $context['pengurus']] as $user) {
+        $this->actingAs($user)
+            ->getJson('/api/v1/mentored-students?'.http_build_query(['academic_year_id' => $otherSchoolYear->id, 'semester' => 1]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['academic_year_id']);
+    }
+});
+
+// ── Kitab Tahfizh = any kitab with the Tahfizh template ──────────────────
+
+test('a second Kitab Tahfizh scheduled for an Ustadz who mentors no santri opens nothing to him', function () {
+    $context = setUpPembimbingTahfizhContext($this);
+    $tahfizhTemplate = GradingTemplate::where('school_id', $context['school']->id)->where('code', 'tahfizh')->firstOrFail();
+    $juzAmma = SubjectBook::factory()->create([
+        'school_id' => $context['school']->id,
+        'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $context['school']->id])->id,
+        'grading_template_id' => $tahfizhTemplate->id,
+        'title' => 'Tahfizh Juz Amma',
+    ]);
+    createPembimbingSchedule($this, $context, $juzAmma, $context['ustadzChalid'], 'thursday');
+    $juzAmmaQuery = pembimbingSemesterQuery($context, 1, [
+        'class_level_id' => $context['tamhidi']->id,
+        'subject_book_id' => $juzAmma->id,
+    ]);
+
+    $listsJuzAmma = fn (User $user) => collect(
+        $this->actingAs($user)->getJson('/api/v1/gradable-subjects?'.pembimbingSemesterQuery($context))->assertOk()->json('data')
+    )->contains('subject_book_id', $juzAmma->id);
+    expect($listsJuzAmma($context['chalidAccount']))->toBeFalse()
+        ->and($listsJuzAmma($context['pengurus']))->toBeTrue()
+        // Ahmad mentors Ali in Tamhidi, so every Kitab Tahfizh of Tamhidi counts his santri bimbingan.
+        ->and($listsJuzAmma($context['ahmadAccount']))->toBeTrue();
+
+    foreach ([
+        $this->actingAs($context['chalidAccount'])->getJson("/api/v1/student-grades?{$juzAmmaQuery}"),
+        $this->actingAs($context['chalidAccount'])->getJson("/api/v1/grade-recaps/class?{$juzAmmaQuery}"),
+        $this->actingAs($context['chalidAccount'])->putJson('/api/v1/student-grades/bulk', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'class_level_id' => $context['tamhidi']->id,
+            'subject_book_id' => $juzAmma->id,
+            'rows' => [['student_id' => $context['ali']->id, 'scores' => ['uas_tahfizh' => 50]]],
+        ]),
+    ] as $refusal) {
+        $refusal->assertForbidden()->assertJsonPath('message', PEMBIMBING_OUTSIDE_PAIR_MESSAGE);
+    }
+    expect(StudentGrade::count())->toBe(0);
+
+    $ahmadGrid = $this->actingAs($context['ahmadAccount'])->getJson("/api/v1/student-grades?{$juzAmmaQuery}")->assertOk();
+    expect(pembimbingNames($ahmadGrid->json('data.students'), 'full_name'))->toBe(['Ali']);
+
+    $taskId = $this->actingAs($context['pengurus'])
+        ->postJson('/api/v1/class-tasks', [
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+            'class_level_id' => $context['tamhidi']->id,
+            'subject_book_id' => $juzAmma->id,
+            'title' => 'Hafalan An-Naba',
+            'task_date' => '2025-08-01',
+            'description' => null,
+        ])
+        ->assertCreated()
+        ->json('data.id');
+    $this->actingAs($context['chalidAccount'])->getJson("/api/v1/class-tasks/{$taskId}/scores")->assertNotFound();
+    $ahmadScores = $this->actingAs($context['ahmadAccount'])->getJson("/api/v1/class-tasks/{$taskId}/scores")->assertOk();
+    expect(pembimbingNames($ahmadScores->json('data.students'), 'full_name'))->toBe(['Ali']);
+});
+
+// ── Absensi: a Jadwal Mengajar of the Kitab Tahfizh is like any other ────
+
+test('the Ustadz holding the Kitab Tahfizh schedule records its Pertemuan and is alerted, while a Pembimbing who does not hold it cannot', function () {
+    $context = setUpPembimbingTahfizhContext($this);
+    $chalid = $context['chalidAccount'];
+    $ahmad = $context['ahmadAccount'];
+    $scheduleId = $context['chalidTahfizhScheduleId'];
+    // A week after the schedule was created (2025-09-15): Friday 2025-09-19 went unrecorded.
+    Carbon::setTestNow(Carbon::parse('2025-09-22 09:00:00', 'Asia/Jakarta'));
+    $recordPertemuan = fn (User $user, string $sessionDate) => $this->actingAs($user)->postJson('/api/v1/class-sessions', [
+        'teaching_schedule_id' => $scheduleId,
+        'session_date' => $sessionDate,
+        'attendances' => collect([$context['ali'], $context['umar'], $context['hasan']])
+            ->map(fn (Student $tamhidiSantri) => ['student_id' => $tamhidiSantri->id, 'status' => 'present', 'notes' => null])
+            ->all(),
+    ]);
+    $attendanceScheduleIds = fn (User $user) => collect(
+        $this->actingAs($user)->getJson('/api/v1/attendance-schedules?'.pembimbingSemesterQuery($context))->assertOk()->json('data')
+    )->pluck('id')->all();
+    $alertedSchedules = fn (User $user) => collect(
+        $this->actingAs($user)->getJson('/api/v1/attendance-alerts')->assertOk()->json('data.teachers')
+    )->flatMap(fn (array $teacherGroup) => collect($teacherGroup['items'])->pluck('teaching_schedule_id'))->unique()->values()->all();
+
+    // The holder: listed, alerted for his missed Friday, and records it.
+    expect($attendanceScheduleIds($chalid))->toBe([$scheduleId])
+        ->and($alertedSchedules($chalid))->toBe([$scheduleId]);
+    $this->actingAs($chalid)
+        ->getJson("/api/v1/teaching-schedules/{$scheduleId}/expected-students?session_date=2025-09-19")
+        ->assertOk();
+    $recordPertemuan($chalid, '2025-09-19')->assertCreated();
+    $this->actingAs($chalid)
+        ->getJson('/api/v1/attendance-recaps?'.pembimbingClassSubjectQuery($context, $context['tamhidi']))
+        ->assertOk();
+
+    // A Pembimbing of the class who does not hold the schedule.
+    expect($attendanceScheduleIds($ahmad))->toBe([])
+        ->and($alertedSchedules($ahmad))->toBe([]);
+    $this->actingAs($ahmad)
+        ->getJson("/api/v1/teaching-schedules/{$scheduleId}/expected-students?session_date=2025-09-19")
+        ->assertNotFound();
+    $recordPertemuan($ahmad, '2025-09-19')
+        ->assertForbidden()
+        ->assertJsonPath('message', PEMBIMBING_OUTSIDE_PAIR_MESSAGE);
+    $this->actingAs($ahmad)
+        ->getJson('/api/v1/attendance-recaps?'.pembimbingClassSubjectQuery($context, $context['tamhidi']))
+        ->assertForbidden();
 });
