@@ -2,25 +2,30 @@
 
 namespace App\Http\Requests\Akademik;
 
+use App\Services\Akademik\ClassTaskService;
 use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
  * PUT /class-tasks/{classTask}. Only title, task_date and description can
  * be changed — the class × kitab × semester a task belongs to is fixed at
- * creation. Tenancy is checked here, before ClassTaskService::update() can
- * read the task's own academic_semesters row for the date-range check.
+ * creation. authorize() hides a task of another school or outside the
+ * user's Cakupan Mengajar behind a 404 before the body is validated, and
+ * before ClassTaskService::update() can read the task's own
+ * academic_semesters row for the date-range check. The service repeats the
+ * Cakupan Mengajar check.
  */
 class UpdateClassTaskRequest extends FormRequest
 {
     use EnsuresActiveSchoolTenancy;
 
-    public function authorize(): bool
+    public function authorize(ClassTaskService $classTaskService): bool
     {
         $classTask = $this->route('classTask');
 
         if ($classTask) {
             $this->ensureBelongsToActiveSchool($classTask);
+            $classTaskService->ensureWithinTeachingScope($classTask, 'manage-grades');
         }
 
         return true;

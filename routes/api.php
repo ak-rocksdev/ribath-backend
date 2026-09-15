@@ -216,22 +216,24 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-grades');
     });
 
-    // Class task routes (Penilaian: Tugas per Kelas × Kitab)
+    // Class task routes (Penilaian: Tugas per Kelas × Kitab). "semua" or
+    // "milik sendiri" permission (ADR 0004); ClassTaskService narrows the
+    // latter to the Cakupan Mengajar (a Tugas outside it is not found).
     Route::prefix('class-tasks')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [ClassTaskController::class, 'index'])
-            ->middleware('permission:view-grades');
+            ->middleware('permission:view-grades|view-own-grades');
         Route::post('/', [ClassTaskController::class, 'store'])
-            ->middleware('permission:manage-grades');
+            ->middleware('permission:manage-grades|manage-own-grades');
         Route::get('/{classTask}', [ClassTaskController::class, 'show'])
-            ->middleware('permission:view-grades');
+            ->middleware('permission:view-grades|view-own-grades');
         Route::put('/{classTask}', [ClassTaskController::class, 'update'])
-            ->middleware('permission:manage-grades');
+            ->middleware('permission:manage-grades|manage-own-grades');
         Route::delete('/{classTask}', [ClassTaskController::class, 'destroy'])
-            ->middleware('permission:manage-grades');
+            ->middleware('permission:manage-grades|manage-own-grades');
         Route::get('/{classTask}/scores', [ClassTaskController::class, 'scores'])
-            ->middleware('permission:view-grades');
+            ->middleware('permission:view-grades|view-own-grades');
         Route::put('/{classTask}/scores/bulk', [ClassTaskController::class, 'bulkUpsertScores'])
-            ->middleware('permission:manage-grades');
+            ->middleware('permission:manage-grades|manage-own-grades');
     });
 
     // Class session routes (Absensi: Pertemuan & Absensi per jadwal mengajar)

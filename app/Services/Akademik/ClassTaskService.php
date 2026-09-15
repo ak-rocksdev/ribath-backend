@@ -30,6 +30,12 @@ use Illuminate\Validation\ValidationException;
  * scored_count/student_count and their score cell is rejected by
  * upsertScores(); the frontend grid shows it as "Belum masuk" instead of
  * an editable cell.
+ *
+ * Cakupan Mengajar (ADR 0004): a user holding only the "milik sendiri"
+ * grade permissions works on the Tugas of his own Kelas × Kitab pairs. A
+ * pair chosen in the request outside the scope is refused with 403
+ * (resolveClassSubjectContext); a Tugas bound to the route outside it is
+ * not found (404), like tenancy — see ensureWithinTeachingScope().
  */
 class ClassTaskService
 {
@@ -121,6 +127,13 @@ class ClassTaskService
         return $this->present($task, $students, collect());
     }
 
+    public function show(ClassTask $task): array
+    {
+        $this->ensureWithinTeachingScope($task, 'view-grades');
+
+        return $this->present($task);
+    }
+
     /**
      * @param  array{title?: string, task_date?: string, description?: string|null}  $data
      *
@@ -128,6 +141,8 @@ class ClassTaskService
      */
     public function update(ClassTask $task, array $data): array
     {
+        $this->ensureWithinTeachingScope($task, 'manage-grades');
+
         if (array_key_exists('task_date', $data)) {
             $academicSemester = AcademicSemester::findByPair($task->academic_year_id, $task->semester);
             $this->assertTaskDateWithinSemester($academicSemester, $data['task_date']);
@@ -151,6 +166,8 @@ class ClassTaskService
 
     public function delete(ClassTask $task): void
     {
+        $this->ensureWithinTeachingScope($task, 'manage-grades');
+
         $task->updated_by = auth()->id();
         $task->save();
         $task->delete();
@@ -167,6 +184,8 @@ class ClassTaskService
      */
     public function getScores(ClassTask $task): array
     {
+        $this->ensureWithinTeachingScope($task, 'view-grades');
+
         $students = $this->studentGradeService->listClassStudents($task->class_level_id);
 
         $scores = StudentTaskScore::query()
@@ -207,6 +226,8 @@ class ClassTaskService
      */
     public function upsertScores(ClassTask $task, array $rows): array
     {
+        $this->ensureWithinTeachingScope($task, 'manage-grades');
+
         $classStudents = $this->studentGradeService->listClassStudents($task->class_level_id);
         $classStudentIds = $classStudents->pluck('id')->flip();
 
@@ -280,6 +301,21 @@ class ClassTaskService
             ->all();
     }
 
+    /**
+     * A Tugas outside the user's Cakupan Mengajar is not found (404), the
+     * same answer as a Tugas of another school. The scope is resolved for
+     * the Tugas's own Semester Akademik, so the riwayat pengajar of that
+     * semester counts (ADR 0005).
+     *
+     * @param  string  $allDataPermission  `view-grades` to read the Tugas, `manage-grades` to change or score it
+     */
+    public function ensureWithinTeachingScope(ClassTask $task, string $allDataPermission): void
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $task->academic_year_id, $task->semester);
+
+        abort_unless($teachingScope->includesClassSubjectPair($task->class_level_id, $task->subject_book_id), 404);
+    }
+
     private function assertTaskDateWithinSemester(?AcademicSemester $academicSemester, string $taskDate): void
     {
         if ($academicSemester === null || $academicSemester->start_date === null || $academicSemester->end_date === null) {
@@ -344,7 +380,7 @@ class ClassTaskService
      * @param  Collection<int, Student>|null  $students  the class's students; queried fresh when omitted (e.g. a single-task `show`)
      * @return array<string, mixed>
      */
-    public function present(ClassTask $task, ?Collection $students = null, ?Collection $scoredStudentIds = null): array
+    private function present(ClassTask $task, ?Collection $students = null, ?Collection $scoredStudentIds = null): array
     {
         $students ??= $this->studentGradeService->listClassStudents($task->class_level_id);
 

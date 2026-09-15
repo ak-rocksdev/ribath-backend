@@ -3,10 +3,12 @@
 use App\Models\AcademicYear;
 use App\Models\ClassLevel;
 use App\Models\ClassSession;
+use App\Models\ClassTask;
 use App\Models\GradingTemplate;
 use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentGrade;
+use App\Models\StudentTaskScore;
 use App\Models\SubjectBook;
 use App\Models\SubjectCategory;
 use App\Models\Teacher;
@@ -29,7 +31,9 @@ use Spatie\Permission\Models\Role;
  * Jadwal Mengajar in the chosen Semester Akademik; pengurus and a
  * pengurus who also teaches are never restricted. Ticket 03 (ADR 0005):
  * the riwayat pengajar keeps a pair in the Cakupan Mengajar of the Ustadz
- * who held it earlier in the same semester.
+ * who held it earlier in the same semester. Ticket 04: the Tugas of a pair
+ * inside the Cakupan Mengajar are listed, created, changed, deleted and
+ * scored like pengurus does; a Tugas of another pair is not found (404).
  *
  * Every record the rules depend on is created through the real endpoints:
  * accounts via grant-access, schedules via /teaching-schedules, santri via
@@ -1134,4 +1138,293 @@ test('a santri of another class is rejected per santri inside the Akun Ustadz ow
         ->assertJsonValidationErrors([$context['ibtidaSantri']->id]);
 
     expect(StudentGrade::count())->toBe(0);
+});
+
+// ── Tugas (ticket 04) ────────────────────────────────────────────────────
+
+function teachingScopeTasksUrl(array $context, ClassLevel $classLevel, SubjectBook $subjectBook, int $semester = 1): string
+{
+    return '/api/v1/class-tasks?'.http_build_query([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => $semester,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $subjectBook->id,
+    ]);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function teachingScopeTaskPayload(array $context, ClassLevel $classLevel, SubjectBook $subjectBook, int $semester = 1): array
+{
+    return [
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => $semester,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $subjectBook->id,
+        'title' => 'Hafalan Bab 1',
+        'task_date' => '2025-08-01',
+        'description' => null,
+    ];
+}
+
+/** Creates a Tugas through POST /class-tasks as the given user; returns its id. */
+function createTeachingScopeTask($testCase, User $user, array $context, ClassLevel $classLevel, SubjectBook $subjectBook, int $semester = 1): string
+{
+    return $testCase->actingAs($user)
+        ->postJson('/api/v1/class-tasks', teachingScopeTaskPayload($context, $classLevel, $subjectBook, $semester))
+        ->assertCreated()
+        ->json('data.id');
+}
+
+test('an Akun Ustadz creates, lists, updates, scores and deletes the Tugas of his own pair under his own account', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ahmad = $context['ahmadAccount'];
+    $ali = $context['tamhidiSantri'];
+
+    // Pengurus gave a Tugas to Ahmad's class and already scored it.
+    $pengurusTaskId = createTeachingScopeTask($this, $context['pengurus'], $context, $context['tamhidi'], $context['safinah']);
+    $this->actingAs($context['pengurus'])
+        ->putJson("/api/v1/class-tasks/{$pengurusTaskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 70]]])
+        ->assertOk();
+
+    $ownTaskId = $this->actingAs($ahmad)
+        ->postJson('/api/v1/class-tasks', teachingScopeTaskPayload($context, $context['tamhidi'], $context['safinah']))
+        ->assertCreated()
+        ->assertJsonPath('data.created_by', $ahmad->id)
+        ->json('data.id');
+
+    $listedTaskIds = collect(
+        $this->actingAs($ahmad)
+            ->getJson(teachingScopeTasksUrl($context, $context['tamhidi'], $context['safinah']))
+            ->assertOk()
+            ->json('data')
+    )->pluck('id')->sort()->values()->all();
+    expect($listedTaskIds)->toBe(collect([$pengurusTaskId, $ownTaskId])->sort()->values()->all());
+
+    $this->actingAs($ahmad)
+        ->getJson("/api/v1/class-tasks/{$pengurusTaskId}")
+        ->assertOk()
+        ->assertJsonPath('data.title', 'Hafalan Bab 1');
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$pengurusTaskId}", ['title' => 'Hafalan Bab 1 (Revisi)'])
+        ->assertOk()
+        ->assertJsonPath('data.title', 'Hafalan Bab 1 (Revisi)')
+        ->assertJsonPath('data.updated_by', $ahmad->id);
+    $this->actingAs($ahmad)
+        ->getJson("/api/v1/class-tasks/{$pengurusTaskId}/scores")
+        ->assertOk()
+        ->assertJsonCount(1, 'data.students')
+        ->assertJsonPath("data.scores.{$ali->id}.score", 70);
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$pengurusTaskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 85]]])
+        ->assertOk();
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$ownTaskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 90]]])
+        ->assertOk();
+
+    // The audit columns name the Akun Ustadz for everything he wrote.
+    $pengurusTask = ClassTask::findOrFail($pengurusTaskId);
+    expect($pengurusTask->created_by)->toBe($context['pengurus']->id)
+        ->and($pengurusTask->updated_by)->toBe($ahmad->id);
+    $rescoredScore = StudentTaskScore::where('class_task_id', $pengurusTaskId)->where('student_id', $ali->id)->sole();
+    expect((float) $rescoredScore->score)->toBe(85.0)
+        ->and($rescoredScore->created_by)->toBe($context['pengurus']->id)
+        ->and($rescoredScore->updated_by)->toBe($ahmad->id);
+    $ownTaskScore = StudentTaskScore::where('class_task_id', $ownTaskId)->where('student_id', $ali->id)->sole();
+    expect($ownTaskScore->created_by)->toBe($ahmad->id)
+        ->and($ownTaskScore->updated_by)->toBe($ahmad->id);
+
+    $this->actingAs($ahmad)->deleteJson("/api/v1/class-tasks/{$ownTaskId}")->assertOk();
+    expect(ClassTask::find($ownTaskId))->toBeNull()
+        ->and(ClassTask::withTrashed()->findOrFail($ownTaskId)->updated_by)->toBe($ahmad->id);
+});
+
+test('a Tugas outside the Cakupan Mengajar is not found for an Akun Ustadz, even before its body is validated', function () {
+    $context = setUpTeachingScopeContext($this);
+    $zaid = $context['ibtidaSantri'];
+
+    // Ibtida 1 × Jurumiyah is Bakar's pair.
+    $bakarTaskId = createTeachingScopeTask($this, $context['bakarAccount'], $context, $context['ibtida'], $context['jurumiyah']);
+    $this->actingAs($context['bakarAccount'])
+        ->putJson("/api/v1/class-tasks/{$bakarTaskId}/scores/bulk", ['rows' => [['student_id' => $zaid->id, 'score' => 75]]])
+        ->assertOk();
+
+    $ahmad = $context['ahmadAccount'];
+    $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$bakarTaskId}")->assertNotFound();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$bakarTaskId}", ['title' => 'Diubah Ahmad'])->assertNotFound();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$bakarTaskId}", ['title' => ''])->assertNotFound();
+    $this->actingAs($ahmad)->deleteJson("/api/v1/class-tasks/{$bakarTaskId}")->assertNotFound();
+    $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$bakarTaskId}/scores")->assertNotFound();
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$bakarTaskId}/scores/bulk", ['rows' => [['student_id' => $zaid->id, 'score' => 10]]])
+        ->assertNotFound();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$bakarTaskId}/scores/bulk", ['rows' => []])->assertNotFound();
+
+    $bakarTask = ClassTask::findOrFail($bakarTaskId);
+    expect($bakarTask->title)->toBe('Hafalan Bab 1')
+        ->and($bakarTask->updated_by)->toBe($context['bakarAccount']->id)
+        ->and((float) StudentTaskScore::where('class_task_id', $bakarTaskId)->sole()->score)->toBe(75.0);
+
+    $this->actingAs($context['bakarAccount'])->getJson("/api/v1/class-tasks/{$bakarTaskId}")->assertOk();
+});
+
+test('a pair outside the Cakupan Mengajar is rejected with 403 on the Tugas list and on create', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Bakar's pair, then a pair nobody teaches.
+    foreach ([[$context['ibtida'], $context['jurumiyah']], [$context['tamhidi'], $context['jurumiyah']]] as [$classLevel, $subjectBook]) {
+        $this->actingAs($context['ahmadAccount'])
+            ->getJson(teachingScopeTasksUrl($context, $classLevel, $subjectBook))
+            ->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+
+        $this->actingAs($context['ahmadAccount'])
+            ->postJson('/api/v1/class-tasks', teachingScopeTaskPayload($context, $classLevel, $subjectBook))
+            ->assertForbidden()
+            ->assertJsonPath('message', TEACHING_SCOPE_OUTSIDE_MESSAGE);
+    }
+
+    expect(ClassTask::count())->toBe(0);
+});
+
+test('pengurus and a pengurus who also teaches manage the Tugas of every pair', function () {
+    $context = setUpTeachingScopeContext($this);
+    $zaid = $context['ibtidaSantri'];
+
+    $pengurusYangMengajar = Teacher::factory()->create(['school_id' => $context['school']->id, 'full_name' => 'Ustadz Pengurus', 'user_id' => null]);
+    $multiRoleAccount = grantTeachingScopeAccess($this, $context, $pengurusYangMengajar, 'pengurus.ustadz@example.com');
+    $this->actingAs($context['superAdmin'])
+        ->postJson("/api/v1/users/{$multiRoleAccount->id}/roles", ['roles' => ['ustadz', 'pengurus_pesantren']])
+        ->assertOk();
+    createTeachingScopeSchedule($this, $context, $context['tamhidi'], $context['jurumiyah'], $pengurusYangMengajar, 'wednesday');
+
+    // Ibtida 1 × Jurumiyah is Bakar's pair, outside both users' own teaching.
+    foreach ([$context['pengurus'], $multiRoleAccount] as $unrestrictedUser) {
+        $taskId = createTeachingScopeTask($this, $unrestrictedUser, $context, $context['ibtida'], $context['jurumiyah']);
+
+        $this->actingAs($unrestrictedUser)
+            ->getJson(teachingScopeTasksUrl($context, $context['ibtida'], $context['jurumiyah']))
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $taskId);
+        $this->actingAs($unrestrictedUser)->getJson("/api/v1/class-tasks/{$taskId}")->assertOk();
+        $this->actingAs($unrestrictedUser)->putJson("/api/v1/class-tasks/{$taskId}", ['title' => 'Revisi'])->assertOk();
+        $this->actingAs($unrestrictedUser)->getJson("/api/v1/class-tasks/{$taskId}/scores")->assertOk();
+        $this->actingAs($unrestrictedUser)
+            ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $zaid->id, 'score' => 80]]])
+            ->assertOk();
+        $this->actingAs($unrestrictedUser)->deleteJson("/api/v1/class-tasks/{$taskId}")->assertOk();
+
+        expect(ClassTask::withTrashed()->findOrFail($taskId)->updated_by)->toBe($unrestrictedUser->id);
+    }
+});
+
+test('the Semester Akademik of the Tugas itself decides whether it is in the Cakupan Mengajar', function () {
+    $context = setUpTeachingScopeContext($this);
+
+    // Ahmad teaches Jurumiyah to Ibtida 1 only in semester 2; in semester 1 it is Bakar's.
+    createTeachingScopeSchedule($this, $context, $context['ibtida'], $context['jurumiyah'], $context['ustadzAhmad'], 'wednesday', semester: 2);
+    $semesterOneTaskId = createTeachingScopeTask($this, $context['pengurus'], $context, $context['ibtida'], $context['jurumiyah'], semester: 1);
+    $semesterTwoTaskId = createTeachingScopeTask($this, $context['pengurus'], $context, $context['ibtida'], $context['jurumiyah'], semester: 2);
+
+    $this->actingAs($context['ahmadAccount'])->getJson("/api/v1/class-tasks/{$semesterTwoTaskId}")->assertOk();
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson("/api/v1/class-tasks/{$semesterTwoTaskId}", ['title' => 'Revisi Semester 2'])
+        ->assertOk();
+
+    $this->actingAs($context['ahmadAccount'])->getJson("/api/v1/class-tasks/{$semesterOneTaskId}")->assertNotFound();
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson("/api/v1/class-tasks/{$semesterOneTaskId}", ['title' => 'Revisi Semester 1'])
+        ->assertNotFound();
+});
+
+test('the Tugas of a schedule moved through the bulk ganti ustadz stay open to the former and the new Ustadz', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+
+    $taskId = createTeachingScopeTask($this, $context['ahmadAccount'], $context, $context['tamhidi'], $context['safinah']);
+    replaceTeachingScopeTeacher($this, $context, $context['ustadzAhmad'], $context['ustadzBakar']);
+
+    $this->actingAs($context['bakarAccount'])
+        ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 80]]])
+        ->assertOk();
+    $this->actingAs($context['ahmadAccount'])
+        ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 82]]])
+        ->assertOk();
+    $this->actingAs($context['ahmadAccount'])
+        ->getJson(teachingScopeTasksUrl($context, $context['tamhidi'], $context['safinah']))
+        ->assertOk()
+        ->assertJsonPath('data.0.id', $taskId);
+
+    $score = StudentTaskScore::where('class_task_id', $taskId)->sole();
+    expect($score->created_by)->toBe($context['bakarAccount']->id)
+        ->and($score->updated_by)->toBe($context['ahmadAccount']->id);
+});
+
+test('viewing grades within the Cakupan Mengajar does not allow managing Tugas', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ali = $context['tamhidiSantri'];
+    $taskId = createTeachingScopeTask($this, $context['pengurus'], $context, $context['tamhidi'], $context['safinah']);
+
+    $viewOnlyRole = Role::firstOrCreate(['name' => 'ustadz_baca_saja', 'guard_name' => 'web']);
+    $viewOnlyRole->syncPermissions(['view-own-grades']);
+    $context['ahmadAccount']->syncRoles([$viewOnlyRole]);
+    $ahmad = $context['ahmadAccount'];
+
+    $this->actingAs($ahmad)->getJson(teachingScopeTasksUrl($context, $context['tamhidi'], $context['safinah']))->assertOk();
+    $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$taskId}")->assertOk();
+    $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$taskId}/scores")->assertOk();
+
+    $this->actingAs($ahmad)
+        ->postJson('/api/v1/class-tasks', teachingScopeTaskPayload($context, $context['tamhidi'], $context['safinah']))
+        ->assertForbidden();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$taskId}", ['title' => 'Revisi'])->assertForbidden();
+    $this->actingAs($ahmad)->deleteJson("/api/v1/class-tasks/{$taskId}")->assertForbidden();
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $ali->id, 'score' => 80]]])
+        ->assertForbidden();
+
+    expect(ClassTask::count())->toBe(1)
+        ->and(ClassTask::findOrFail($taskId)->title)->toBe('Hafalan Bab 1')
+        ->and(StudentTaskScore::count())->toBe(0);
+});
+
+test('an Akun Ustadz gets the same validation and tenancy answers on Tugas as pengurus', function () {
+    $context = setUpTeachingScopeContext($this);
+    $ahmad = $context['ahmadAccount'];
+    $taskId = createTeachingScopeTask($this, $ahmad, $context, $context['tamhidi'], $context['safinah']);
+
+    $this->actingAs($ahmad)
+        ->postJson('/api/v1/class-tasks', array_merge(teachingScopeTaskPayload($context, $context['tamhidi'], $context['safinah']), ['title' => '']))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['title']);
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$taskId}", ['task_date' => 'bukan-tanggal'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['task_date']);
+    $this->actingAs($ahmad)
+        ->putJson("/api/v1/class-tasks/{$taskId}/scores/bulk", ['rows' => [['student_id' => $context['ibtidaSantri']->id, 'score' => 80]]])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([$context['ibtidaSantri']->id]);
+
+    $otherSchool = School::factory()->create();
+    $otherSchoolTask = ClassTask::create([
+        'school_id' => $otherSchool->id,
+        'class_level_id' => ClassLevel::factory()->create(['school_id' => $otherSchool->id])->id,
+        'subject_book_id' => SubjectBook::factory()->create([
+            'school_id' => $otherSchool->id,
+            'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $otherSchool->id])->id,
+        ])->id,
+        'academic_year_id' => AcademicYear::factory()->create(['school_id' => $otherSchool->id])->id,
+        'semester' => 1,
+        'title' => 'Tugas Sekolah Lain',
+        'task_date' => '2025-08-01',
+    ]);
+
+    $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$otherSchoolTask->id}")->assertNotFound();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$otherSchoolTask->id}", ['title' => 'X'])->assertNotFound();
+    $this->actingAs($ahmad)->deleteJson("/api/v1/class-tasks/{$otherSchoolTask->id}")->assertNotFound();
+    $this->actingAs($ahmad)->getJson("/api/v1/class-tasks/{$otherSchoolTask->id}/scores")->assertNotFound();
+    $this->actingAs($ahmad)->putJson("/api/v1/class-tasks/{$otherSchoolTask->id}/scores/bulk", ['rows' => []])->assertNotFound();
 });

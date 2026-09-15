@@ -45,7 +45,7 @@ class ClassTaskController extends Controller
     {
         $this->ensureBelongsToActiveSchool($classTask);
 
-        return $this->successResponse($this->classTaskService->present($classTask), 'Tugas berhasil diambil');
+        return $this->successResponse($this->classTaskService->show($classTask), 'Tugas berhasil diambil');
     }
 
     public function update(UpdateClassTaskRequest $request, ClassTask $classTask): JsonResponse

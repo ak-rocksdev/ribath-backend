@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Akademik;
 
+use App\Services\Akademik\ClassTaskService;
 use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -9,19 +10,22 @@ use Illuminate\Foundation\Http\FormRequest;
  * Structural validation of PUT /class-tasks/{classTask}/scores/bulk.
  * Per-student checks (in the class, not duplicated) and the score's
  * type/range live in ClassTaskService::upsertScores() so errors are keyed
- * "<student_id>" instead of a row index. Tenancy is checked here, before
- * the controller reads the route-bound task.
+ * "<student_id>" instead of a row index. authorize() hides a task of
+ * another school or outside the user's Cakupan Mengajar behind a 404
+ * before the body is validated; the service repeats the Cakupan Mengajar
+ * check.
  */
 class BulkUpsertClassTaskScoresRequest extends FormRequest
 {
     use EnsuresActiveSchoolTenancy;
 
-    public function authorize(): bool
+    public function authorize(ClassTaskService $classTaskService): bool
     {
         $classTask = $this->route('classTask');
 
         if ($classTask) {
             $this->ensureBelongsToActiveSchool($classTask);
+            $classTaskService->ensureWithinTeachingScope($classTask, 'manage-grades');
         }
 
         return true;
