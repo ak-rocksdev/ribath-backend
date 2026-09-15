@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Admin;
 
+use App\Models\School;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -14,6 +15,8 @@ class UpdateStudentRequest extends FormRequest
 
     public function rules(): array
     {
+        $activeSchool = School::activeOrFail();
+
         return [
             // Core student fields
             'full_name' => ['sometimes', 'string', 'max:100'],
@@ -29,7 +32,10 @@ class UpdateStudentRequest extends FormRequest
             'motivation' => ['nullable', 'string', 'max:2000'],
             'program' => ['sometimes', Rule::in(['tahfidz', 'regular'])],
             'entry_date' => ['sometimes', 'date'],
-            'class_level' => ['nullable', 'string', 'exists:class_levels,slug'],
+            // Scoped to the active school: StudentService resolves class_level_id
+            // from this slug within the school, so a slug that only exists
+            // elsewhere would change class_level while leaving class_level_id stale.
+            'class_level' => ['nullable', 'string', Rule::exists('class_levels', 'slug')->where('school_id', $activeSchool->id)],
             'address' => ['nullable', 'string', 'max:500'],
             'notes' => ['nullable', 'string'],
             'guardian_user_id' => ['nullable', 'exists:users,id'],

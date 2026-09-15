@@ -30,6 +30,15 @@ function createPengurusPesantren(): User
     return $user;
 }
 
+/**
+ * A student of the active school — the update endpoint 404s for any other
+ * (tenancy), and StudentFactory leaves school_id null.
+ */
+function createActiveSchoolStudent(): Student
+{
+    return Student::factory()->create(['school_id' => School::where('is_active', true)->value('id')]);
+}
+
 // Auth & Authorization
 test('unauthenticated user cannot access students', function () {
     $this->getJson('/api/v1/students')
@@ -294,7 +303,7 @@ test('show student includes all profile relationships', function () {
 // Update Student
 test('update student', function () {
     $admin = createStudentAdmin();
-    $student = Student::factory()->create();
+    $student = createActiveSchoolStudent();
 
     $this->actingAs($admin)
         ->putJson("/api/v1/students/{$student->id}", [
@@ -324,7 +333,7 @@ test('update student resolves class_level_id from the class_level slug', functio
 
 test('update student with nested relations', function () {
     $admin = createStudentAdmin();
-    $student = Student::factory()->create();
+    $student = createActiveSchoolStudent();
 
     $response = $this->actingAs($admin)
         ->putJson("/api/v1/students/{$student->id}", [
@@ -361,7 +370,7 @@ test('update student with nested relations', function () {
 
 test('update nested relations upserts existing data', function () {
     $admin = createStudentAdmin();
-    $student = Student::factory()->create();
+    $student = createActiveSchoolStudent();
 
     // Create initial data
     $student->parents()->create(['relation' => 'father', 'name' => 'Old Name', 'phone' => '08111']);

@@ -7,17 +7,22 @@ use App\Http\Requests\Admin\StoreStudentRequest;
 use App\Http\Requests\Admin\UpdateStudentRequest;
 use App\Http\Requests\Admin\UpdateStudentStatusRequest;
 use App\Models\Student;
+use App\Services\Akademik\StudentClassChangeImpactService;
 use App\Services\StudentCompletionService;
 use App\Services\StudentService;
+use App\Traits\EnsuresActiveSchoolTenancy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class StudentController extends Controller
 {
+    use EnsuresActiveSchoolTenancy;
+
     public function __construct(
         private StudentService $studentService,
         private StudentCompletionService $completionService,
+        private StudentClassChangeImpactService $classChangeImpactService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -52,9 +57,24 @@ class StudentController extends Controller
 
     public function update(UpdateStudentRequest $request, Student $student): JsonResponse
     {
+        $this->ensureBelongsToActiveSchool($student);
+
         $updatedStudent = $this->studentService->updateStudent($student, $request->validated());
 
         return $this->successResponse($updatedStudent, 'Student updated');
+    }
+
+    /**
+     * What the Kelas & Program correction dialog warns about: the santri's
+     * Penilaian records in the active Semester Akademik (ticket 20).
+     */
+    public function classChangeImpact(Student $student): JsonResponse
+    {
+        $this->ensureBelongsToActiveSchool($student);
+
+        $impact = $this->classChangeImpactService->impactFor($student);
+
+        return $this->successResponse($impact, 'Dampak perubahan kelas santri berhasil diambil');
     }
 
     public function destroy(Student $student): JsonResponse

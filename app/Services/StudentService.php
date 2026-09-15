@@ -121,13 +121,20 @@ class StudentService
     }
 
     /**
-     * When a class_level slug is given without an explicit class_level_id,
-     * resolve it from the class_levels table for the given school so new or
-     * updated students never end up with a NULL class_level_id again.
+     * Keeps class_level_id in step with the class_level slug: a given slug
+     * resolves to the school's class level id, and a cleared slug clears the
+     * id — Penilaian defines class membership by the id, so a stale id would
+     * keep the santri in the old class's roster.
      */
     private function resolveClassLevelId(array &$data, ?string $schoolId): void
     {
-        if (empty($data['class_level']) || array_key_exists('class_level_id', $data) || $schoolId === null) {
+        if (! array_key_exists('class_level', $data) || array_key_exists('class_level_id', $data)) {
+            return;
+        }
+
+        if (empty($data['class_level'])) {
+            $data['class_level_id'] = null;
+
             return;
         }
 

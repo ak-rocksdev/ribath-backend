@@ -134,7 +134,7 @@ test('creating student with missing fields leaves profile_completed_at null', fu
 });
 
 test('updating student to fill all fields sets profile_completed_at', function () {
-    $student = Student::factory()->incompleteProfile()->create();
+    $student = Student::factory()->incompleteProfile()->create(['school_id' => School::where('is_active', true)->value('id')]);
     expect($student->profile_completed_at)->toBeNull();
 
     $response = $this->actingAs($this->admin)
@@ -150,7 +150,7 @@ test('updating student to fill all fields sets profile_completed_at', function (
 });
 
 test('updating student to clear a required field clears profile_completed_at', function () {
-    $student = Student::factory()->profileComplete()->create();
+    $student = Student::factory()->profileComplete()->create(['school_id' => School::where('is_active', true)->value('id')]);
     expect($student->profile_completed_at)->not->toBeNull();
 
     $response = $this->actingAs($this->admin)
