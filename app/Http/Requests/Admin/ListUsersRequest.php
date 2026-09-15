@@ -18,15 +18,18 @@ class ListUsersRequest extends FormRequest
 
     /**
      * Query strings carry "true"/"false"; turn them into booleans so the
-     * boolean rule accepts them. Anything else stays as sent and fails.
+     * boolean rule accepts them. An empty value means no status filter;
+     * anything else stays as sent and fails.
      */
     protected function prepareForValidation(): void
     {
-        if (! $this->has('is_active')) {
+        $requestedStatus = $this->query('is_active');
+
+        if ($requestedStatus === null || $requestedStatus === '') {
             return;
         }
 
-        $isActive = filter_var($this->query('is_active'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        $isActive = filter_var($requestedStatus, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 
         if ($isActive !== null) {
             $this->merge(['is_active' => $isActive]);

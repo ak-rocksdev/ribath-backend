@@ -5,6 +5,8 @@ use App\Models\Teacher;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Testing\TestResponse;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 /*
@@ -153,6 +155,17 @@ test('the role, search and status filters combine', function () {
         ->and(listedEmails($activeUstadzResponse))->toBe(['pengurus-ustadz@example.com']);
 });
 
+test('an empty status filter lists active and inactive accounts', function () {
+    $this->actingAs($this->superAdmin)
+        ->patchJson("/api/v1/users/{$this->ustadzAccount->id}/toggle-status")
+        ->assertOk();
+
+    $response = $this->actingAs($this->superAdmin)->getJson('/api/v1/users?is_active=')->assertOk();
+
+    expect($response->json('meta.total'))->toBe(4)
+        ->and(collect($response->json('data'))->pluck('is_active')->unique()->sort()->values()->all())->toBe([false, true]);
+});
+
 test('the list paginates with the requested page size', function () {
     $response = $this->actingAs($this->superAdmin)->getJson('/api/v1/users?per_page=3&page=2')->assertOk();
 
@@ -203,6 +216,7 @@ test('the summary counts the accounts of the active school per status and role',
                 'total' => 4,
                 'active' => 3,
                 'inactive' => 1,
+                'administrators' => 3,
                 'by_role' => [
                     'super_admin' => 1,
                     'pengurus_pesantren' => 2,
@@ -210,6 +224,29 @@ test('the summary counts the accounts of the active school per status and role',
                 ],
             ],
         ]);
+});
+
+test('the summary counts an administrator account once however many admin roles it holds', function () {
+    // super_admin + pengurus_pesantren on one account, and a second pengurus_* role.
+    $this->actingAs($this->superAdmin)
+        ->postJson("/api/v1/users/{$this->superAdmin->id}/roles", ['roles' => ['super_admin', 'pengurus_pesantren']])
+        ->assertOk();
+    Role::create(['name' => 'pengurus_keuangan', 'guard_name' => 'web']);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $this->actingAs($this->superAdmin)
+        ->postJson("/api/v1/users/{$this->pengurus->id}/roles", ['roles' => ['pengurus_pesantren', 'pengurus_keuangan']])
+        ->assertOk();
+    // A name that only looks like a pengurus role when "_" is read as a LIKE wildcard.
+    $lookalikeAccount = User::factory()->create(['school_id' => $this->school->id]);
+    $lookalikeAccount->assignRole(Role::create(['name' => 'pengurusXkeuangan', 'guard_name' => 'web']));
+
+    $this->actingAs($this->superAdmin)->getJson('/api/v1/users/summary')
+        ->assertOk()
+        ->assertJsonPath('data.total', 5)
+        ->assertJsonPath('data.by_role.super_admin', 1)
+        ->assertJsonPath('data.by_role.pengurus_pesantren', 3)
+        ->assertJsonPath('data.by_role.pengurus_keuangan', 1)
+        ->assertJsonPath('data.administrators', 3);
 });
 
 test('the summary leaves out deleted accounts', function () {

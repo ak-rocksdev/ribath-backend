@@ -44,9 +44,10 @@ class UserService
 
     /**
      * Account counts of the active school for the Akun Pengguna statistics:
-     * every role is listed, a multi-role account counts under each of its roles.
+     * every role is listed, a multi-role account counts under each of its roles,
+     * while `administrators` counts each account holding an administrator role once.
      *
-     * @return array{total: int, active: int, inactive: int, by_role: array<string, int>}
+     * @return array{total: int, active: int, inactive: int, administrators: int, by_role: array<string, int>}
      */
     public function summarizeUsers(): array
     {
@@ -65,20 +66,37 @@ class UserService
             ->selectRaw('account_roles.role_id, COUNT(*) as account_count')
             ->pluck('account_count', 'role_id');
 
-        $accountCountsByRole = Role::query()
-            ->orderBy('id')
-            ->pluck('name', 'id')
+        $roleNamesById = Role::query()->orderBy('id')->pluck('name', 'id');
+
+        $accountCountsByRole = $roleNamesById
             ->mapWithKeys(fn (string $roleName, int $roleId) => [
                 $roleName => (int) ($accountCountsByRoleId[$roleId] ?? 0),
             ])
             ->all();
 
+        // Matched against explicit names rather than a LIKE pattern, where "_" is a wildcard.
+        $administratorRoleNames = $roleNamesById
+            ->filter(fn (string $roleName) => $this->isAdministratorRole($roleName))
+            ->values()
+            ->all();
+
+        $administratorAccounts = User::where('school_id', $activeSchoolId)
+            ->whereHas('roles', fn ($rolesQuery) => $rolesQuery->whereIn('name', $administratorRoleNames))
+            ->count();
+
         return [
             'total' => $totalAccounts,
             'active' => $activeAccounts,
             'inactive' => $totalAccounts - $activeAccounts,
+            'administrators' => $administratorAccounts,
             'by_role' => $accountCountsByRole,
         ];
+    }
+
+    /** Administrator roles: super_admin and every pengurus_* role. */
+    private function isAdministratorRole(string $roleName): bool
+    {
+        return $roleName === 'super_admin' || str_starts_with($roleName, 'pengurus_');
     }
 
     public function createUser(array $data): User
