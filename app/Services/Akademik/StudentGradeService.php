@@ -3,6 +3,7 @@
 namespace App\Services\Akademik;
 
 use App\Exceptions\FinalizedReportCardException;
+use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\AcademicSemester;
 use App\Models\ClassLevel;
 use App\Models\GradingFactor;
@@ -48,6 +49,7 @@ class StudentGradeService
     public function __construct(
         private GradableSubjectService $gradableSubjectService,
         private FinalizedReportCardGuard $finalizedReportCardGuard,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
@@ -64,7 +66,8 @@ class StudentGradeService
      */
     public function getGrid(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
     {
-        $gridContext = $this->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-grades', $academicYearId, $semester);
+        $gridContext = $this->resolveClassSubjectContext($teachingScope, $academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $subjectBook = $gridContext->subjectBook;
         $manualTemplateFactors = $gridContext->templateFactors
@@ -135,10 +138,12 @@ class StudentGradeService
      *
      * @throws ValidationException
      * @throws FinalizedReportCardException a submitted santri's Rapor is final for the semester (keyed by student id)
+     * @throws OutsideTeachingScopeException the pair is outside the current user's Cakupan Mengajar
      */
     public function upsertGrid(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId, array $rows): array
     {
-        $gridContext = $this->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('manage-grades', $academicYearId, $semester);
+        $gridContext = $this->resolveClassSubjectContext($teachingScope, $academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $templateFactorsByCode = $gridContext->templateFactors->keyBy(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor->code);
         $gradedStudentIds = $this->listGradedStudents($gridContext)->pluck('id')->flip();
@@ -314,19 +319,27 @@ class StudentGradeService
     }
 
     /**
-     * Validates a Kelas × Kitab selection for a semester akademik — the kitab
-     * has a template, the pair is scheduled (GradableSubjectService) and the
-     * semester is configured, checked in that order — and returns the kitab
-     * (with its template), the academic_semesters row and the template's
-     * weight rows for the semester (with gradingFactor, by sort_order).
+     * Validates a Kelas × Kitab selection for a semester akademik — the pair
+     * is inside $teachingScope (403), the kitab has a template, the pair is
+     * scheduled (GradableSubjectService) and the semester is configured,
+     * checked in that order — and returns the kitab (with its template),
+     * the academic_semesters row and the template's weight rows for the
+     * semester (with gradingFactor, by sort_order).
      *
-     * Shared by the grade grid and the grade recap so both reject the same
-     * selections with the same messages.
+     * Shared by the grade grid, the grade recap and the tasks so all reject
+     * the same selections with the same messages. The Cakupan Mengajar is
+     * checked first, so a user limited to it learns nothing about a pair
+     * outside it.
      *
+     * @param  TeachingScope  $teachingScope  what the current user may work on (TeachingScopeResolver)
+     *
+     * @throws OutsideTeachingScopeException
      * @throws ValidationException
      */
-    public function resolveClassSubjectContext(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): ClassSubjectGradingContext
+    public function resolveClassSubjectContext(TeachingScope $teachingScope, string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): ClassSubjectGradingContext
     {
+        $teachingScope->assertIncludesClassSubjectPair($classLevelId, $subjectBookId);
+
         $school = School::activeOrFail();
 
         $subjectBook = SubjectBook::where('school_id', $school->id)

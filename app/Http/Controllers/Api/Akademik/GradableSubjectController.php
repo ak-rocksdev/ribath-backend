@@ -17,7 +17,7 @@ class GradableSubjectController extends Controller
     {
         $data = $request->validated();
 
-        $gradableSubjects = $this->gradableSubjectService->listForSemester(
+        $gradableSubjects = $this->gradableSubjectService->listForCurrentUser(
             $data['academic_year_id'],
             (int) $data['semester'],
             $data['class_level_id'] ?? null,

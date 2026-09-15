@@ -8,6 +8,7 @@ use App\Models\School;
 use App\Models\Student;
 use App\Models\SubjectBook;
 use App\Models\TeachingSchedule;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -22,7 +23,8 @@ use Illuminate\Support\Collection;
  *
  * listForSemester() and isGradablePair() share both sources of pairs
  * (activeSchedulesQuery + tahfizhTargetPairs), so any later rule is added
- * in one place.
+ * in one place. listForCurrentUser() narrows the list to the pairs the
+ * current user may work on (TeachingScopeResolver, Cakupan Mengajar).
  */
 class GradableSubjectService
 {
@@ -71,6 +73,25 @@ class GradableSubjectService
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * The gradable pairs of the semester (listForSemester()) that the
+     * current user may grade: all of them with `view-grades`, only those
+     * inside his Cakupan Mengajar with `view-own-grades` alone.
+     *
+     * @return array<int, array<string, mixed>> same shape as listForSemester()
+     *
+     * @throws AuthorizationException the user holds neither permission
+     */
+    public function listForCurrentUser(string $academicYearId, int $semester, ?string $classLevelId = null): array
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-grades', $academicYearId, $semester);
+
+        return array_values(array_filter(
+            $this->listForSemester($academicYearId, $semester, $classLevelId),
+            fn (array $pair) => $teachingScope->includesClassSubjectPair($pair['class_level_id'], $pair['subject_book_id']),
+        ));
     }
 
     /**
@@ -200,6 +221,7 @@ class GradableSubjectService
 
     public function __construct(
         private TahfizhSubjectBookResolver $tahfizhSubjectBookResolver,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**

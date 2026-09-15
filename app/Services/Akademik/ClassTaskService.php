@@ -44,6 +44,7 @@ class ClassTaskService
     public function __construct(
         private StudentGradeService $studentGradeService,
         private FinalizedReportCardGuard $finalizedReportCardGuard,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
@@ -54,7 +55,8 @@ class ClassTaskService
      */
     public function list(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
     {
-        $this->studentGradeService->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-grades', $academicYearId, $semester);
+        $this->studentGradeService->resolveClassSubjectContext($teachingScope, $academicYearId, $semester, $classLevelId, $subjectBookId);
 
         $students = $this->studentGradeService->listClassStudents($classLevelId);
 
@@ -90,7 +92,9 @@ class ClassTaskService
      */
     public function create(array $data): array
     {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('manage-grades', $data['academic_year_id'], (int) $data['semester']);
         $context = $this->studentGradeService->resolveClassSubjectContext(
+            $teachingScope,
             $data['academic_year_id'],
             (int) $data['semester'],
             $data['class_level_id'],

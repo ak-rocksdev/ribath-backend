@@ -50,6 +50,7 @@ class GradeRecapService
         private GradeWeightNormalizer $gradeWeightNormalizer,
         private FinalGradeCalculator $finalGradeCalculator,
         private ReportCardSnapshot $reportCardSnapshot,
+        private TeachingScopeResolver $teachingScopeResolver,
     ) {}
 
     /**
@@ -64,7 +65,8 @@ class GradeRecapService
      */
     public function recapForClassSubject(string $academicYearId, int $semester, string $classLevelId, string $subjectBookId): array
     {
-        $gradingContext = $this->studentGradeService->resolveClassSubjectContext($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser('view-grades', $academicYearId, $semester);
+        $gradingContext = $this->studentGradeService->resolveClassSubjectContext($teachingScope, $academicYearId, $semester, $classLevelId, $subjectBookId);
         $academicSemester = $gradingContext->academicSemester;
         $templateFactors = $gradingContext->templateFactors;
         $gradingFactors = $templateFactors->map(fn (GradingTemplateFactor $templateFactor) => $templateFactor->gradingFactor);

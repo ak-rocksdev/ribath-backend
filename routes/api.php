@@ -181,15 +181,17 @@ Route::prefix('v1')->group(function () {
             ->middleware('permission:manage-grading-settings');
     });
 
-    // Grade grid routes (Penilaian: Input Nilai per Kelas × Kitab)
+    // Grade grid routes (Penilaian: Input Nilai, Adab & Keaktifan per Kelas × Kitab).
+    // "semua" or "milik sendiri" permission (ADR 0004); the services narrow the
+    // latter to the user's Cakupan Mengajar (TeachingScopeResolver).
     Route::get('/gradable-subjects', [GradableSubjectController::class, 'index'])
-        ->middleware(['auth:sanctum', 'permission:view-grades']);
+        ->middleware(['auth:sanctum', 'permission:view-grades|view-own-grades']);
 
     Route::prefix('student-grades')->middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [StudentGradeController::class, 'index'])
-            ->middleware('permission:view-grades');
+            ->middleware('permission:view-grades|view-own-grades');
         Route::put('/bulk', [StudentGradeController::class, 'bulkUpsert'])
-            ->middleware('permission:manage-grades');
+            ->middleware('permission:manage-grades|manage-own-grades');
     });
 
     // Grade recap routes (Penilaian: Rekap Nilai, computed live)
