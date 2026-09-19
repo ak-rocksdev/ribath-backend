@@ -1201,3 +1201,23 @@ test('a Pertemuan for a schedule left without a Kelas is refused with a clear me
 
     expect(ClassSession::count())->toBe(0);
 });
+
+test('a user who may see all attendance is not narrowed by a schedule without a Kelas', function () {
+    $context = setUpClassSessionContext();
+
+    // "Tidak dibatasi berarti semuanya": a pengurus sees every schedule of
+    // the semester, including one left without a Kelas, so he can repair it.
+    $context['schedule']->classLevels()->detach();
+
+    $scheduleIds = collect($this->actingAs($context['pengurus'])
+        ->getJson('/api/v1/attendance-schedules?'.http_build_query([
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+        ]))
+        ->assertOk()
+        ->json('data'))
+        ->pluck('id')
+        ->all();
+
+    expect($scheduleIds)->toEqual([$context['schedule']->id]);
+});

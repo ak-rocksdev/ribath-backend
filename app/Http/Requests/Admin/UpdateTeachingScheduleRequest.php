@@ -26,6 +26,20 @@ class UpdateTeachingScheduleRequest extends FormRequest
 
     public const MESSAGE_SEMESTER_AKADEMIK_IS_FIXED = 'Semester Akademik jadwal tidak dapat diubah; salin jadwal ke semester lain.';
 
+    /**
+     * @deprecated Jendela deploy saja: SPA lama mengirim satu
+     * `class_level_id`, diterima sebagai `class_level_ids: [id]`. Dihapus
+     * pada rilis berikutnya, setelah frontend rilis.
+     */
+    protected function prepareForValidation(): void
+    {
+        $singleClassLevelId = $this->input('class_level_id');
+
+        if ($singleClassLevelId !== null && $this->input('class_level_ids') === null) {
+            $this->merge(['class_level_ids' => [$singleClassLevelId]]);
+        }
+    }
+
     public function authorize(): bool
     {
         $teachingSchedule = $this->route('teachingSchedule');

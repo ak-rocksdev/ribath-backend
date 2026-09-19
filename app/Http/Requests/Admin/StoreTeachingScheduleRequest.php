@@ -25,6 +25,20 @@ class StoreTeachingScheduleRequest extends FormRequest
         'class_level_ids.*.exists' => 'Kelas yang dipilih tidak ditemukan.',
     ];
 
+    /**
+     * @deprecated Jendela deploy saja: SPA lama mengirim satu
+     * `class_level_id`, diterima sebagai `class_level_ids: [id]`. Dihapus
+     * pada rilis berikutnya, setelah frontend rilis.
+     */
+    protected function prepareForValidation(): void
+    {
+        $singleClassLevelId = $this->input('class_level_id');
+
+        if ($singleClassLevelId !== null && $this->input('class_level_ids') === null) {
+            $this->merge(['class_level_ids' => [$singleClassLevelId]]);
+        }
+    }
+
     public function authorize(): bool
     {
         return true;

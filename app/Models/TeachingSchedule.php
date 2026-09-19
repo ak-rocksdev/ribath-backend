@@ -31,6 +31,16 @@ class TeachingSchedule extends Model
         'academicYear:id,name',
     ];
 
+    /**
+     * @deprecated Jendela deploy saja: `class_level` mengulang Kelas pertama
+     * jadwal ini supaya SPA lama tidak rusak saat backend naik lebih dulu.
+     * Dihapus pada rilis berikutnya, setelah frontend rilis — pembacanya
+     * yang benar adalah `class_levels`.
+     *
+     * @var array<int, string>
+     */
+    protected $appends = ['class_level'];
+
     protected $fillable = [
         'school_id',
         'academic_year_id',
@@ -119,6 +129,20 @@ class TeachingSchedule extends Model
         ));
 
         $this->unsetRelation('classLevels');
+    }
+
+    /**
+     * @deprecated Jendela deploy saja (lihat $appends): Kelas pertama jadwal
+     * ini dalam bentuk lama `class_level`. Setiap jalur yang menyerialkan
+     * jadwal sudah memuat `classLevels`, jadi ini tidak menambah kueri.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getClassLevelAttribute(): ?array
+    {
+        $this->loadMissing('classLevels');
+
+        return $this->classLevels->first()?->summary();
     }
 
     public function subjectBook(): BelongsTo

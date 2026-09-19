@@ -1300,3 +1300,76 @@ test('all valid english day names are accepted', function () {
 
     expect(TeachingSchedule::count())->toBe(7);
 });
+
+// ── Bentuk lama, hanya untuk jendela deploy (dihapus rilis berikutnya) ────
+
+test('a schedule can still be created with the old single class_level_id', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    $payload = createSchedulePayload([], $testData);
+    unset($payload['class_level_ids']);
+    $payload['class_level_id'] = $classLevel->id;
+
+    $scheduleId = $this->actingAs($user)
+        ->postJson('/api/v1/teaching-schedules', $payload)
+        ->assertCreated()
+        ->json('data.id');
+
+    expect(TeachingSchedule::findOrFail($scheduleId)->classLevelIds())->toEqual([$classLevel->id]);
+});
+
+test('a schedule can still be updated with the old single class_level_id', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    $otherClassLevel = ClassLevel::factory()->create([
+        'school_id' => $school->id,
+        'slug' => 'ibtida_1',
+        'label' => 'Ibtida 1',
+    ]);
+
+    $schedule = TeachingSchedule::factory()->create([
+        'school_id' => $school->id,
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+        'day_of_week' => 'monday',
+        'time_slot_id' => $timeSlot->id,
+        'class_level_ids' => [$classLevel->id],
+        'subject_book_id' => $subjectBook->id,
+        'teacher_id' => $teacher->id,
+    ]);
+
+    $this->actingAs($user)
+        ->putJson("/api/v1/teaching-schedules/{$schedule->id}", ['class_level_id' => $otherClassLevel->id])
+        ->assertOk();
+
+    expect($schedule->fresh()->classLevelIds())->toEqual([$otherClassLevel->id]);
+});
+
+test('a schedule still answers with the old single class_level, its first Kelas', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    $secondClassLevel = ClassLevel::factory()->create([
+        'school_id' => $school->id,
+        'slug' => 'ibtida_2',
+        'label' => 'Ibtida 2',
+        'sort_order' => $classLevel->sort_order + 1,
+    ]);
+
+    $this->actingAs($user)
+        ->postJson('/api/v1/teaching-schedules', createSchedulePayload([
+            'class_level_ids' => [$classLevel->id, $secondClassLevel->id],
+        ], $testData))
+        ->assertCreated()
+        ->assertJsonPath('data.class_level.id', $classLevel->id)
+        ->assertJsonPath('data.class_level.label', 'Tamhidi');
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/teaching-schedules?academic_year_id='.$academicYear->id)
+        ->assertOk()
+        ->assertJsonPath('data.0.class_level.label', 'Tamhidi')
+        ->assertJsonPath('data.0.class_levels.0.label', 'Tamhidi')
+        ->assertJsonPath('data.0.class_levels.1.label', 'Ibtida 2');
+});
