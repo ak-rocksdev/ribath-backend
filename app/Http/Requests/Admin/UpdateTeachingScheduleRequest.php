@@ -12,9 +12,8 @@ use Illuminate\Validation\Rule;
  * before validation, so a schedule of another school answers 404 and is
  * never changed — nor recorded in the riwayat pengajar.
  *
- * Its Kelas are sent as `class_level_ids` (ADR 0006); the older single
- * `class_level_id` is still read as a list of one. Leaving both out keeps
- * the Kelas the schedule has.
+ * Its Kelas are sent as `class_level_ids` (ADR 0006); leaving the field
+ * out keeps the Kelas the schedule has.
  *
  * The Semester Akademik of a schedule is fixed: the edit form re-sends the
  * schedule's own year and semester, and any other value is refused (a
@@ -23,7 +22,7 @@ use Illuminate\Validation\Rule;
  */
 class UpdateTeachingScheduleRequest extends FormRequest
 {
-    use EnsuresActiveSchoolTenancy, NormalizesTeachingScheduleClassLevels;
+    use EnsuresActiveSchoolTenancy;
 
     public const MESSAGE_SEMESTER_AKADEMIK_IS_FIXED = 'Semester Akademik jadwal tidak dapat diubah; salin jadwal ke semester lain.';
 
@@ -58,7 +57,7 @@ class UpdateTeachingScheduleRequest extends FormRequest
 
     public function messages(): array
     {
-        return array_merge(self::CLASS_LEVEL_MESSAGES, [
+        return array_merge(StoreTeachingScheduleRequest::CLASS_LEVEL_MESSAGES, [
             'academic_year_id.in' => self::MESSAGE_SEMESTER_AKADEMIK_IS_FIXED,
             'semester.in' => self::MESSAGE_SEMESTER_AKADEMIK_IS_FIXED,
         ]);

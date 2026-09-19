@@ -32,14 +32,6 @@ class TeachingScheduleService
      */
     private const TEACHER_AND_BOOK_ATTRIBUTES = ['teacher_id', 'subject_book_id'];
 
-    /** How the Kelas of one schedule are named together on screen and in messages. */
-    public const CLASS_LEVEL_LABEL_SEPARATOR = ' + ';
-
-    /** The slot attributes that decide whether two schedules collide. */
-    private const SLOT_ATTRIBUTES = [
-        'school_id', 'academic_year_id', 'semester', 'day_of_week', 'time_slot_id',
-    ];
-
     private const DAY_ORDER = [
         'monday' => 0, 'tuesday' => 1, 'wednesday' => 2, 'thursday' => 3,
         'friday' => 4, 'saturday' => 5, 'sunday' => 6,
@@ -128,8 +120,8 @@ class TeachingScheduleService
             );
 
             $schedule = TeachingSchedule::make($data);
-            $schedule->classLevelIdsToSync = $classLevelIds;
             $schedule->save();
+            $schedule->syncClassLevels($classLevelIds);
 
             return $schedule;
         });
@@ -166,9 +158,9 @@ class TeachingScheduleService
             );
 
             $teachingSchedule->fill($data);
-            $teachingSchedule->classLevelIdsToSync = $newClassLevelIds;
             $this->recordTeacherHistoryWhenAssignmentChanges($teachingSchedule, $previousClassLevelIds, $newClassLevelIds);
             $teachingSchedule->save();
+            $teachingSchedule->syncClassLevels($newClassLevelIds);
         });
 
         return $teachingSchedule->fresh()->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
@@ -195,8 +187,7 @@ class TeachingScheduleService
         $ownedIds = ClassLevel::query()
             ->where('school_id', $school->id)
             ->whereIn('id', $chosenIds)
-            ->orderBy('sort_order')
-            ->orderBy('label')
+            ->inMasterOrder()
             ->pluck('id')
             ->all();
 
@@ -258,16 +249,13 @@ class TeachingScheduleService
                 // skipped when ANY of its Kelas is already busy in the target.
                 $classLevelIds = $source->classLevelIds();
 
-                $classConflict = DB::table('teaching_schedule_class_levels as schedule_class_level')
-                    ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')
-                    ->where('teaching_schedules.school_id', $school->id)
-                    ->where('teaching_schedules.academic_year_id', $data['target_academic_year_id'])
-                    ->where('teaching_schedules.semester', (int) $data['target_semester'])
-                    ->where('teaching_schedules.day_of_week', $source->day_of_week)
-                    ->where('teaching_schedules.time_slot_id', $source->time_slot_id)
-                    ->where('teaching_schedules.is_active', true)
-                    ->whereIn('schedule_class_level.class_level_id', $classLevelIds)
-                    ->exists();
+                $busyClassLevelIds = $this->classLevelIdsBusyInSlot([
+                    'school_id' => $school->id,
+                    'academic_year_id' => $data['target_academic_year_id'],
+                    'semester' => (int) $data['target_semester'],
+                    'day_of_week' => $source->day_of_week,
+                    'time_slot_id' => $source->time_slot_id,
+                ], $classLevelIds);
 
                 // Check for teacher conflict in target
                 $teacherConflict = TeachingSchedule::where('teacher_id', $source->teacher_id)
@@ -278,11 +266,16 @@ class TeachingScheduleService
                     ->where('is_active', true)
                     ->exists();
 
-                if ($classConflict || $teacherConflict) {
+                if ($busyClassLevelIds !== [] || $teacherConflict) {
                     $skipped++;
                     $skippedDetails[] = [
                         'source_id' => $source->id,
-                        'reason' => $classConflict ? 'class_slot_conflict' : 'teacher_conflict',
+                        'reason' => $busyClassLevelIds !== [] ? 'class_slot_conflict' : 'teacher_conflict',
+                        // The same Kelas the form's rejection names, so a skipped
+                        // row can say which Kelas was already busy.
+                        'conflicting_class' => $busyClassLevelIds !== []
+                            ? $this->labelOfClassLevels($busyClassLevelIds)
+                            : null,
                     ];
 
                     continue;
@@ -298,8 +291,8 @@ class TeachingScheduleService
                     'teacher_id' => $source->teacher_id,
                     'is_active' => true,
                 ]);
-                $clonedSchedule->classLevelIdsToSync = $classLevelIds;
                 $clonedSchedule->save();
+                $clonedSchedule->syncClassLevels($classLevelIds);
 
                 $created++;
             }
@@ -446,54 +439,67 @@ class TeachingScheduleService
 
     /**
      * One Kelas, one schedule per slot — through a combined schedule too
-     * (ADR 0006). The partial unique index only covers the single Kelas
-     * column, so this is the rule's real guard; callers run it inside the
-     * transaction that writes the schedule.
+     * (ADR 0006). The partial unique index only covered the single Kelas
+     * column that is now gone, so this is the rule's only guard; callers run
+     * it inside the transaction that writes the schedule.
      *
      * @param  array<string, mixed>  $slot
      * @param  array<int, string>  $classLevelIds
      */
     private function validateNoClassSlotConflict(array $slot, array $classLevelIds, ?string $excludeScheduleId = null): void
     {
-        $query = DB::table('teaching_schedule_class_levels as schedule_class_level')
-            ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')
-            ->where('teaching_schedules.school_id', $slot['school_id'])
-            ->where('teaching_schedules.academic_year_id', $slot['academic_year_id'])
-            ->where('teaching_schedules.semester', (int) $slot['semester'])
-            ->where('teaching_schedules.day_of_week', $slot['day_of_week'])
-            ->where('teaching_schedules.time_slot_id', $slot['time_slot_id'])
-            ->where('teaching_schedules.is_active', true)
-            ->whereIn('schedule_class_level.class_level_id', $classLevelIds);
+        $busyClassLevelIds = $this->classLevelIdsBusyInSlot($slot, $classLevelIds, $excludeScheduleId);
 
-        if ($excludeScheduleId) {
-            $query->where('teaching_schedules.id', '!=', $excludeScheduleId);
-        }
-
-        $conflictingClassLevelIds = $query->distinct()->pluck('schedule_class_level.class_level_id')->all();
-
-        if ($conflictingClassLevelIds === []) {
+        if ($busyClassLevelIds === []) {
             return;
         }
 
         throw ValidationException::withMessages([
-            'class_level_ids' => 'Kelas '.$this->labelsOfClassLevels($conflictingClassLevelIds)
+            'class_level_ids' => 'Kelas '.$this->labelOfClassLevels($busyClassLevelIds)
                 .' sudah memiliki jadwal lain pada hari dan jam yang sama.',
         ]);
     }
 
     /**
-     * The labels of these Kelas, in the order the Kelas master orders them.
+     * Which of these Kelas another active schedule already holds in that
+     * slot — the one reading of "the Kelas is busy", shared by the form
+     * (which refuses the save) and by the semester clone (which skips the
+     * row). The `school_id` predicate sits on the join table so its
+     * (school_id, class_level_id) index is the one used.
+     *
+     * @param  array<string, mixed>  $slot  school_id, academic_year_id, semester, day_of_week, time_slot_id
+     * @param  array<int, string>  $classLevelIds
+     * @return array<int, string> the busy Kelas, in no particular order — labelOfClassLevels() puts them in the Kelas master order
+     */
+    private function classLevelIdsBusyInSlot(array $slot, array $classLevelIds, ?string $excludeScheduleId = null): array
+    {
+        $query = DB::table('teaching_schedule_class_levels as schedule_class_level')
+            ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')
+            ->where('schedule_class_level.school_id', $slot['school_id'])
+            ->whereIn('schedule_class_level.class_level_id', $classLevelIds)
+            ->where('teaching_schedules.academic_year_id', $slot['academic_year_id'])
+            ->where('teaching_schedules.semester', (int) $slot['semester'])
+            ->where('teaching_schedules.day_of_week', $slot['day_of_week'])
+            ->where('teaching_schedules.time_slot_id', $slot['time_slot_id'])
+            ->where('teaching_schedules.is_active', true);
+
+        if ($excludeScheduleId) {
+            $query->where('teaching_schedules.id', '!=', $excludeScheduleId);
+        }
+
+        return $query->distinct()->pluck('schedule_class_level.class_level_id')->all();
+    }
+
+    /**
+     * These Kelas named the one way every screen and message names them.
      *
      * @param  array<int, string>  $classLevelIds
      */
-    private function labelsOfClassLevels(array $classLevelIds): string
+    private function labelOfClassLevels(array $classLevelIds): string
     {
-        return ClassLevel::query()
-            ->whereIn('id', $classLevelIds)
-            ->orderBy('sort_order')
-            ->orderBy('label')
-            ->pluck('label')
-            ->implode(self::CLASS_LEVEL_LABEL_SEPARATOR);
+        return ClassLevel::joinedLabel(
+            ClassLevel::query()->whereIn('id', $classLevelIds)->inMasterOrder()->get()
+        );
     }
 
     private function validateNoTeacherConflict(
@@ -585,7 +591,7 @@ class TeachingScheduleService
                 'sesi' => $sortedSchedules->count(),
                 'kitab' => $sortedSchedules->pluck('subject_book_id')->unique()->count(),
                 'kelas' => $sortedSchedules
-                    ->flatMap(fn (TeachingSchedule $schedule) => $schedule->classLevels->pluck('id'))
+                    ->flatMap(fn (TeachingSchedule $schedule) => $schedule->classLevelIds())
                     ->unique()
                     ->count(),
             ],

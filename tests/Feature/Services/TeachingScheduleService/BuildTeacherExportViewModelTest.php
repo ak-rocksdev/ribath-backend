@@ -108,7 +108,7 @@ test('counts every Kelas of a combined schedule once', function () {
     $tsanawiyah = ClassLevel::factory()->create(['school_id' => $this->school->id, 'label' => 'Tsanawiyah 1', 'sort_order' => 2]);
 
     $schedule = makeScheduleFor($this->teacher, $this->school, $this->year, 1, 'monday', $this->slotEarly, $book, $ibtida);
-    $schedule->syncClassLevelRows([$ibtida->id, $tsanawiyah->id]);
+    $schedule->syncClassLevels([$ibtida->id, $tsanawiyah->id]);
 
     $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
 

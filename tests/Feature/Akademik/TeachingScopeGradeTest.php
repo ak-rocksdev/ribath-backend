@@ -157,7 +157,7 @@ function createTeachingScopeSchedule($testCase, array $context, ClassLevel $clas
             'semester' => $semester,
             'day_of_week' => $dayOfWeek,
             'time_slot_id' => $context['timeSlot']->id,
-            'class_level_id' => $classLevel->id,
+            'class_level_ids' => [$classLevel->id],
             'subject_book_id' => $subjectBook->id,
             'teacher_id' => $teacher->id,
         ])
@@ -939,7 +939,7 @@ test('a schedule moved to another class keeps the old class with recorded grades
         ->assertOk();
 
     // Pengurus moves Ahmad's Safinah lesson from Tamhidi to Ibtida 1.
-    editTeachingScopeSchedule($this, $context, $context['ahmadSafinahScheduleId'], ['class_level_id' => $context['ibtida']->id]);
+    editTeachingScopeSchedule($this, $context, $context['ahmadSafinahScheduleId'], ['class_level_ids' => [$context['ibtida']->id]]);
 
     $ahmadResponse = $this->actingAs($context['ahmadAccount'])->getJson(teachingScopeGradableSubjectsUrl($context))->assertOk();
     expect(teachingScopePairKeys($ahmadResponse))->toBe(collect([
@@ -1761,7 +1761,7 @@ test('cancelling on a schedule inside the Cakupan Mengajar does not reach a Pert
 
     // Pengurus moves the schedule to Ibtida 1 and Ustadz Bakar: the schedule's pair is now Bakar's, the Pertemuan's snapshot is not.
     editTeachingScopeSchedule($this, $context, $movedScheduleId, [
-        'class_level_id' => $context['ibtida']->id,
+        'class_level_ids' => [$context['ibtida']->id],
         'teacher_id' => $context['ustadzBakar']->id,
     ]);
 
@@ -2325,7 +2325,7 @@ test('Jadwal Saya lists the active schedules an Akun Ustadz holds now in the act
             'semester' => 1,
             'day_of_week' => 'monday',
             'time_slot_id' => $earlierTimeSlot->id,
-            'class_level_id' => $context['ibtida']->id,
+            'class_level_ids' => [$context['ibtida']->id],
             'subject_book_id' => $context['jurumiyah']->id,
             'teacher_id' => $context['ustadzAhmad']->id,
         ])

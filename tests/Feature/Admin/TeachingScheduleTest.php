@@ -56,7 +56,7 @@ function createSchedulePayload(array $overrides = [], array $testData = []): arr
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ], $overrides);
@@ -700,17 +700,16 @@ test('create schedule fails with non-existent time_slot_id', function () {
         ->assertJsonValidationErrors(['time_slot_id']);
 });
 
-test('create schedule fails with non-existent class_level_id', function () {
+test('create schedule fails with a non-existent Kelas', function () {
     $testData = createScheduleTestData();
     [$user] = $testData;
 
     $fakeUuid = '00000000-0000-0000-0000-000000000000';
-    $payload = createSchedulePayload(['class_level_id' => $fakeUuid], $testData);
+    $payload = createSchedulePayload(['class_level_ids' => [$fakeUuid]], $testData);
 
     $response = $this->actingAs($user)
         ->postJson('/api/v1/teaching-schedules', $payload);
 
-    // The single Kelas of the older payload is read as a list of one (ADR 0006).
     $response->assertUnprocessable()
         ->assertJsonValidationErrors(['class_level_ids.0']);
 });
@@ -770,7 +769,7 @@ test('create schedule detects teacher conflict at same time slot', function () {
     ]);
 
     $payload = createSchedulePayload([
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -806,7 +805,7 @@ test('no teacher conflict when different day_of_week', function () {
 
     $payload = createSchedulePayload([
         'day_of_week' => 'tuesday',
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -838,7 +837,7 @@ test('no teacher conflict when different time_slot', function () {
 
     $payload = createSchedulePayload([
         'time_slot_id' => $otherTimeSlot->id,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -869,7 +868,7 @@ test('no teacher conflict when different semester', function () {
 
     $payload = createSchedulePayload([
         'semester' => 2,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -901,7 +900,7 @@ test('no teacher conflict when different teacher', function () {
 
     $payload = createSchedulePayload([
         'teacher_id' => $otherTeacher->id,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -931,7 +930,7 @@ test('no teacher conflict when existing schedule is inactive', function () {
     $otherClassLevel = ClassLevel::factory()->create(['school_id' => $school->id]);
 
     $payload = createSchedulePayload([
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -1290,7 +1289,7 @@ test('all valid english day names are accepted', function () {
         $payload = createSchedulePayload([
             'day_of_week' => $day,
             'time_slot_id' => $newTimeSlot->id,
-            'class_level_id' => $newClassLevel->id,
+            'class_level_ids' => [$newClassLevel->id],
         ], $testData);
 
         $response = $this->actingAs($user)

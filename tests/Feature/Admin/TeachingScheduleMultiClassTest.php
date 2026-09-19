@@ -75,6 +75,18 @@ function combinedSchedulePayload(array $context, array $attributes): array
 }
 
 /**
+ * Creates a schedule of combinedSchedulePayload() through POST
+ * /teaching-schedules and returns its id — every test below that needs a
+ * schedule to work on starts here.
+ *
+ * @param  array<string, mixed>  $attributes
+ */
+function createCombinedSchedule($testCase, array $context, array $attributes): string
+{
+    return createTeachingScheduleThroughEndpoint($testCase, $context['pengurus'], combinedSchedulePayload($context, $attributes));
+}
+
+/**
  * The Kelas ids stored for a schedule, read from the join table.
  *
  * @return array<int, string>
@@ -123,13 +135,10 @@ test('a schedule can be created for two Kelas at once', function () {
 test('the Kelas of a combined schedule read in the Kelas master order, whatever order the form sent', function () {
     $context = setUpCombinedScheduleContext();
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            // Sent in the reverse of the Kelas master order on purpose.
-            'class_level_ids' => [$context['tsanawiyah1']->id, $context['ibtida2']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        // Sent in the reverse of the Kelas master order on purpose.
+        'class_level_ids' => [$context['tsanawiyah1']->id, $context['ibtida2']->id],
+    ]);
 
     // The order is the Kelas master's, not the form's, so a schedule names
     // its Kelas the same way everywhere and the Kelas utama a Pertemuan
@@ -140,12 +149,12 @@ test('the Kelas of a combined schedule read in the Kelas master order, whatever 
         ->and($schedule->classLevelsLabel())->toBe('Ibtida 2 + Tsanawiyah 1');
 });
 
-test('a schedule sent with the older single class_level_id field is stored as a set of one', function () {
+test('a schedule of one Kelas is stored and answered as a set of one', function () {
     $context = setUpCombinedScheduleContext();
 
     $response = $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_id' => $context['tamhidi']->id,
+            'class_level_ids' => [$context['tamhidi']->id],
         ]));
 
     $response->assertCreated()
@@ -183,12 +192,9 @@ test('a schedule needs at least one Kelas, without duplicates, from the active s
 test('a Kelas can be added to an existing schedule through the edit', function () {
     $context = setUpCombinedScheduleContext();
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['tsanawiyah1']->id],
+    ]);
 
     $response = $this->actingAs($context['pengurus'])
         ->putJson("/api/v1/teaching-schedules/{$scheduleId}", [
@@ -207,11 +213,9 @@ test('a Kelas can be added to an existing schedule through the edit', function (
 test('a Kelas that already has a schedule in the slot cannot join another one', function () {
     $context = setUpCombinedScheduleContext();
 
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id],
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id],
+    ]);
 
     $response = $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
@@ -231,11 +235,9 @@ test('a Kelas that already has a schedule in the slot cannot join another one', 
 test('a combined schedule blocks the slot for every Kelas it holds', function () {
     $context = setUpCombinedScheduleContext();
 
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $response = $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
@@ -253,11 +255,9 @@ test('a combined schedule blocks the slot for every Kelas it holds', function ()
 test('an Ustadz already teaching in the slot is still refused a second schedule, named by its Kelas', function () {
     $context = setUpCombinedScheduleContext();
 
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $response = $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
@@ -276,21 +276,15 @@ test('an Ustadz already teaching in the slot is still refused a second schedule,
 test('a refused change leaves the Kelas of the schedule untouched', function () {
     $context = setUpCombinedScheduleContext();
 
-    $blockingScheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['tamhidi']->id],
-            'teacher_id' => $context['ustadzUmar']->id,
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $blockingScheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['tamhidi']->id],
+        'teacher_id' => $context['ustadzUmar']->id,
+    ]);
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id],
-            'day_of_week' => 'tuesday',
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id],
+        'day_of_week' => 'tuesday',
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->putJson("/api/v1/teaching-schedules/{$scheduleId}", [
@@ -309,12 +303,9 @@ test('a refused change leaves the Kelas of the schedule untouched', function () 
 test('removing one Kelas from a combined schedule records one riwayat pengajar row for it', function () {
     $context = setUpCombinedScheduleContext();
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->putJson("/api/v1/teaching-schedules/{$scheduleId}", [
@@ -339,12 +330,9 @@ test('removing one Kelas from a combined schedule records one riwayat pengajar r
 test('changing the Ustadz of a combined schedule records one riwayat pengajar row per Kelas', function () {
     $context = setUpCombinedScheduleContext();
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->putJson("/api/v1/teaching-schedules/{$scheduleId}", [
@@ -363,12 +351,9 @@ test('changing the Ustadz of a combined schedule records one riwayat pengajar ro
 test('moving a combined schedule to another day records nothing', function () {
     $context = setUpCombinedScheduleContext();
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->putJson("/api/v1/teaching-schedules/{$scheduleId}", [
@@ -384,12 +369,9 @@ test('moving a combined schedule to another day records nothing', function () {
 test('the bulk ganti ustadz moves a combined schedule and records every Kelas', function () {
     $context = setUpCombinedScheduleContext();
 
-    $scheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $scheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules/replace-teacher', [
@@ -408,21 +390,16 @@ test('the bulk ganti ustadz names every Kelas of the schedule that blocks it', f
     $context = setUpCombinedScheduleContext();
 
     // Ustadz Ali already fills Monday ba'da Isya with a combined schedule.
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     // Ustadz Umar teaches Tamhidi in the very same slot.
-    $umarScheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['tamhidi']->id],
-            'teacher_id' => $context['ustadzUmar']->id,
-            'subject_book_id' => $context['jurumiyah']->id,
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $umarScheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['tamhidi']->id],
+        'teacher_id' => $context['ustadzUmar']->id,
+        'subject_book_id' => $context['jurumiyah']->id,
+    ]);
 
     $response = $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules/replace-teacher', [
@@ -444,11 +421,9 @@ test('the bulk ganti ustadz names every Kelas of the schedule that blocks it', f
 test('cloning a semester carries every Kelas of a combined schedule', function () {
     $context = setUpCombinedScheduleContext();
 
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules/clone-semester', [
@@ -469,20 +444,16 @@ test('cloning a semester carries every Kelas of a combined schedule', function (
 test('cloning skips a schedule whose Kelas is already busy in the target semester', function () {
     $context = setUpCombinedScheduleContext();
 
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
     // Semester 2 already has Tsanawiyah 1 in that slot, with another Ustadz.
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'semester' => 2,
-            'class_level_ids' => [$context['tsanawiyah1']->id],
-            'teacher_id' => $context['ustadzUmar']->id,
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'semester' => 2,
+        'class_level_ids' => [$context['tsanawiyah1']->id],
+        'teacher_id' => $context['ustadzUmar']->id,
+    ]);
 
     $this->actingAs($context['pengurus'])
         ->postJson('/api/v1/teaching-schedules/clone-semester', [
@@ -502,19 +473,14 @@ test('cloning skips a schedule whose Kelas is already busy in the target semeste
 test('filtering the schedule list by Kelas finds every schedule holding it', function () {
     $context = setUpCombinedScheduleContext();
 
-    $combinedScheduleId = $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
-        ]))
-        ->assertCreated()
-        ->json('data.id');
+    $combinedScheduleId = createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+    ]);
 
-    $this->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', combinedSchedulePayload($context, [
-            'class_level_ids' => [$context['tamhidi']->id],
-            'day_of_week' => 'tuesday',
-        ]))
-        ->assertCreated();
+    createCombinedSchedule($this, $context, [
+        'class_level_ids' => [$context['tamhidi']->id],
+        'day_of_week' => 'tuesday',
+    ]);
 
     $response = $this->actingAs($context['pengurus'])
         ->getJson('/api/v1/teaching-schedules?'.http_build_query([

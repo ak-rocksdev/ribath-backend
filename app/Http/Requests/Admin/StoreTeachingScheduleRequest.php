@@ -8,13 +8,22 @@ use Illuminate\Validation\Rule;
 
 /**
  * POST /teaching-schedules. A schedule holds one Kelas or several (ADR
- * 0006), so the form sends `class_level_ids`; the older single
- * `class_level_id` — the file import still sends one Kelas per row — is
- * accepted and read as a list of one.
+ * 0006), so every client sends `class_level_ids` — the file import too,
+ * one Kelas per imported row.
  */
 class StoreTeachingScheduleRequest extends FormRequest
 {
-    use NormalizesTeachingScheduleClassLevels;
+    /**
+     * What a bad Kelas list is told, here and on the edit request.
+     *
+     * @var array<string, string>
+     */
+    public const CLASS_LEVEL_MESSAGES = [
+        'class_level_ids.required' => 'Pilih minimal satu kelas untuk jadwal ini.',
+        'class_level_ids.min' => 'Pilih minimal satu kelas untuk jadwal ini.',
+        'class_level_ids.*.distinct' => 'Kelas yang sama hanya boleh dipilih sekali.',
+        'class_level_ids.*.exists' => 'Kelas yang dipilih tidak ditemukan.',
+    ];
 
     public function authorize(): bool
     {

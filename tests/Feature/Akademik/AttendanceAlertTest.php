@@ -238,7 +238,7 @@ test('teachers are sorted by missing_count desc then name, items by date asc', f
 test('a combined schedule raises one alert per date, naming every Kelas', function () {
     $context = setUpAttendanceAlertContext();
     $ibtida = ClassLevel::where('school_id', $context['school']->id)->where('slug', '!=', 'tamhidi')->firstOrFail();
-    $context['schedule']->syncClassLevelRows([$context['classLevel']->id, $ibtida->id]);
+    $context['schedule']->syncClassLevels([$context['classLevel']->id, $ibtida->id]);
 
     Carbon::setTestNow('2025-09-10 10:00:00');
 

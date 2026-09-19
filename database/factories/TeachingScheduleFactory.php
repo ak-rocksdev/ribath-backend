@@ -11,6 +11,7 @@ use App\Models\TeachingSchedule;
 use App\Models\TimeSlot;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 
 /**
  * @extends Factory<TeachingSchedule>
@@ -18,6 +19,17 @@ use Illuminate\Support\Arr;
 class TeachingScheduleFactory extends Factory
 {
     protected $model = TeachingSchedule::class;
+
+    /**
+     * The Kelas chosen for the schedule being built, keyed by the object id
+     * of that schedule: `class_level_ids` names no column, so it is lifted
+     * out of the attributes here and written to the join table once the row
+     * exists (production does the same, explicitly, in
+     * TeachingScheduleService).
+     *
+     * @var array<int, array<int, string>>
+     */
+    private array $classLevelIdsOf = [];
 
     public function definition(): array
     {
@@ -36,28 +48,30 @@ class TeachingScheduleFactory extends Factory
         ];
     }
 
-    /**
-     * The Kelas this schedule is taught to — one for an ordinary schedule,
-     * several for a jadwal gabungan. Ids, models or factories all work.
-     */
-    public function forClassLevels(ClassLevel|Factory|string ...$classLevels): static
-    {
-        return $this->state(['class_level_ids' => $classLevels]);
-    }
-
-    /**
-     * `class_level_ids` names no column, so it is lifted out of the
-     * attributes and handed to the model, which writes the join table
-     * right after the insert.
-     */
     public function newModel(array $attributes = []): TeachingSchedule
     {
         $classLevels = Arr::wrap(Arr::pull($attributes, 'class_level_ids', []));
 
         $schedule = parent::newModel($attributes);
-        $schedule->classLevelIdsToSync = array_map($this->resolveClassLevelId(...), $classLevels);
+        $this->classLevelIdsOf[spl_object_id($schedule)] = array_map($this->resolveClassLevelId(...), $classLevels);
 
         return $schedule;
+    }
+
+    /**
+     * @param  Collection<int, TeachingSchedule>  $results
+     */
+    protected function store(Collection $results)
+    {
+        parent::store($results);
+
+        foreach ($results as $schedule) {
+            $classLevelIds = Arr::pull($this->classLevelIdsOf, spl_object_id($schedule), []);
+
+            if ($classLevelIds !== []) {
+                $schedule->syncClassLevels($classLevelIds);
+            }
+        }
     }
 
     private function resolveClassLevelId(ClassLevel|Factory|string $classLevel): string
