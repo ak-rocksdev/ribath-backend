@@ -21,7 +21,7 @@ class ChangePasswordRequest extends FormRequest
     {
         return [
             'current_password' => ['required', 'string', 'current_password'],
-            'new_password' => ['required', 'string', Password::min(8), 'confirmed', 'different:current_password'],
+            'new_password' => ['required', 'string', Password::min(6), 'confirmed', 'different:current_password'],
         ];
     }
 
@@ -31,7 +31,7 @@ class ChangePasswordRequest extends FormRequest
             'current_password.required' => 'Password saat ini wajib diisi.',
             'current_password.current_password' => 'Password saat ini salah.',
             'new_password.required' => 'Password baru wajib diisi.',
-            'new_password.min' => 'Password baru minimal 8 karakter.',
+            'new_password.min' => 'Password baru minimal 6 karakter.',
             'new_password.confirmed' => 'Konfirmasi password baru tidak cocok.',
             'new_password.different' => 'Password baru harus berbeda dari password saat ini.',
         ];

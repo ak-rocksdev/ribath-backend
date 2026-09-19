@@ -283,9 +283,9 @@ test('the new password follows the password rules', function (array $payload, st
         ->assertJsonPath("errors.{$invalidField}.0", $message);
 })->with([
     'too short' => [
-        ['current_password' => TEMPORARY_PASSWORD, 'new_password' => 'pendek', 'new_password_confirmation' => 'pendek'],
+        ['current_password' => TEMPORARY_PASSWORD, 'new_password' => 'lima5', 'new_password_confirmation' => 'lima5'],
         'new_password',
-        'Password baru minimal 8 karakter.',
+        'Password baru minimal 6 karakter.',
     ],
     'confirmation differs' => [
         ['current_password' => TEMPORARY_PASSWORD, 'new_password' => CHOSEN_PASSWORD, 'new_password_confirmation' => 'lain-lagi-789'],

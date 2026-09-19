@@ -3,6 +3,7 @@
 use App\Models\School;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
+use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
@@ -345,6 +346,23 @@ test('reset password validates minimum length', function () {
         ])
         ->assertStatus(422)
         ->assertJsonValidationErrors(['new_password']);
+});
+
+test('a refused reset leaves the old password working and the refused one useless', function () {
+    $admin = createUserManagementAdmin();
+    $user = User::factory()->create(['password' => Hash::make('password-lama')]);
+
+    $this->actingAs($admin)
+        ->patchJson("/api/v1/users/{$user->id}/reset-password", ['new_password' => 'lima5'])
+        ->assertStatus(422)
+        ->assertJsonValidationErrors(['new_password']);
+
+    // The admin's screen must not claim the password changed: it did not.
+    $this->postJson('/api/v1/auth/login', ['email' => $user->email, 'password' => 'lima5'])
+        ->assertStatus(401);
+
+    $this->postJson('/api/v1/auth/login', ['email' => $user->email, 'password' => 'password-lama'])
+        ->assertStatus(200);
 });
 
 test('reset password revokes all tokens', function () {
