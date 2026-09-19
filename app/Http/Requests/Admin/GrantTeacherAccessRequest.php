@@ -15,7 +15,7 @@ class GrantTeacherAccessRequest extends FormRequest
     {
         return [
             'email' => ['required', 'email', 'unique:users,email,NULL,id,deleted_at,NULL'],
-            'password' => ['required', 'string', 'min:6'],
+            'password' => ['required', 'string', 'min:'.config('auth.password_min_length')],
         ];
     }
 }

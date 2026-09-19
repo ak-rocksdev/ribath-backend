@@ -14,7 +14,7 @@ class ResetPasswordRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'new_password' => ['required', 'string', 'min:6'],
+            'new_password' => ['required', 'string', 'min:'.config('auth.password_min_length')],
         ];
     }
 }

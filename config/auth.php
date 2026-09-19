@@ -1,5 +1,7 @@
 <?php
 
+use App\Models\User;
+
 return [
 
     /*
@@ -62,7 +64,7 @@ return [
     'providers' => [
         'users' => [
             'driver' => 'eloquent',
-            'model' => env('AUTH_MODEL', App\Models\User::class),
+            'model' => env('AUTH_MODEL', User::class),
         ],
 
         // 'users' => [
@@ -111,6 +113,19 @@ return [
     */
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Password Minimum Length
+    |--------------------------------------------------------------------------
+    |
+    | The shortest password the app accepts, wherever one is set: a new
+    | account, an admin reset, the akun of an ustadz, and a santri's own
+    | change. One value so the screens and the API can never disagree.
+    |
+    */
+
+    'password_min_length' => 6,
 
     /*
     |--------------------------------------------------------------------------

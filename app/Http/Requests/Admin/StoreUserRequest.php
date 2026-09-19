@@ -16,7 +16,7 @@ class StoreUserRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'unique:users,email,NULL,id,deleted_at,NULL'],
-            'password' => ['required', 'string', 'min:6'],
+            'password' => ['required', 'string', 'min:'.config('auth.password_min_length')],
             'phone' => ['nullable', 'string', 'max:20'],
             'role' => ['nullable', 'string', 'exists:roles,name'],
         ];
