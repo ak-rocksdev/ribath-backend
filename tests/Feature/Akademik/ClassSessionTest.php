@@ -101,7 +101,7 @@ function classSessionCreateSchedule(
         'semester' => 1,
         'day_of_week' => $dayOfWeek,
         'time_slot_id' => TimeSlot::factory()->create(['school_id' => $school->id])->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => $isActive,
@@ -1181,4 +1181,43 @@ test('another schools session and schedule are hidden behind 404 and rejected in
         ->assertJsonValidationErrors(['teaching_schedule_id']);
 
     expect(ClassSession::where('school_id', $context['school']->id)->count())->toBe(0);
+});
+
+test('a Pertemuan for a schedule left without a Kelas is refused with a clear message', function () {
+    $context = setUpClassSessionContext();
+
+    // A schedule can only lose its Kelas through data repair; the Pertemuan
+    // must then say so, not fail on a missing array index.
+    $context['schedule']->classLevels()->detach();
+
+    $this->actingAs($context['user'])
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $context['schedule']->id,
+            'session_date' => '2025-09-08',
+            'reason' => 'Libur',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['teaching_schedule_id' => 'Jadwal ini belum memiliki kelas, jadi pertemuannya tidak bisa dicatat.']);
+
+    expect(ClassSession::count())->toBe(0);
+});
+
+test('a user who may see all attendance is not narrowed by a schedule without a Kelas', function () {
+    $context = setUpClassSessionContext();
+
+    // "Tidak dibatasi berarti semuanya": a pengurus sees every schedule of
+    // the semester, including one left without a Kelas, so he can repair it.
+    $context['schedule']->classLevels()->detach();
+
+    $scheduleIds = collect($this->actingAs($context['pengurus'])
+        ->getJson('/api/v1/attendance-schedules?'.http_build_query([
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+        ]))
+        ->assertOk()
+        ->json('data'))
+        ->pluck('id')
+        ->all();
+
+    expect($scheduleIds)->toEqual([$context['schedule']->id]);
 });

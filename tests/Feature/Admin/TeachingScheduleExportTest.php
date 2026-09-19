@@ -45,7 +45,7 @@ function seedScheduleFor(Teacher $teacher, School $school, AcademicYear $year, i
         'day_of_week' => 'monday',
         'time_slot_id' => $slot->id,
         'subject_book_id' => $book->id,
-        'class_level_id' => $class->id,
+        'class_level_ids' => [$class->id],
         'teacher_id' => $teacher->id,
         'is_active' => true,
     ]);

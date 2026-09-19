@@ -283,7 +283,7 @@
                                 @if ($cellSchedule)
                                     <div class="cell">
                                         <div class="book">{{ $cellSchedule->subjectBook?->title }}</div>
-                                        <div class="klass">{{ $cellSchedule->classLevel?->label }}</div>
+                                        <div class="klass">{{ $cellSchedule->classLevelsLabel() }}</div>
                                     </div>
                                 @else
                                     <div class="empty">–</div>
@@ -305,8 +305,8 @@
                             <span class="day-group__slot">{{ $item->timeSlot?->label }}</span>
                             <span class="day-group__detail">
                                 {{ $item->subjectBook?->title }}
-                                @if ($item->classLevel?->label)
-                                    <span class="klass">· {{ $item->classLevel->label }}</span>
+                                @if ($item->classLevelsLabel() !== '')
+                                    <span class="klass">· {{ $item->classLevelsLabel() }}</span>
                                 @endif
                             </span>
                         </li>

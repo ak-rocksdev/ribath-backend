@@ -49,14 +49,10 @@ class ClassLevelController extends Controller
 
     public function destroy(ClassLevel $classLevel): JsonResponse
     {
-        $deleted = $this->classLevelService->deleteClassLevel($classLevel);
+        $reasonItWasKept = $this->classLevelService->deleteClassLevel($classLevel);
 
-        if (! $deleted) {
-            return $this->errorResponse(
-                'Cannot delete class level that has students assigned to it',
-                null,
-                422
-            );
+        if ($reasonItWasKept !== null) {
+            return $this->errorResponse($reasonItWasKept, null, 422);
         }
 
         return $this->successResponse(null, 'Class level deleted');

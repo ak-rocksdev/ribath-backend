@@ -53,8 +53,11 @@ class AttendanceRecapService
 
         $students = $this->studentGradeService->listClassStudents($classLevelId);
 
-        $tallies = $this->attendanceTallyService->talliesFor($academicYearId, $semester, $classLevelId, $subjectBookId, $students);
-        $sessionCounts = $this->attendanceTallyService->sessionCountsFor($academicYearId, $semester, $classLevelId, $subjectBookId);
+        // Resolved once: the header counts and the per-santri tallies read
+        // the same Pertemuan.
+        $sessionsOfPair = $this->attendanceTallyService->sessionsOfPair($academicYearId, $semester, $classLevelId, $subjectBookId);
+        $tallies = $this->attendanceTallyService->talliesFor($sessionsOfPair, $classLevelId, $students);
+        $sessionCounts = $this->attendanceTallyService->sessionCountsFor($sessionsOfPair);
 
         $school = School::activeOrFail();
         $classLevel = ClassLevel::where('school_id', $school->id)->findOrFail($classLevelId);

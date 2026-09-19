@@ -1,8 +1,10 @@
 <?php
 
 use App\Models\ClassLevel;
+use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\Student;
+use App\Models\TeachingSchedule;
 use App\Models\User;
 use Database\Seeders\ClassLevelSeeder;
 use Database\Seeders\RolePermissionSeeder;
@@ -319,6 +321,69 @@ test('cannot delete a class level that has students', function () {
 
     $response->assertUnprocessable()
         ->assertJsonPath('success', false);
+
+    $this->assertDatabaseHas('class_levels', ['id' => $classLevel->id]);
+});
+
+test('cannot delete a class level a Jadwal Mengajar still holds', function () {
+    (new RolePermissionSeeder)->run();
+    seedClassLevelsForTest();
+
+    $user = User::factory()->create();
+    $user->assignRole('super_admin');
+
+    $school = School::where('is_active', true)->first();
+    $classLevel = ClassLevel::where('slug', 'takhassus_3')->first();
+
+    TeachingSchedule::factory()->create([
+        'school_id' => $school->id,
+        'class_level_ids' => [$classLevel->id],
+    ]);
+
+    $this->actingAs($user)
+        ->deleteJson("/api/v1/class-levels/{$classLevel->id}")
+        ->assertUnprocessable()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'Kelas ini masih dipakai jadwal mengajar. Keluarkan kelas dari jadwal tersebut lebih dulu.');
+
+    $this->assertDatabaseHas('class_levels', ['id' => $classLevel->id]);
+});
+
+test('cannot delete a class level a Pertemuan was held for', function () {
+    (new RolePermissionSeeder)->run();
+    seedClassLevelsForTest();
+
+    $user = User::factory()->create();
+    $user->assignRole('super_admin');
+
+    $school = School::where('is_active', true)->first();
+    $classLevel = ClassLevel::where('slug', 'takhassus_3')->first();
+
+    $schedule = TeachingSchedule::factory()->create([
+        'school_id' => $school->id,
+        'class_level_ids' => [$classLevel->id],
+    ]);
+    $session = ClassSession::create([
+        'school_id' => $school->id,
+        'teaching_schedule_id' => $schedule->id,
+        'session_date' => '2025-09-01',
+        'academic_year_id' => $schedule->academic_year_id,
+        'semester' => $schedule->semester,
+        'class_level_id' => $classLevel->id,
+        'subject_book_id' => $schedule->subject_book_id,
+        'teacher_id' => $schedule->teacher_id,
+        'status' => ClassSession::STATUS_HELD,
+    ]);
+    $session->classLevels()->attach([$classLevel->id], ['school_id' => $school->id]);
+
+    // The schedule is out of the way, so only the Pertemuan can block it.
+    $schedule->syncClassLevels([ClassLevel::where('slug', 'tamhidi')->value('id')]);
+
+    $this->actingAs($user)
+        ->deleteJson("/api/v1/class-levels/{$classLevel->id}")
+        ->assertUnprocessable()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'Kelas ini masih dipakai pertemuan yang sudah tercatat.');
 
     $this->assertDatabaseHas('class_levels', ['id' => $classLevel->id]);
 });

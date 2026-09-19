@@ -39,10 +39,13 @@ class AttendanceFactorScoreProvider implements FactorScoreProvider
     public function scoresFor(GradingFactor $factor, FactorScoreContext $context): array
     {
         $tallies = $this->attendanceTallyService->talliesFor(
-            $context->academicYearId,
-            $context->semester,
+            $this->attendanceTallyService->sessionsOfPair(
+                $context->academicYearId,
+                $context->semester,
+                $context->classLevelId,
+                $context->subjectBookId,
+            ),
             $context->classLevelId,
-            $context->subjectBookId,
             $context->students,
         );
 

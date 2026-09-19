@@ -1,5 +1,7 @@
 <?php
 
+use App\Models\Student;
+use App\Models\Teacher;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -45,11 +47,6 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
-{
-    // ..
-}
-
 /** The password an Akun Ustadz picks when he changes his temporary one at the first login. */
 const PASSWORD_CHOSEN_AT_FIRST_LOGIN = 'password-pilihan-123';
 
@@ -71,4 +68,70 @@ function completeFirstLoginPasswordChange($testCase, User $account, string $temp
         ->assertOk();
 
     return $account->fresh();
+}
+
+/**
+ * Creates an Akun Ustadz through "Beri Akses" and completes its first-login
+ * password change, so the account can reach every other endpoint.
+ */
+function grantTeacherAccess($testCase, User $actingUser, Teacher $teacher, string $email): User
+{
+    $testCase->actingAs($actingUser)
+        ->postJson("/api/v1/teachers/{$teacher->id}/grant-access", ['email' => $email, 'password' => 'password123'])
+        ->assertCreated();
+
+    return completeFirstLoginPasswordChange($testCase, User::where('email', $email)->firstOrFail(), 'password123');
+}
+
+/**
+ * Creates a santri through POST /students, so school_id and class_level_id
+ * are resolved the way production resolves them.
+ */
+function createSantriThroughEndpoint($testCase, User $actingUser, string $fullName, string $classLevelSlug, string $entryDate = '2025-07-01'): Student
+{
+    return Student::findOrFail($testCase->actingAs($actingUser)
+        ->postJson('/api/v1/students', [
+            'full_name' => $fullName,
+            'birth_date' => '2012-05-15',
+            'gender' => 'L',
+            'program' => 'regular',
+            'entry_date' => $entryDate,
+            'class_level' => $classLevelSlug,
+            'address' => 'Jl. Contoh No. 1',
+        ])
+        ->assertCreated()
+        ->json('data.id'));
+}
+
+/**
+ * Creates a Jadwal Mengajar through POST /teaching-schedules and returns
+ * its id. The payload is the "Tambah Jadwal" form's, `class_level_ids` and
+ * all (ADR 0006).
+ *
+ * @param  array<string, mixed>  $payload
+ */
+function createTeachingScheduleThroughEndpoint($testCase, User $actingUser, array $payload): string
+{
+    return $testCase->actingAs($actingUser)
+        ->postJson('/api/v1/teaching-schedules', $payload)
+        ->assertCreated()
+        ->json('data.id');
+}
+
+/**
+ * Records one held Pertemuan through POST /class-sessions, one attendance
+ * row per santri given.
+ *
+ * @param  array<string, string>  $statusByStudentId
+ */
+function recordClassSessionThroughEndpoint($testCase, User $actingUser, string $scheduleId, string $sessionDate, array $statusByStudentId)
+{
+    return $testCase->actingAs($actingUser)->postJson('/api/v1/class-sessions', [
+        'teaching_schedule_id' => $scheduleId,
+        'session_date' => $sessionDate,
+        'attendances' => collect($statusByStudentId)
+            ->map(fn (string $status, string $studentId) => ['student_id' => $studentId, 'status' => $status, 'notes' => null])
+            ->values()
+            ->all(),
+    ]);
 }

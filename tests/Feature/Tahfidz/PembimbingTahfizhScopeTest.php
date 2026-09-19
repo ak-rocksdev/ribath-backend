@@ -139,7 +139,7 @@ function createPembimbingSchedule($testCase, array $context, SubjectBook $subjec
             'semester' => 1,
             'day_of_week' => $dayOfWeek,
             'time_slot_id' => $context['timeSlot']->id,
-            'class_level_id' => $context['tamhidi']->id,
+            'class_level_ids' => [$context['tamhidi']->id],
             'subject_book_id' => $subjectBook->id,
             'teacher_id' => $teacher->id,
         ])

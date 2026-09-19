@@ -72,6 +72,92 @@ final class TeachingScope
         }
     }
 
+    /**
+     * Whether ANY of the Kelas forms a pair inside the scope — how a whole
+     * Jadwal Mengajar is judged where it is merely LISTED or named, since a
+     * jadwal gabungan carries one pair per Kelas and is recorded as a single
+     * Pertemuan (ADR 0006). For a single-class schedule this is
+     * includesClassSubjectPair(). An unrestricted scope always says yes,
+     * even for an empty list ("tidak dibatasi berarti semuanya").
+     *
+     * Reading the roster of a schedule, or writing its Absensi, asks
+     * includesEveryClassSubjectPair() instead: one Pertemuan covers every
+     * Kelas at once, so a partial Cakupan Mengajar is not enough.
+     *
+     * @param  iterable<string>  $classLevelIds
+     */
+    public function includesAnyClassSubjectPair(iterable $classLevelIds, string $subjectBookId): bool
+    {
+        if ($this->classSubjectPairKeys === null) {
+            return true;
+        }
+
+        foreach ($classLevelIds as $classLevelId) {
+            if ($this->includesClassSubjectPair($classLevelId, $subjectBookId)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  iterable<string>  $classLevelIds
+     *
+     * @throws OutsideTeachingScopeException (403) no Kelas of the schedule forms a pair inside the Cakupan Mengajar
+     */
+    public function assertIncludesAnyClassSubjectPair(iterable $classLevelIds, string $subjectBookId): void
+    {
+        if (! $this->includesAnyClassSubjectPair($classLevelIds, $subjectBookId)) {
+            throw OutsideTeachingScopeException::forClassSubjectPair();
+        }
+    }
+
+    /**
+     * Whether EVERY Kelas forms a pair inside the scope. One Pertemuan of a
+     * jadwal gabungan is read and written as a whole — its roster holds the
+     * santri of all its Kelas, and each Absensi row feeds the Nilai Absensi
+     * of its own Kelas — so reading that roster or writing that Absensi
+     * needs the whole set, never just one Kelas of it (ADR 0006). For a
+     * single-class schedule this is includesClassSubjectPair(); an
+     * unrestricted scope always says yes.
+     *
+     * @param  iterable<string>  $classLevelIds
+     */
+    public function includesEveryClassSubjectPair(iterable $classLevelIds, string $subjectBookId): bool
+    {
+        if ($this->classSubjectPairKeys === null) {
+            return true;
+        }
+
+        $hasClassLevel = false;
+
+        foreach ($classLevelIds as $classLevelId) {
+            $hasClassLevel = true;
+
+            if (! $this->includesClassSubjectPair($classLevelId, $subjectBookId)) {
+                return false;
+            }
+        }
+
+        // A Pertemuan or schedule with no Kelas at all proves nothing about
+        // the Cakupan Mengajar, so it is refused — the same answer the "any"
+        // guard gives for an empty list.
+        return $hasClassLevel;
+    }
+
+    /**
+     * @param  iterable<string>  $classLevelIds
+     *
+     * @throws OutsideTeachingScopeException (403) a Kelas of the schedule lies outside the Cakupan Mengajar
+     */
+    public function assertIncludesEveryClassSubjectPair(iterable $classLevelIds, string $subjectBookId): void
+    {
+        if (! $this->includesEveryClassSubjectPair($classLevelIds, $subjectBookId)) {
+            throw OutsideTeachingScopeException::forClassSubjectPair();
+        }
+    }
+
     /** Whether the santri is one of the santri bimbingan (always true when unrestricted). */
     public function includesMentoredStudent(string $studentId): bool
     {

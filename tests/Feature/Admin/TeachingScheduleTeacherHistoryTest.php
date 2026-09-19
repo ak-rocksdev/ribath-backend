@@ -60,7 +60,7 @@ function setUpTeacherHistoryContext($testCase): array
     ];
 
     $context['scheduleId'] = createTeacherHistorySchedule($testCase, $context, [
-        'class_level_id' => $context['tamhidi']->id,
+        'class_level_ids' => [$context['tamhidi']->id],
         'subject_book_id' => $context['safinah']->id,
         'teacher_id' => $context['ustadzAhmad']->id,
     ]);
@@ -100,8 +100,8 @@ function teacherHistoryEditFormPayload(string $scheduleId, array $changes): arra
 
     return array_merge($schedule->only([
         'academic_year_id', 'semester', 'day_of_week', 'time_slot_id',
-        'class_level_id', 'subject_book_id', 'teacher_id',
-    ]), $changes);
+        'subject_book_id', 'teacher_id',
+    ]) + ['class_level_ids' => $schedule->classLevelIds()], $changes);
 }
 
 // ── Edit jadwal ──────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ test('changing the Kelas or the Kitab records the values the schedule had before
     $scheduleUrl = "/api/v1/teaching-schedules/{$context['scheduleId']}";
 
     $this->actingAs($context['pengurus'])
-        ->putJson($scheduleUrl, teacherHistoryEditFormPayload($context['scheduleId'], ['class_level_id' => $context['ibtida']->id]))
+        ->putJson($scheduleUrl, teacherHistoryEditFormPayload($context['scheduleId'], ['class_level_ids' => [$context['ibtida']->id]]))
         ->assertOk();
     $this->actingAs($context['pengurus'])
         ->putJson($scheduleUrl, teacherHistoryEditFormPayload($context['scheduleId'], ['subject_book_id' => $context['jurumiyah']->id]))
@@ -162,7 +162,7 @@ test('one edit that changes the Ustadz, Kelas and Kitab together records one row
     $this->actingAs($context['pengurus'])
         ->putJson("/api/v1/teaching-schedules/{$context['scheduleId']}", [
             'teacher_id' => $context['ustadzBakar']->id,
-            'class_level_id' => $context['ibtida']->id,
+            'class_level_ids' => [$context['ibtida']->id],
             'subject_book_id' => $context['jurumiyah']->id,
         ])
         ->assertOk();
@@ -204,14 +204,14 @@ test('the bulk ganti ustadz records one row for every schedule it moves to the n
 
     $ahmadIbtidaScheduleId = createTeacherHistorySchedule($this, $context, [
         'day_of_week' => 'tuesday',
-        'class_level_id' => $context['ibtida']->id,
+        'class_level_ids' => [$context['ibtida']->id],
         'subject_book_id' => $context['jurumiyah']->id,
         'teacher_id' => $context['ustadzAhmad']->id,
     ]);
     // Outside the chosen semester: left alone, nothing recorded.
     $ahmadSemesterTwoScheduleId = createTeacherHistorySchedule($this, $context, [
         'semester' => 2,
-        'class_level_id' => $context['tamhidi']->id,
+        'class_level_ids' => [$context['tamhidi']->id],
         'subject_book_id' => $context['safinah']->id,
         'teacher_id' => $context['ustadzAhmad']->id,
     ]);
@@ -253,13 +253,13 @@ test('a schedule the bulk ganti ustadz skips for a conflict records nothing', fu
     // Ustadz Bakar already teaches another class on Monday morning, so
     // Ahmad's Monday lesson cannot move to him; the Tuesday one can.
     createTeacherHistorySchedule($this, $context, [
-        'class_level_id' => $context['ibtida']->id,
+        'class_level_ids' => [$context['ibtida']->id],
         'subject_book_id' => $context['jurumiyah']->id,
         'teacher_id' => $context['ustadzBakar']->id,
     ]);
     $ahmadTuesdayScheduleId = createTeacherHistorySchedule($this, $context, [
         'day_of_week' => 'tuesday',
-        'class_level_id' => $context['tamhidi']->id,
+        'class_level_ids' => [$context['tamhidi']->id],
         'subject_book_id' => $context['jurumiyah']->id,
         'teacher_id' => $context['ustadzAhmad']->id,
     ]);
@@ -283,7 +283,7 @@ test('creating, deleting and cloning schedules records nothing', function () {
 
     createTeacherHistorySchedule($this, $context, [
         'day_of_week' => 'tuesday',
-        'class_level_id' => $context['ibtida']->id,
+        'class_level_ids' => [$context['ibtida']->id],
         'subject_book_id' => $context['jurumiyah']->id,
         'teacher_id' => $context['ustadzBakar']->id,
     ]);
@@ -311,7 +311,7 @@ test('a rejected change records nothing', function () {
 
     // Ustadz Bakar is busy on Monday morning: the edit is refused.
     createTeacherHistorySchedule($this, $context, [
-        'class_level_id' => $context['ibtida']->id,
+        'class_level_ids' => [$context['ibtida']->id],
         'subject_book_id' => $context['jurumiyah']->id,
         'teacher_id' => $context['ustadzBakar']->id,
     ]);
@@ -400,7 +400,7 @@ test('a schedule of another school is not found for the edit and untouched by th
         'academic_year_id' => AcademicYear::factory()->create(['school_id' => $otherSchool->id])->id,
         'semester' => 1,
         'time_slot_id' => TimeSlot::factory()->create(['school_id' => $otherSchool->id])->id,
-        'class_level_id' => ClassLevel::factory()->create(['school_id' => $otherSchool->id])->id,
+        'class_level_ids' => [ClassLevel::factory()->create(['school_id' => $otherSchool->id])->id],
         'subject_book_id' => SubjectBook::factory()->create([
             'school_id' => $otherSchool->id,
             'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $otherSchool->id])->id,

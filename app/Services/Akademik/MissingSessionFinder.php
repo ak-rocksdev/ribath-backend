@@ -80,7 +80,7 @@ class MissingSessionFinder
             ->where('semester', $semester)
             ->where('is_active', true)
             ->when($alertedTeacherIds !== null, fn ($query) => $query->whereIn('teacher_id', $alertedTeacherIds))
-            ->with(['classLevel:id,label', 'subjectBook:id,title', 'timeSlot:id,label', 'teacher:id,full_name'])
+            ->with(['classLevels:id,label', 'subjectBook:id,title', 'timeSlot:id,label', 'teacher:id,full_name'])
             ->get();
 
         if ($schedules->isEmpty() || $enumerationEnd < $semesterStart) {
@@ -122,10 +122,11 @@ class MissingSessionFinder
                 $entriesByTeacherId[$schedule->teacher_id]['items'][] = [
                     'teaching_schedule_id' => $schedule->id,
                     'session_date' => $sessionDate,
-                    'class_level' => $schedule->classLevel ? [
-                        'id' => $schedule->classLevel->id,
-                        'label' => $schedule->classLevel->label,
-                    ] : null,
+                    // One alert per schedule and date, naming every Kelas of a
+                    // combined schedule (ADR 0006).
+                    'class_levels' => $schedule->classLevels
+                        ->map(fn ($classLevel) => ['id' => $classLevel->id, 'label' => $classLevel->label])
+                        ->all(),
                     'subject_book' => $schedule->subjectBook ? [
                         'id' => $schedule->subjectBook->id,
                         'title' => $schedule->subjectBook->title,

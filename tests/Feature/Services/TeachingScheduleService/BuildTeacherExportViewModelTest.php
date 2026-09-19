@@ -27,7 +27,7 @@ function makeScheduleFor(
         'day_of_week'      => $day,
         'time_slot_id'     => $slot->id,
         'subject_book_id'  => ($book ?? SubjectBook::factory()->create(['school_id' => $school->id]))->id,
-        'class_level_id'   => ($class ?? ClassLevel::factory()->create(['school_id' => $school->id]))->id,
+        'class_level_ids'  => [($class ?? ClassLevel::factory()->create(['school_id' => $school->id]))->id],
         'teacher_id'       => $teacher->id,
         'is_active'        => $active,
     ]);
@@ -102,6 +102,20 @@ test('computes totals correctly', function () {
     ]);
 });
 
+test('counts every Kelas of a combined schedule once', function () {
+    $book       = SubjectBook::factory()->create(['school_id' => $this->school->id]);
+    $ibtida     = ClassLevel::factory()->create(['school_id' => $this->school->id, 'label' => 'Ibtida 2', 'sort_order' => 1]);
+    $tsanawiyah = ClassLevel::factory()->create(['school_id' => $this->school->id, 'label' => 'Tsanawiyah 1', 'sort_order' => 2]);
+
+    $schedule = makeScheduleFor($this->teacher, $this->school, $this->year, 1, 'monday', $this->slotEarly, $book, $ibtida);
+    $schedule->syncClassLevels([$ibtida->id, $tsanawiyah->id]);
+
+    $vm = $this->service->buildTeacherExportViewModel($this->teacher, $this->year->id, 1);
+
+    expect($vm['totals'])->toEqual(['sesi' => 1, 'kitab' => 1, 'kelas' => 2]);
+    expect($vm['schedules_sorted'][0]->classLevelsLabel())->toBe('Ibtida 2 + Tsanawiyah 1');
+});
+
 test('filters by academic_year_id and semester', function () {
     $otherYear = AcademicYear::factory()->create(['school_id' => $this->school->id]);
 
@@ -142,7 +156,7 @@ test('isolates schedules by school (multi-tenant)', function () {
         'day_of_week'      => 'monday',
         'time_slot_id'     => $otherSchoolSlot->id,
         'subject_book_id'  => $otherSchoolBook->id,
-        'class_level_id'   => $otherSchoolClass->id,
+        'class_level_ids'  => [$otherSchoolClass->id],
         'teacher_id'       => $this->teacher->id,
         'is_active'        => true,
     ]);

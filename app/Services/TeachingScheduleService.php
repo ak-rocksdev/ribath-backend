@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AcademicYear;
+use App\Models\ClassLevel;
 use App\Models\School;
 use App\Models\Teacher;
 use App\Models\TeachingSchedule;
@@ -25,10 +26,11 @@ class TeachingScheduleService
     ];
 
     /**
-     * The attributes that say who teaches what to which class; a change of
-     * any of them is recorded in the riwayat pengajar (ADR 0005).
+     * The scalar attributes that say who teaches what; a change of either of
+     * them, or of the Kelas set, is recorded in the riwayat pengajar (ADR
+     * 0005).
      */
-    private const TEACHING_ASSIGNMENT_ATTRIBUTES = ['teacher_id', 'class_level_id', 'subject_book_id'];
+    private const TEACHER_AND_BOOK_ATTRIBUTES = ['teacher_id', 'subject_book_id'];
 
     private const DAY_ORDER = [
         'monday' => 0, 'tuesday' => 1, 'wednesday' => 2, 'thursday' => 3,
@@ -59,7 +61,8 @@ class TeachingScheduleService
         }
 
         if (! empty($filters['class_level_id'])) {
-            $query->where('class_level_id', $filters['class_level_id']);
+            // A combined schedule is listed for every Kelas it holds (ADR 0006).
+            $query->whereHas('classLevels', fn ($classLevels) => $classLevels->where('class_levels.id', $filters['class_level_id']));
         }
 
         if (! empty($filters['day_of_week'])) {
@@ -100,48 +103,101 @@ class TeachingScheduleService
     {
         $school = School::activeOrFail();
 
+        $classLevelIds = $this->resolveClassLevelIds((array) ($data['class_level_ids'] ?? []), $school);
+        unset($data['class_level_ids']);
+
         $data['school_id'] = $school->id;
 
-        $this->validateNoClassSlotConflict($data);
+        $schedule = DB::transaction(function () use ($data, $classLevelIds) {
+            $this->validateNoClassSlotConflict($data, $classLevelIds);
 
-        $this->validateNoTeacherConflict(
-            teacherId: $data['teacher_id'],
-            dayOfWeek: $data['day_of_week'],
-            timeSlotId: $data['time_slot_id'],
-            academicYearId: $data['academic_year_id'],
-            semester: (int) $data['semester'],
-        );
+            $this->validateNoTeacherConflict(
+                teacherId: $data['teacher_id'],
+                dayOfWeek: $data['day_of_week'],
+                timeSlotId: $data['time_slot_id'],
+                academicYearId: $data['academic_year_id'],
+                semester: (int) $data['semester'],
+            );
 
-        $schedule = TeachingSchedule::create($data);
+            $schedule = TeachingSchedule::make($data);
+            $schedule->save();
+            $schedule->syncClassLevels($classLevelIds);
+
+            return $schedule;
+        });
 
         return $schedule->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
     }
 
     public function updateSchedule(TeachingSchedule $teachingSchedule, array $data): TeachingSchedule
     {
+        $school = School::activeOrFail();
+
+        $previousClassLevelIds = $teachingSchedule->classLevelIds();
+
+        $newClassLevelIds = array_key_exists('class_level_ids', $data)
+            ? $this->resolveClassLevelIds((array) $data['class_level_ids'], $school)
+            : $previousClassLevelIds;
+        unset($data['class_level_ids']);
+
         $mergedData = array_merge($teachingSchedule->only([
             'school_id', 'teacher_id', 'day_of_week', 'time_slot_id',
-            'academic_year_id', 'semester', 'class_level_id',
+            'academic_year_id', 'semester',
         ]), $data);
 
-        $this->validateNoClassSlotConflict($mergedData, $teachingSchedule->id);
+        DB::transaction(function () use ($teachingSchedule, $data, $mergedData, $previousClassLevelIds, $newClassLevelIds) {
+            $this->validateNoClassSlotConflict($mergedData, $newClassLevelIds, $teachingSchedule->id);
 
-        $this->validateNoTeacherConflict(
-            teacherId: $mergedData['teacher_id'],
-            dayOfWeek: $mergedData['day_of_week'],
-            timeSlotId: $mergedData['time_slot_id'],
-            academicYearId: $mergedData['academic_year_id'],
-            semester: (int) $mergedData['semester'],
-            excludeScheduleId: $teachingSchedule->id,
-        );
+            $this->validateNoTeacherConflict(
+                teacherId: $mergedData['teacher_id'],
+                dayOfWeek: $mergedData['day_of_week'],
+                timeSlotId: $mergedData['time_slot_id'],
+                academicYearId: $mergedData['academic_year_id'],
+                semester: (int) $mergedData['semester'],
+                excludeScheduleId: $teachingSchedule->id,
+            );
 
-        DB::transaction(function () use ($teachingSchedule, $data) {
             $teachingSchedule->fill($data);
-            $this->recordTeacherHistoryWhenAssignmentChanges($teachingSchedule);
+            $this->recordTeacherHistoryWhenAssignmentChanges($teachingSchedule, $previousClassLevelIds, $newClassLevelIds);
             $teachingSchedule->save();
+            $teachingSchedule->syncClassLevels($newClassLevelIds);
         });
 
         return $teachingSchedule->fresh()->load(TeachingSchedule::EAGER_LOAD_RELATIONS);
+    }
+
+    /**
+     * The chosen Kelas, ordered as the Kelas master orders them, so a
+     * schedule names its Kelas the same way on every screen and in every
+     * message. Every Kelas must belong to the active school.
+     *
+     * @param  array<int, string>  $classLevelIds
+     * @return array<int, string>
+     */
+    private function resolveClassLevelIds(array $classLevelIds, School $school): array
+    {
+        $chosenIds = array_values(array_unique(array_filter($classLevelIds)));
+
+        if ($chosenIds === []) {
+            throw ValidationException::withMessages([
+                'class_level_ids' => 'Pilih minimal satu kelas untuk jadwal ini.',
+            ]);
+        }
+
+        $ownedIds = ClassLevel::query()
+            ->where('school_id', $school->id)
+            ->whereIn('id', $chosenIds)
+            ->inMasterOrder()
+            ->pluck('id')
+            ->all();
+
+        if (count($ownedIds) !== count($chosenIds)) {
+            throw ValidationException::withMessages([
+                'class_level_ids' => 'Kelas yang dipilih tidak ada di pesantren ini.',
+            ]);
+        }
+
+        return $ownedIds;
     }
 
     public function deleteSchedule(TeachingSchedule $teachingSchedule): void
@@ -174,6 +230,7 @@ class TeachingScheduleService
             ->where('semester', (int) $data['source_semester'])
             ->where('is_active', true)
             ->when(count($excludeIds) > 0, fn ($q) => $q->whereNotIn('id', $excludeIds))
+            ->with('classLevels:id')
             ->get();
 
         if ($sourceSchedules->isEmpty()) {
@@ -188,15 +245,17 @@ class TeachingScheduleService
 
         DB::transaction(function () use ($sourceSchedules, $data, $school, &$created, &$skipped, &$skippedDetails) {
             foreach ($sourceSchedules as $source) {
-                // Check for class-slot conflict in target
-                $classConflict = TeachingSchedule::where('school_id', $school->id)
-                    ->where('academic_year_id', $data['target_academic_year_id'])
-                    ->where('semester', (int) $data['target_semester'])
-                    ->where('day_of_week', $source->day_of_week)
-                    ->where('time_slot_id', $source->time_slot_id)
-                    ->where('class_level_id', $source->class_level_id)
-                    ->where('is_active', true)
-                    ->exists();
+                // A combined schedule is carried whole (ADR 0006), so it is
+                // skipped when ANY of its Kelas is already busy in the target.
+                $classLevelIds = $source->classLevelIds();
+
+                $busyClassLevelIds = $this->classLevelIdsBusyInSlot([
+                    'school_id' => $school->id,
+                    'academic_year_id' => $data['target_academic_year_id'],
+                    'semester' => (int) $data['target_semester'],
+                    'day_of_week' => $source->day_of_week,
+                    'time_slot_id' => $source->time_slot_id,
+                ], $classLevelIds);
 
                 // Check for teacher conflict in target
                 $teacherConflict = TeachingSchedule::where('teacher_id', $source->teacher_id)
@@ -207,27 +266,33 @@ class TeachingScheduleService
                     ->where('is_active', true)
                     ->exists();
 
-                if ($classConflict || $teacherConflict) {
+                if ($busyClassLevelIds !== [] || $teacherConflict) {
                     $skipped++;
                     $skippedDetails[] = [
                         'source_id' => $source->id,
-                        'reason' => $classConflict ? 'class_slot_conflict' : 'teacher_conflict',
+                        'reason' => $busyClassLevelIds !== [] ? 'class_slot_conflict' : 'teacher_conflict',
+                        // The same Kelas the form's rejection names, so a skipped
+                        // row can say which Kelas was already busy.
+                        'conflicting_class' => $busyClassLevelIds !== []
+                            ? $this->labelOfClassLevels($busyClassLevelIds)
+                            : null,
                     ];
 
                     continue;
                 }
 
-                TeachingSchedule::create([
+                $clonedSchedule = TeachingSchedule::make([
                     'school_id' => $school->id,
                     'academic_year_id' => $data['target_academic_year_id'],
                     'semester' => (int) $data['target_semester'],
                     'day_of_week' => $source->day_of_week,
                     'time_slot_id' => $source->time_slot_id,
-                    'class_level_id' => $source->class_level_id,
                     'subject_book_id' => $source->subject_book_id,
                     'teacher_id' => $source->teacher_id,
                     'is_active' => true,
                 ]);
+                $clonedSchedule->save();
+                $clonedSchedule->syncClassLevels($classLevelIds);
 
                 $created++;
             }
@@ -263,7 +328,7 @@ class TeachingScheduleService
             $query->where('semester', (int) $data['semester']);
         }
 
-        $schedules = $query->get();
+        $schedules = $query->with('classLevels:id')->get();
 
         if ($schedules->isEmpty()) {
             throw ValidationException::withMessages([
@@ -289,14 +354,16 @@ class TeachingScheduleService
                         'schedule_id' => $schedule->id,
                         'day_of_week' => $schedule->day_of_week,
                         'time_slot_id' => $schedule->time_slot_id,
-                        'conflicting_class' => $conflict->classLevel->label ?? null,
+                        'conflicting_class' => $conflict->classLevelsLabel() ?: null,
                     ];
 
                     continue;
                 }
 
+                $classLevelIds = $schedule->classLevelIds();
+
                 $schedule->teacher_id = $data['target_teacher_id'];
-                $this->recordTeacherHistoryWhenAssignmentChanges($schedule);
+                $this->recordTeacherHistoryWhenAssignmentChanges($schedule, $classLevelIds, $classLevelIds);
                 $schedule->save();
                 $updated++;
             }
@@ -311,28 +378,41 @@ class TeachingScheduleService
 
     /**
      * Riwayat pengajar (ADR 0005): when the pending (unsaved) changes of the
-     * schedule touch its Ustadz, Kelas or Kitab, record the values it had
-     * before them in its Semester Akademik, so the Cakupan Mengajar of the
-     * previous Ustadz keeps that Kelas × Kitab for the semester. A day or
-     * time change records nothing. Call inside the transaction that saves
-     * the schedule.
+     * schedule touch its Ustadz, Kitab or its set of Kelas, record the values
+     * it had before them in its Semester Akademik — one row per Kelas — so
+     * the Cakupan Mengajar of the previous Ustadz keeps every Kelas × Kitab
+     * he had for the semester. Dropping one Kelas of a combined schedule
+     * records that Kelas alone; a day or time change records nothing. Call
+     * inside the transaction that saves the schedule.
+     *
+     * @param  array<int, string>  $previousClassLevelIds
+     * @param  array<int, string>  $newClassLevelIds
      */
-    private function recordTeacherHistoryWhenAssignmentChanges(TeachingSchedule $teachingSchedule): void
-    {
-        if (! $teachingSchedule->isDirty(self::TEACHING_ASSIGNMENT_ATTRIBUTES)) {
-            return;
-        }
+    private function recordTeacherHistoryWhenAssignmentChanges(
+        TeachingSchedule $teachingSchedule,
+        array $previousClassLevelIds,
+        array $newClassLevelIds,
+    ): void {
+        $teacherOrBookChanged = $teachingSchedule->isDirty(self::TEACHER_AND_BOOK_ATTRIBUTES);
 
-        TeachingScheduleTeacherHistory::create([
-            'school_id' => $teachingSchedule->getOriginal('school_id'),
-            'teaching_schedule_id' => $teachingSchedule->id,
-            'academic_year_id' => $teachingSchedule->getOriginal('academic_year_id'),
-            'semester' => $teachingSchedule->getOriginal('semester'),
-            'previous_teacher_id' => $teachingSchedule->getOriginal('teacher_id'),
-            'previous_class_level_id' => $teachingSchedule->getOriginal('class_level_id'),
-            'previous_subject_book_id' => $teachingSchedule->getOriginal('subject_book_id'),
-            'changed_by' => auth()->id(),
-        ]);
+        // A new Ustadz or Kitab ends the previous pairing for every Kelas the
+        // schedule held; an unchanged pairing only ends for the Kelas dropped.
+        $recordedClassLevelIds = $teacherOrBookChanged
+            ? $previousClassLevelIds
+            : array_diff($previousClassLevelIds, $newClassLevelIds);
+
+        foreach ($recordedClassLevelIds as $classLevelId) {
+            TeachingScheduleTeacherHistory::create([
+                'school_id' => $teachingSchedule->getOriginal('school_id'),
+                'teaching_schedule_id' => $teachingSchedule->id,
+                'academic_year_id' => $teachingSchedule->getOriginal('academic_year_id'),
+                'semester' => $teachingSchedule->getOriginal('semester'),
+                'previous_teacher_id' => $teachingSchedule->getOriginal('teacher_id'),
+                'previous_class_level_id' => $classLevelId,
+                'previous_subject_book_id' => $teachingSchedule->getOriginal('subject_book_id'),
+                'changed_by' => auth()->id(),
+            ]);
+        }
     }
 
     public function findTeacherConflict(
@@ -354,28 +434,82 @@ class TeachingScheduleService
             $query->where('id', '!=', $excludeScheduleId);
         }
 
-        return $query->with('classLevel:id,label')->first();
+        return $query->with('classLevels:id,label')->first();
     }
 
-    private function validateNoClassSlotConflict(array $data, ?string $excludeScheduleId = null): void
+    /**
+     * One Kelas, one schedule per slot — through a combined schedule too
+     * (ADR 0006). The partial unique index only covered the single Kelas
+     * column that is now gone, so this is the rule's only guard; callers run
+     * it inside the transaction that writes the schedule.
+     *
+     * @param  array<string, mixed>  $slot
+     * @param  array<int, string>  $classLevelIds
+     */
+    private function validateNoClassSlotConflict(array $slot, array $classLevelIds, ?string $excludeScheduleId = null): void
     {
-        $query = TeachingSchedule::where('school_id', $data['school_id'])
-            ->where('academic_year_id', $data['academic_year_id'])
-            ->where('semester', $data['semester'])
-            ->where('day_of_week', $data['day_of_week'])
-            ->where('time_slot_id', $data['time_slot_id'])
-            ->where('class_level_id', $data['class_level_id'])
-            ->where('is_active', true);
+        $busyClassLevelIds = $this->classLevelIdsBusyInSlot($slot, $classLevelIds, $excludeScheduleId);
+
+        if ($busyClassLevelIds === []) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'class_level_ids' => 'Kelas '.$this->labelOfClassLevels($busyClassLevelIds)
+                .' sudah memiliki jadwal lain pada hari dan jam yang sama.',
+        ]);
+    }
+
+    /**
+     * Which of these Kelas another active schedule already holds in that
+     * slot — the one reading of "the Kelas is busy", shared by the form
+     * (which refuses the save) and by the semester clone (which skips the
+     * row). The `school_id` predicate sits on the join table so its
+     * (school_id, class_level_id) index is the one used.
+     *
+     * Every caller runs inside the transaction that writes the schedule, so
+     * the claimed Kelas rows are locked first: without the partial unique
+     * index the database no longer serialises two writers claiming the same
+     * Kelas for the same slot, and this lock does (PostgreSQL; SQLite runs
+     * one writer at a time and ignores it). The rows are locked in id
+     * order so two writers claiming overlapping Kelas queue instead of
+     * deadlocking on each other.
+     *
+     * @param  array<string, mixed>  $slot  school_id, academic_year_id, semester, day_of_week, time_slot_id
+     * @param  array<int, string>  $classLevelIds
+     * @return array<int, string> the busy Kelas, in no particular order — labelOfClassLevels() puts them in the Kelas master order
+     */
+    private function classLevelIdsBusyInSlot(array $slot, array $classLevelIds, ?string $excludeScheduleId = null): array
+    {
+        ClassLevel::query()->whereIn('id', $classLevelIds)->orderBy('id')->lockForUpdate()->pluck('id');
+
+        $query = DB::table('teaching_schedule_class_levels as schedule_class_level')
+            ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')
+            ->where('schedule_class_level.school_id', $slot['school_id'])
+            ->whereIn('schedule_class_level.class_level_id', $classLevelIds)
+            ->where('teaching_schedules.academic_year_id', $slot['academic_year_id'])
+            ->where('teaching_schedules.semester', (int) $slot['semester'])
+            ->where('teaching_schedules.day_of_week', $slot['day_of_week'])
+            ->where('teaching_schedules.time_slot_id', $slot['time_slot_id'])
+            ->where('teaching_schedules.is_active', true);
 
         if ($excludeScheduleId) {
-            $query->where('id', '!=', $excludeScheduleId);
+            $query->where('teaching_schedules.id', '!=', $excludeScheduleId);
         }
 
-        if ($query->exists()) {
-            throw ValidationException::withMessages([
-                'class_level_id' => 'This class already has a schedule at the same time slot.',
-            ]);
-        }
+        return $query->distinct()->pluck('schedule_class_level.class_level_id')->all();
+    }
+
+    /**
+     * These Kelas named the one way every screen and message names them.
+     *
+     * @param  array<int, string>  $classLevelIds
+     */
+    private function labelOfClassLevels(array $classLevelIds): string
+    {
+        return ClassLevel::joinedLabel(
+            ClassLevel::query()->whereIn('id', $classLevelIds)->inMasterOrder()->get()
+        );
     }
 
     private function validateNoTeacherConflict(
@@ -397,7 +531,7 @@ class TeachingScheduleService
 
         if ($conflict) {
             throw ValidationException::withMessages([
-                'teacher_id' => "This teacher is already assigned to {$conflict->classLevel->label} at the same time slot.",
+                'teacher_id' => 'Ustadz ini sudah mengajar '.$conflict->classLevelsLabel().' pada hari dan jam yang sama.',
             ]);
         }
     }
@@ -466,7 +600,10 @@ class TeachingScheduleService
             'totals' => [
                 'sesi' => $sortedSchedules->count(),
                 'kitab' => $sortedSchedules->pluck('subject_book_id')->unique()->count(),
-                'kelas' => $sortedSchedules->pluck('class_level_id')->unique()->count(),
+                'kelas' => $sortedSchedules
+                    ->flatMap(fn (TeachingSchedule $schedule) => $schedule->classLevelIds())
+                    ->unique()
+                    ->count(),
             ],
             'logo_data_uri' => $this->schoolLogoResolver->dataUri($teacher->school),
             'day_labels' => self::DAY_LABELS,

@@ -56,7 +56,7 @@ function createSchedulePayload(array $overrides = [], array $testData = []): arr
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ], $overrides);
@@ -100,7 +100,7 @@ test('user without permission cannot delete teaching schedule', function () {
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -126,7 +126,7 @@ test('authenticated user with permission can list teaching schedules', function 
             'academic_year_id' => $academicYear->id,
             'day_of_week' => $day,
             'time_slot_id' => $timeSlot->id,
-            'class_level_id' => $classLevel->id,
+            'class_level_ids' => [$classLevel->id],
             'subject_book_id' => $subjectBook->id,
             'teacher_id' => $teacher->id,
         ]);
@@ -150,7 +150,7 @@ test('list excludes soft-deleted (inactive) schedules', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -162,7 +162,7 @@ test('list excludes soft-deleted (inactive) schedules', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -188,7 +188,7 @@ test('teaching schedule list is not paginated', function () {
             'academic_year_id' => $academicYear->id,
             'day_of_week' => $days[$i % count($days)],
             'time_slot_id' => $timeSlot->id,
-            'class_level_id' => $cl->id,
+            'class_level_ids' => [$cl->id],
             'subject_book_id' => $subjectBook->id,
             'teacher_id' => $teacher->id,
         ]);
@@ -212,7 +212,7 @@ test('teaching schedule response has correct structure with eager loaded relatio
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -226,14 +226,14 @@ test('teaching schedule response has correct structure with eager loaded relatio
             'data' => [
                 '*' => [
                     'id', 'school_id', 'academic_year_id', 'semester',
-                    'day_of_week', 'time_slot_id', 'class_level_id',
+                    'day_of_week', 'time_slot_id',
                     'subject_book_id', 'teacher_id', 'is_active',
                     'subject_book' => ['id', 'title', 'subject_category_id', 'sessions_per_week',
                         'subject_category' => ['id', 'name', 'color'],
                     ],
                     'teacher' => ['id', 'full_name', 'code'],
                     'time_slot' => ['id', 'code', 'label', 'type', 'start_time', 'end_time', 'sort_order'],
-                    'class_level' => ['id', 'slug', 'label', 'category'],
+                    'class_levels' => ['*' => ['id', 'slug', 'label', 'category']],
                     'academic_year' => ['id', 'name'],
                 ],
             ],
@@ -249,7 +249,7 @@ test('teaching schedules eager load correct related data values', function () {
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -264,8 +264,8 @@ test('teaching schedules eager load correct related data values', function () {
     expect($firstSchedule['teacher']['full_name'])->toBe($teacher->full_name);
     expect($firstSchedule['time_slot']['id'])->toBe($timeSlot->id);
     expect($firstSchedule['time_slot']['label'])->toBe($timeSlot->label);
-    expect($firstSchedule['class_level']['id'])->toBe($classLevel->id);
-    expect($firstSchedule['class_level']['label'])->toBe($classLevel->label);
+    expect($firstSchedule['class_levels'][0]['id'])->toBe($classLevel->id);
+    expect($firstSchedule['class_levels'][0]['label'])->toBe($classLevel->label);
     expect($firstSchedule['subject_book']['id'])->toBe($subjectBook->id);
     expect($firstSchedule['subject_book']['title'])->toBe($subjectBook->title);
     expect($firstSchedule['subject_book']['subject_category']['id'])->toBe($category->id);
@@ -286,7 +286,7 @@ test('can filter schedules by academic_year_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -295,7 +295,7 @@ test('can filter schedules by academic_year_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -304,7 +304,7 @@ test('can filter schedules by academic_year_id', function () {
         'academic_year_id' => $otherAcademicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -329,7 +329,7 @@ test('can filter schedules by semester', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -339,7 +339,7 @@ test('can filter schedules by semester', function () {
         'semester' => 1,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -351,7 +351,7 @@ test('can filter schedules by semester', function () {
         'semester' => 2,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -374,7 +374,7 @@ test('can filter schedules by class_level_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -383,7 +383,7 @@ test('can filter schedules by class_level_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -392,7 +392,7 @@ test('can filter schedules by class_level_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -417,7 +417,7 @@ test('can filter schedules by day_of_week', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -426,7 +426,7 @@ test('can filter schedules by day_of_week', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $ts2->id,
-        'class_level_id' => $cl2->id,
+        'class_level_ids' => [$cl2->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -437,7 +437,7 @@ test('can filter schedules by day_of_week', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'friday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $cl2->id,
+        'class_level_ids' => [$cl2->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -461,7 +461,7 @@ test('can filter schedules by teacher_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -470,7 +470,7 @@ test('can filter schedules by teacher_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -479,7 +479,7 @@ test('can filter schedules by teacher_id', function () {
         'academic_year_id' => $academicYear->id,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $cl2->id,
+        'class_level_ids' => [$cl2->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $otherTeacher->id,
     ]);
@@ -503,7 +503,7 @@ test('can show a single teaching schedule', function () {
         'semester' => 1,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -517,7 +517,7 @@ test('can show a single teaching schedule', function () {
         ->assertJsonPath('data.semester', 1)
         ->assertJsonPath('data.day_of_week', 'tuesday')
         ->assertJsonPath('data.teacher.full_name', $teacher->full_name)
-        ->assertJsonPath('data.class_level.label', $classLevel->label)
+        ->assertJsonPath('data.class_levels.0.label', $classLevel->label)
         ->assertJsonPath('data.time_slot.label', $timeSlot->label)
         ->assertJsonPath('data.subject_book.title', $subjectBook->title)
         ->assertJsonPath('data.academic_year.name', $academicYear->name);
@@ -551,7 +551,7 @@ test('can create a teaching schedule', function () {
         ->assertJsonPath('data.semester', 1)
         ->assertJsonPath('data.day_of_week', 'monday')
         ->assertJsonPath('data.teacher.id', $teacher->id)
-        ->assertJsonPath('data.class_level.id', $classLevel->id);
+        ->assertJsonPath('data.class_levels.0.id', $classLevel->id);
 
     $this->assertDatabaseHas('teaching_schedules', [
         'school_id' => $school->id,
@@ -594,7 +594,7 @@ test('create schedule includes all eager loaded relations in response', function
                 'subject_book' => ['id', 'title', 'subject_category' => ['id', 'name', 'color']],
                 'teacher' => ['id', 'full_name', 'code'],
                 'time_slot' => ['id', 'code', 'label'],
-                'class_level' => ['id', 'slug', 'label'],
+                'class_levels' => ['*' => ['id', 'slug', 'label']],
                 'academic_year' => ['id', 'name'],
             ],
         ]);
@@ -625,7 +625,7 @@ test('create schedule fails with missing required fields', function () {
     $response->assertUnprocessable()
         ->assertJsonValidationErrors([
             'academic_year_id', 'semester', 'day_of_week',
-            'time_slot_id', 'class_level_id', 'subject_book_id', 'teacher_id',
+            'time_slot_id', 'class_level_ids', 'subject_book_id', 'teacher_id',
         ]);
 });
 
@@ -700,18 +700,18 @@ test('create schedule fails with non-existent time_slot_id', function () {
         ->assertJsonValidationErrors(['time_slot_id']);
 });
 
-test('create schedule fails with non-existent class_level_id', function () {
+test('create schedule fails with a non-existent Kelas', function () {
     $testData = createScheduleTestData();
     [$user] = $testData;
 
     $fakeUuid = '00000000-0000-0000-0000-000000000000';
-    $payload = createSchedulePayload(['class_level_id' => $fakeUuid], $testData);
+    $payload = createSchedulePayload(['class_level_ids' => [$fakeUuid]], $testData);
 
     $response = $this->actingAs($user)
         ->postJson('/api/v1/teaching-schedules', $payload);
 
     $response->assertUnprocessable()
-        ->assertJsonValidationErrors(['class_level_id']);
+        ->assertJsonValidationErrors(['class_level_ids.0']);
 });
 
 test('create schedule fails with non-existent subject_book_id', function () {
@@ -755,7 +755,7 @@ test('create schedule detects teacher conflict at same time slot', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -769,7 +769,7 @@ test('create schedule detects teacher conflict at same time slot', function () {
     ]);
 
     $payload = createSchedulePayload([
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -794,7 +794,7 @@ test('no teacher conflict when different day_of_week', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -805,7 +805,7 @@ test('no teacher conflict when different day_of_week', function () {
 
     $payload = createSchedulePayload([
         'day_of_week' => 'tuesday',
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -825,7 +825,7 @@ test('no teacher conflict when different time_slot', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -837,7 +837,7 @@ test('no teacher conflict when different time_slot', function () {
 
     $payload = createSchedulePayload([
         'time_slot_id' => $otherTimeSlot->id,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -857,7 +857,7 @@ test('no teacher conflict when different semester', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -868,7 +868,7 @@ test('no teacher conflict when different semester', function () {
 
     $payload = createSchedulePayload([
         'semester' => 2,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -888,7 +888,7 @@ test('no teacher conflict when different teacher', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -900,7 +900,7 @@ test('no teacher conflict when different teacher', function () {
 
     $payload = createSchedulePayload([
         'teacher_id' => $otherTeacher->id,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -920,7 +920,7 @@ test('no teacher conflict when existing schedule is inactive', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => false,
@@ -930,7 +930,7 @@ test('no teacher conflict when existing schedule is inactive', function () {
     $otherClassLevel = ClassLevel::factory()->create(['school_id' => $school->id]);
 
     $payload = createSchedulePayload([
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
     ], $testData);
 
     $response = $this->actingAs($user)
@@ -952,7 +952,7 @@ test('application-layer validation prevents double-booking a class at the same t
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -968,10 +968,11 @@ test('application-layer validation prevents double-booking a class at the same t
         ->postJson('/api/v1/teaching-schedules', $payload);
 
     $response->assertUnprocessable()
-        ->assertJsonValidationErrors(['class_level_id']);
+        ->assertJsonValidationErrors(['class_level_ids']);
 
-    $errorMessage = $response->json('errors.class_level_id.0');
-    expect($errorMessage)->toContain('already has a schedule');
+    $errorMessage = $response->json('errors.class_level_ids.0');
+    expect($errorMessage)->toContain('Tamhidi')
+        ->toContain('sudah memiliki jadwal lain');
 });
 
 // ── Update tests ─────────────────────────────────────────────────────
@@ -986,7 +987,7 @@ test('can update a teaching schedule', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -1013,7 +1014,7 @@ test('update schedule returns eager loaded relations', function () {
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -1025,7 +1026,7 @@ test('update schedule returns eager loaded relations', function () {
 
     $response->assertOk()
         ->assertJsonPath('data.teacher.id', $teacher->id)
-        ->assertJsonPath('data.class_level.id', $classLevel->id)
+        ->assertJsonPath('data.class_levels.0.id', $classLevel->id)
         ->assertJsonPath('data.time_slot.id', $timeSlot->id);
 });
 
@@ -1040,7 +1041,7 @@ test('update schedule detects teacher conflict', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -1056,7 +1057,7 @@ test('update schedule detects teacher conflict', function () {
         'semester' => 1,
         'day_of_week' => 'tuesday',
         'time_slot_id' => $otherTimeSlot->id,
-        'class_level_id' => $otherClassLevel->id,
+        'class_level_ids' => [$otherClassLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -1083,7 +1084,7 @@ test('update schedule allows updating itself without conflict', function () {
         'semester' => 1,
         'day_of_week' => 'monday',
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -1107,7 +1108,7 @@ test('can change teacher on existing schedule', function () {
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -1133,7 +1134,7 @@ test('can delete a teaching schedule (soft deactivation)', function () {
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -1159,7 +1160,7 @@ test('delete sets is_active to false instead of removing the record', function (
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,
@@ -1215,7 +1216,7 @@ test('cannot delete academic year with existing teaching schedules', function ()
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -1237,7 +1238,7 @@ test('cannot delete time slot with existing teaching schedules', function () {
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -1259,7 +1260,7 @@ test('cannot delete subject book with existing teaching schedules', function () 
         'school_id' => $school->id,
         'academic_year_id' => $academicYear->id,
         'time_slot_id' => $timeSlot->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
     ]);
@@ -1288,7 +1289,7 @@ test('all valid english day names are accepted', function () {
         $payload = createSchedulePayload([
             'day_of_week' => $day,
             'time_slot_id' => $newTimeSlot->id,
-            'class_level_id' => $newClassLevel->id,
+            'class_level_ids' => [$newClassLevel->id],
         ], $testData);
 
         $response = $this->actingAs($user)
@@ -1298,4 +1299,77 @@ test('all valid english day names are accepted', function () {
     }
 
     expect(TeachingSchedule::count())->toBe(7);
+});
+
+// ── Bentuk lama, hanya untuk jendela deploy (dihapus rilis berikutnya) ────
+
+test('a schedule can still be created with the old single class_level_id', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    $payload = createSchedulePayload([], $testData);
+    unset($payload['class_level_ids']);
+    $payload['class_level_id'] = $classLevel->id;
+
+    $scheduleId = $this->actingAs($user)
+        ->postJson('/api/v1/teaching-schedules', $payload)
+        ->assertCreated()
+        ->json('data.id');
+
+    expect(TeachingSchedule::findOrFail($scheduleId)->classLevelIds())->toEqual([$classLevel->id]);
+});
+
+test('a schedule can still be updated with the old single class_level_id', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    $otherClassLevel = ClassLevel::factory()->create([
+        'school_id' => $school->id,
+        'slug' => 'ibtida_1',
+        'label' => 'Ibtida 1',
+    ]);
+
+    $schedule = TeachingSchedule::factory()->create([
+        'school_id' => $school->id,
+        'academic_year_id' => $academicYear->id,
+        'semester' => 1,
+        'day_of_week' => 'monday',
+        'time_slot_id' => $timeSlot->id,
+        'class_level_ids' => [$classLevel->id],
+        'subject_book_id' => $subjectBook->id,
+        'teacher_id' => $teacher->id,
+    ]);
+
+    $this->actingAs($user)
+        ->putJson("/api/v1/teaching-schedules/{$schedule->id}", ['class_level_id' => $otherClassLevel->id])
+        ->assertOk();
+
+    expect($schedule->fresh()->classLevelIds())->toEqual([$otherClassLevel->id]);
+});
+
+test('a schedule still answers with the old single class_level, its first Kelas', function () {
+    $testData = createScheduleTestData();
+    [$user, $school, $academicYear, $timeSlot, $classLevel, $subjectBook, $teacher] = $testData;
+
+    $secondClassLevel = ClassLevel::factory()->create([
+        'school_id' => $school->id,
+        'slug' => 'ibtida_2',
+        'label' => 'Ibtida 2',
+        'sort_order' => $classLevel->sort_order + 1,
+    ]);
+
+    $this->actingAs($user)
+        ->postJson('/api/v1/teaching-schedules', createSchedulePayload([
+            'class_level_ids' => [$classLevel->id, $secondClassLevel->id],
+        ], $testData))
+        ->assertCreated()
+        ->assertJsonPath('data.class_level.id', $classLevel->id)
+        ->assertJsonPath('data.class_level.label', 'Tamhidi');
+
+    $this->actingAs($user)
+        ->getJson('/api/v1/teaching-schedules?academic_year_id='.$academicYear->id)
+        ->assertOk()
+        ->assertJsonPath('data.0.class_level.label', 'Tamhidi')
+        ->assertJsonPath('data.0.class_levels.0.label', 'Tamhidi')
+        ->assertJsonPath('data.0.class_levels.1.label', 'Ibtida 2');
 });

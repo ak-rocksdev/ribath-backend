@@ -5,6 +5,7 @@ namespace App\Services\Akademik;
 use App\Exceptions\FinalizedReportCardException;
 use App\Exceptions\OutsideTeachingScopeException;
 use App\Models\AcademicSemester;
+use App\Models\ClassLevel;
 use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\Student;
@@ -19,6 +20,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -26,20 +28,26 @@ use Illuminate\Validation\ValidationException;
  * date with every expected santri's status, edit those statuses, cancel a
  * session (Pertemuan Dibatalkan), and list/show sessions.
  *
- * Who is expected at a session: the santri of the schedule's class who had
- * entered by the session date (EnrollmentDateRule). Of those, the ACTIVE
- * ones must each have a status — a held session ("Pertemuan tercatat")
- * always covers every active expected santri, so the absensi denominator
- * is well defined. Non-active santri of the class (spec: shown with a
- * marker, never blocking) may be recorded but are not required. A row for
- * a santri outside the class, or one who entered after the date, is
- * rejected. Errors are keyed "<student_id>" and nothing is written when
- * any row fails (all-or-nothing).
+ * Who is expected at a session: the santri of EVERY Kelas of the schedule
+ * who had entered by the session date (EnrollmentDateRule), ordered per
+ * Kelas — a jadwal gabungan is absen once, for both its Kelas (ADR 0006).
+ * Of those, the ACTIVE ones must each have a status — a held session
+ * ("Pertemuan tercatat") always covers every active expected santri, so the
+ * absensi denominator is well defined. Non-active santri (spec: shown with
+ * a marker, never blocking) may be recorded but are not required. A row for
+ * a santri outside every Kelas of the schedule, or one who entered after
+ * the date, is rejected. Errors are keyed "<student_id>" and nothing is
+ * written when any row fails (all-or-nothing).
  *
- * Date rules live in SessionDatePolicy. The class, kitab and teacher are
- * snapshotted from the schedule when a session is first stored — the
+ * Date rules live in SessionDatePolicy. The kitab, the teacher and the Kelas
+ * are taken from the schedule when a session is first stored — the
  * schedule's CURRENT Ustadz, also when a former Ustadz records it; who
- * recorded or changed it is kept in created_by/updated_by.
+ * recorded or changed it is kept in created_by/updated_by. The Kelas become
+ * the Pertemuan's own set (`class_session_class_levels`), with the first of
+ * them kept on the row as the Kelas utama, so a later change to the Kelas of
+ * the schedule never reaches a Pertemuan already recorded. Which Kelas each
+ * santri was absen for is kept on his Absensi row, so a combined Pertemuan
+ * stays one row.
  *
  * Cakupan Mengajar (ADR 0004, 0005): a user holding only the "milik
  * sendiri" attendance permissions works on the schedules and Pertemuan
@@ -68,8 +76,11 @@ class ClassSessionService
 
     public const MESSAGE_RANGE_ALREADY_RECORDED = 'Tanggal ini sudah memiliki pertemuan.';
 
+    public const MESSAGE_SCHEDULE_WITHOUT_CLASS_LEVEL = 'Jadwal ini belum memiliki kelas, jadi pertemuannya tidak bisa dicatat.';
+
     private const SESSION_RELATIONS = [
         'classLevel:id,slug,label',
+        'classLevels:id,slug,label',
         'subjectBook:id,title',
         'teacher:id,full_name',
         'updater:id,name',
@@ -105,7 +116,7 @@ class ClassSessionService
             ->orderBy('day_of_week')
             ->orderBy('created_at')
             ->get()
-            ->filter(fn (TeachingSchedule $schedule) => $teachingScope->includesClassSubjectPair($schedule->class_level_id, $schedule->subject_book_id))
+            ->filter(fn (TeachingSchedule $schedule) => $teachingScope->includesAnyClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id))
             ->values();
     }
 
@@ -121,10 +132,14 @@ class ClassSessionService
     }
 
     /**
-     * A schedule bound to the route whose pair is outside the user's
-     * Cakupan Mengajar is not found (404), the same answer as a schedule
-     * of another school. The scope is resolved for the schedule's own
-     * Semester Akademik, so its riwayat pengajar counts (ADR 0005).
+     * A schedule bound to the route none of whose Kelas forms a pair inside
+     * the user's Cakupan Mengajar is not found (404), the same answer as a
+     * schedule of another school. The scope is resolved for the schedule's
+     * own Semester Akademik, so its riwayat pengajar counts (ADR 0005).
+     *
+     * This is the LISTING rule ("any Kelas"), for naming a schedule and
+     * opening its page; reading its roster or writing its Absensi asks
+     * ensureEveryClassOfScheduleWithinTeachingScope() instead.
      *
      * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to write
      */
@@ -132,13 +147,33 @@ class ClassSessionService
     {
         $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $schedule->academic_year_id, $schedule->semester);
 
-        abort_unless($teachingScope->includesClassSubjectPair($schedule->class_level_id, $schedule->subject_book_id), 404);
+        abort_unless($teachingScope->includesAnyClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id), 404);
     }
 
     /**
-     * A Pertemuan bound to the route whose own Kelas × Kitab (its
-     * snapshot) is outside the user's Cakupan Mengajar for its Semester
-     * Akademik is not found (404), like tenancy.
+     * The roster of a schedule holds the santri of EVERY Kelas of it, so a
+     * user whose Cakupan Mengajar covers only part of a jadwal gabungan may
+     * name the schedule but not read its roster: 404, like tenancy. For an
+     * ordinary single-class schedule, and for the Ustadz who holds a
+     * combined one, this is the rule above unchanged; what it turns away is
+     * the stale case — a former Ustadz kept by the riwayat pengajar for one
+     * Kelas while another Kelas joined the schedule after him (ADR 0005,
+     * 0006).
+     *
+     * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to write
+     */
+    public function ensureEveryClassOfScheduleWithinTeachingScope(TeachingSchedule $schedule, string $allDataPermission): void
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $schedule->academic_year_id, $schedule->semester);
+
+        abort_unless($teachingScope->includesEveryClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id), 404);
+    }
+
+    /**
+     * A Pertemuan bound to the route is read and changed as a whole — one
+     * sheet for every Kelas it was held for — so it is not found (404),
+     * like tenancy, unless EVERY Kelas × Kitab of its own Kelas set is
+     * inside the user's Cakupan Mengajar for its Semester Akademik.
      *
      * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to change its attendances
      */
@@ -146,7 +181,7 @@ class ClassSessionService
     {
         $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $session->academic_year_id, $session->semester);
 
-        abort_unless($teachingScope->includesClassSubjectPair($session->class_level_id, $session->subject_book_id), 404);
+        abort_unless($teachingScope->includesEveryClassSubjectPair($session->classLevelIds(), $session->subject_book_id), 404);
     }
 
     /**
@@ -162,14 +197,18 @@ class ClassSessionService
 
         if (! empty($filters['teaching_schedule_id'])) {
             $chosenSchedule = TeachingSchedule::findOrFail($filters['teaching_schedule_id']);
-            $teachingScope->assertIncludesClassSubjectPair($chosenSchedule->class_level_id, $chosenSchedule->subject_book_id);
+            $teachingScope->assertIncludesAnyClassSubjectPair($chosenSchedule->classLevelIds(), $chosenSchedule->subject_book_id);
         }
 
         $sessions = ClassSession::query()
             ->where('school_id', School::activeOrFail()->id)
             ->where('academic_year_id', $filters['academic_year_id'])
             ->where('semester', (int) $filters['semester'])
-            ->when($filters['class_level_id'] ?? null, fn ($query, $classLevelId) => $query->where('class_level_id', $classLevelId))
+            // A combined Pertemuan is listed under every Kelas it was held for (ADR 0006).
+            ->when($filters['class_level_id'] ?? null, fn ($query, $classLevelId) => $query->whereHas(
+                'classLevels',
+                fn ($classLevels) => $classLevels->where('class_levels.id', $classLevelId)
+            ))
             ->when($filters['teaching_schedule_id'] ?? null, fn ($query, $scheduleId) => $query->where('teaching_schedule_id', $scheduleId))
             ->when($filters['date_from'] ?? null, fn ($query, $dateFrom) => $query->whereDate('session_date', '>=', $dateFrom))
             ->when($filters['date_to'] ?? null, fn ($query, $dateTo) => $query->whereDate('session_date', '<=', $dateTo))
@@ -177,7 +216,9 @@ class ClassSessionService
             ->orderByDesc('session_date')
             ->orderByDesc('created_at')
             ->get()
-            ->filter(fn (ClassSession $session) => $teachingScope->includesClassSubjectPair($session->class_level_id, $session->subject_book_id))
+            // Listing follows the same "any Kelas" rule as the schedule list;
+            // reading one Pertemuan needs every Kelas of it (ADR 0006).
+            ->filter(fn (ClassSession $session) => $teachingScope->includesAnyClassSubjectPair($session->classLevelIds(), $session->subject_book_id))
             ->values();
 
         $summariesBySessionId = $this->attendanceSummariesFor($sessions->pluck('id'));
@@ -211,25 +252,38 @@ class ClassSessionService
     }
 
     /**
-     * The santri who may be recorded at a session of this schedule on this
-     * date (entered on or before it), active first then by name, each
-     * flagged `is_attendance_required` (active santri only).
+     * The santri who may be recorded at the Pertemuan of this schedule on
+     * this date (entered on or before it), grouped per Kelas in the order of
+     * the Kelas master and, within a Kelas, active first then by name, each
+     * flagged `is_attendance_required` (active santri only) and carrying the
+     * Kelas it belongs to. `class_levels` names those Kelas, so the screen
+     * can head each group (ADR 0006).
      *
-     * @return array{teaching_schedule_id: string, session_date: string, students: array<int, array<string, mixed>>}
+     * Whose Kelas: the Pertemuan's own once it exists — so the sheet of a
+     * recorded Pertemuan is exactly what may be saved to it — and the
+     * schedule's for a date not recorded yet.
+     *
+     * @return array{teaching_schedule_id: string, session_date: string, class_levels: array<int, array<string, mixed>>, students: array<int, array<string, mixed>>}
      */
     public function presentExpectedStudents(TeachingSchedule $schedule, string $sessionDate): array
     {
-        $this->ensureScheduleWithinTeachingScope($schedule, 'view-attendance');
+        $this->ensureEveryClassOfScheduleWithinTeachingScope($schedule, 'view-attendance');
 
         $sessionDateAsCarbon = Carbon::parse($sessionDate)->startOfDay();
+        $classLevels = $this->findLiveSession($schedule, $sessionDateAsCarbon)?->classLevels
+            ?? $schedule->loadMissing('classLevels')->classLevels;
 
         return [
             'teaching_schedule_id' => $schedule->id,
             'session_date' => $sessionDateAsCarbon->toDateString(),
-            'students' => $this->enrolledClassStudentsOn($schedule->class_level_id, $sessionDateAsCarbon)
+            'class_levels' => $classLevels->map(fn (ClassLevel $classLevel) => $classLevel->summary())->all(),
+            'students' => $this->filterEnrolledOn($this->rosterOf($classLevels->pluck('id')->all()), $sessionDateAsCarbon)
                 ->map(fn (Student $student) => array_merge(
                     $this->studentGradeService->presentClassStudent($student),
-                    ['is_attendance_required' => $this->isAttendanceRequiredFor($student)],
+                    [
+                        'class_level_id' => $student->class_level_id,
+                        'is_attendance_required' => $this->isAttendanceRequiredFor($student),
+                    ],
                 ))
                 ->values()
                 ->all(),
@@ -264,34 +318,40 @@ class ClassSessionService
             throw ValidationException::withMessages(['session_date' => self::MESSAGE_DUPLICATE_SESSION]);
         }
 
-        $this->assertAttendanceRowsAreValid($attendanceRows, $schedule->class_level_id, $sessionDateAsCarbon, collect());
+        $roster = $this->rosterOf($schedule->classLevelIds());
+        $this->assertAttendanceRowsAreValid($attendanceRows, $roster, $sessionDateAsCarbon, collect());
 
+        $classLevelIdByStudentId = $roster->pluck('class_level_id', 'id');
         $schoolId = School::activeOrFail()->id;
         $userId = auth()->id();
+        $now = now();
 
-        $session = $this->createSessionOrFailAsDuplicate(function () use ($schedule, $sessionDateAsCarbon, $attendanceRows, $schoolId, $userId) {
-            return DB::transaction(function () use ($schedule, $sessionDateAsCarbon, $attendanceRows, $schoolId, $userId) {
-                $session = ClassSession::create(array_merge(
-                    $this->snapshotFromSchedule($schedule, $sessionDateAsCarbon),
-                    [
-                        'school_id' => $schoolId,
-                        'status' => ClassSession::STATUS_HELD,
-                        'created_by' => $userId,
-                        'updated_by' => $userId,
-                    ],
-                ));
+        $session = $this->createSessionOrFailAsDuplicate(function () use ($schedule, $sessionDateAsCarbon, $attendanceRows, $classLevelIdByStudentId, $schoolId, $userId, $now) {
+            return DB::transaction(function () use ($schedule, $sessionDateAsCarbon, $attendanceRows, $classLevelIdByStudentId, $schoolId, $userId, $now) {
+                $session = $this->createSessionForSchedule($schedule, $sessionDateAsCarbon, [
+                    'school_id' => $schoolId,
+                    'status' => ClassSession::STATUS_HELD,
+                    'created_by' => $userId,
+                    'updated_by' => $userId,
+                ]);
 
-                foreach ($attendanceRows as $attendanceRow) {
-                    StudentAttendance::create([
-                        'school_id' => $schoolId,
-                        'class_session_id' => $session->id,
-                        'student_id' => $attendanceRow['student_id'],
-                        'status' => $attendanceRow['status'],
-                        'notes' => $this->normalizeNotes($attendanceRow['notes'] ?? null),
-                        'created_by' => $userId,
-                        'updated_by' => $userId,
-                    ]);
-                }
+                // One insert for the whole sheet: a Pertemuan is saved as a
+                // whole, and a class of 30 santri is 30 rows.
+                StudentAttendance::insert(array_map(fn (array $attendanceRow) => [
+                    // Ordered like every other model's key (HasUuids), so the
+                    // rows of one sheet stay contiguous in the index.
+                    'id' => (string) Str::orderedUuid(),
+                    'school_id' => $schoolId,
+                    'class_session_id' => $session->id,
+                    'student_id' => $attendanceRow['student_id'],
+                    'class_level_id' => $classLevelIdByStudentId->get($attendanceRow['student_id']),
+                    'status' => $attendanceRow['status'],
+                    'notes' => $this->normalizeNotes($attendanceRow['notes'] ?? null),
+                    'created_by' => $userId,
+                    'updated_by' => $userId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ], $attendanceRows));
 
                 return $session;
             });
@@ -328,15 +388,18 @@ class ClassSessionService
 
         $recordedAttendancesByStudentId = StudentAttendance::query()
             ->where('class_session_id', $session->id)
-            ->get(['student_id', 'status', 'notes'])
+            ->get(['student_id', 'class_level_id', 'status', 'notes'])
             ->keyBy('student_id');
 
-        $this->assertAttendanceRowsAreValid($attendanceRows, $session->class_level_id, $session->session_date, $recordedAttendancesByStudentId->keys());
+        $roster = $this->rosterOf($session->classLevelIds());
+
+        $this->assertAttendanceRowsAreValid($attendanceRows, $roster, $session->session_date, $recordedAttendancesByStudentId->keys());
         $this->assertNoChangeForFinalizedStudents($session, $attendanceRows, $recordedAttendancesByStudentId);
 
+        $classLevelIdByStudentId = $roster->pluck('class_level_id', 'id');
         $userId = auth()->id();
 
-        DB::transaction(function () use ($session, $attendanceRows, $userId) {
+        DB::transaction(function () use ($session, $attendanceRows, $classLevelIdByStudentId, $userId) {
             $existingAttendancesByStudentId = StudentAttendance::query()
                 ->where('class_session_id', $session->id)
                 ->whereIn('student_id', collect($attendanceRows)->pluck('student_id'))
@@ -355,6 +418,7 @@ class ClassSessionService
                         'school_id' => $session->school_id,
                         'class_session_id' => $session->id,
                         'student_id' => $attendanceRow['student_id'],
+                        'class_level_id' => $classLevelIdByStudentId->get($attendanceRow['student_id']),
                         'status' => $attendanceRow['status'],
                         'notes' => $notes,
                         'created_by' => $userId,
@@ -446,16 +510,13 @@ class ClassSessionService
 
             $session = $existingSession;
         } else {
-            $session = $this->createSessionOrFailAsDuplicate(fn () => ClassSession::create(array_merge(
-                $this->snapshotFromSchedule($schedule, $sessionDateAsCarbon),
-                [
-                    'school_id' => School::activeOrFail()->id,
-                    'status' => ClassSession::STATUS_CANCELLED,
-                    'cancel_reason' => $reason,
-                    'created_by' => $userId,
-                    'updated_by' => $userId,
-                ],
-            )));
+            $session = $this->createSessionOrFailAsDuplicate(fn () => $this->createSessionForSchedule($schedule, $sessionDateAsCarbon, [
+                'school_id' => School::activeOrFail()->id,
+                'status' => ClassSession::STATUS_CANCELLED,
+                'cancel_reason' => $reason,
+                'created_by' => $userId,
+                'updated_by' => $userId,
+            ]));
         }
 
         return [
@@ -495,6 +556,8 @@ class ClassSessionService
             ->where('academic_year_id', $activeAcademicSemester->academic_year_id)
             ->where('semester', $activeAcademicSemester->semester)
             ->where('is_active', true)
+            // Every schedule's Kelas are frozen onto the Pertemuan it creates.
+            ->with('classLevels:id')
             ->get();
 
         [$createdItems, $skippedItems] = $schedules->isEmpty()
@@ -526,7 +589,10 @@ class ClassSessionService
             'class_level_id' => $session->class_level_id,
             'subject_book_id' => $session->subject_book_id,
             'teacher_id' => $session->teacher_id,
+            // Deprecated (jendela deploy): the Kelas utama alone. The Kelas
+            // of a Pertemuan are `class_levels`.
             'class_level' => $session->classLevel?->summary(),
+            'class_levels' => $session->classLevels->map(fn (ClassLevel $classLevel) => $classLevel->summary())->all(),
             'subject_book' => $session->subjectBook ? [
                 'id' => $session->subjectBook->id,
                 'title' => $session->subjectBook->title,
@@ -550,13 +616,13 @@ class ClassSessionService
      * Validates every posted row before anything is written.
      *
      * @param  array<int, array{student_id: string, status: mixed, notes?: mixed}>  $attendanceRows
+     * @param  Collection<int, Student>  $classStudents  the santri of every Kelas the Pertemuan covers
      * @param  Collection<int, string>  $recordedStudentIds  santri who already have a row (edits only)
      *
      * @throws ValidationException keyed "<student_id>"
      */
-    private function assertAttendanceRowsAreValid(array $attendanceRows, string $classLevelId, CarbonInterface $sessionDate, Collection $recordedStudentIds): void
+    private function assertAttendanceRowsAreValid(array $attendanceRows, Collection $classStudents, CarbonInterface $sessionDate, Collection $recordedStudentIds): void
     {
-        $classStudents = $this->studentGradeService->listClassStudents($classLevelId);
         $classStudentIds = $classStudents->pluck('id')->flip();
         $enrolledStudents = $this->filterEnrolledOn($classStudents, $sessionDate);
         $enrolledStudentIds = $enrolledStudents->pluck('id')->flip();
@@ -663,11 +729,16 @@ class ClassSessionService
     }
 
     /**
+     * The santri of these Kelas, one Kelas after another in the order of the
+     * Kelas master — the roster of one Pertemuan, which a jadwal gabungan
+     * shares between its Kelas (ADR 0006).
+     *
+     * @param  array<int, string>  $classLevelIds
      * @return Collection<int, Student>
      */
-    private function enrolledClassStudentsOn(string $classLevelId, CarbonInterface $sessionDate): Collection
+    private function rosterOf(array $classLevelIds): Collection
     {
-        return $this->filterEnrolledOn($this->studentGradeService->listClassStudents($classLevelId), $sessionDate);
+        return $this->studentGradeService->listClassStudents(...$classLevelIds);
     }
 
     /**
@@ -690,8 +761,10 @@ class ClassSessionService
 
     /**
      * A schedule chosen in the request body to record or cancel a
-     * Pertemuan: outside the Cakupan Mengajar of its Semester Akademik it
-     * is refused with 403 and the scope message.
+     * Pertemuan: one Pertemuan is written for EVERY Kelas of the schedule
+     * at once, so anything less than the whole set inside the Cakupan
+     * Mengajar of its Semester Akademik is refused with 403 and the scope
+     * message (ADR 0006).
      *
      * @throws OutsideTeachingScopeException
      */
@@ -699,7 +772,7 @@ class ClassSessionService
     {
         $this->teachingScopeResolver
             ->forCurrentUser('manage-attendance', $schedule->academic_year_id, $schedule->semester)
-            ->assertIncludesClassSubjectPair($schedule->class_level_id, $schedule->subject_book_id);
+            ->assertIncludesEveryClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id);
     }
 
     private function actorIsSuperAdmin(): bool
@@ -794,16 +867,13 @@ class ClassSessionService
                         continue;
                     }
 
-                    $this->createSessionOrFailAsDuplicate(fn () => ClassSession::create(array_merge(
-                        $this->snapshotFromSchedule($schedule, Carbon::parse($sessionDate)),
-                        [
-                            'school_id' => $schoolId,
-                            'status' => ClassSession::STATUS_CANCELLED,
-                            'cancel_reason' => $reason,
-                            'created_by' => $userId,
-                            'updated_by' => $userId,
-                        ],
-                    )));
+                    $this->createSessionOrFailAsDuplicate(fn () => $this->createSessionForSchedule($schedule, Carbon::parse($sessionDate), [
+                        'school_id' => $schoolId,
+                        'status' => ClassSession::STATUS_CANCELLED,
+                        'cancel_reason' => $reason,
+                        'created_by' => $userId,
+                        'updated_by' => $userId,
+                    ]));
 
                     $createdItems[] = [
                         'teaching_schedule_id' => $schedule->id,
@@ -857,19 +927,40 @@ class ClassSessionService
     }
 
     /**
-     * @return array<string, mixed>
+     * Creates the Pertemuan of a schedule on a date, with the schedule's
+     * kitab, Ustadz and Kelas frozen onto it: its Kelas become the
+     * Pertemuan's own set (ADR 0006) and the first of them stays on the row
+     * as the Kelas utama — the snapshot a Pertemuan is displayed, guarded
+     * and filtered by. One transaction, so a Pertemuan never exists without
+     * its Kelas.
+     *
+     * @param  array<string, mixed>  $attributes  school_id, status and the audit fields
      */
-    private function snapshotFromSchedule(TeachingSchedule $schedule, CarbonInterface $sessionDate): array
+    private function createSessionForSchedule(TeachingSchedule $schedule, CarbonInterface $sessionDate, array $attributes): ClassSession
     {
-        return [
-            'teaching_schedule_id' => $schedule->id,
-            'session_date' => $sessionDate->toDateString(),
-            'academic_year_id' => $schedule->academic_year_id,
-            'semester' => $schedule->semester,
-            'class_level_id' => $schedule->class_level_id,
-            'subject_book_id' => $schedule->subject_book_id,
-            'teacher_id' => $schedule->teacher_id,
-        ];
+        $classLevelIds = $schedule->classLevelIds();
+
+        // A schedule always holds at least one Kelas; only data repair can
+        // leave it empty, and then the refusal must say so.
+        if ($classLevelIds === []) {
+            throw ValidationException::withMessages(['teaching_schedule_id' => self::MESSAGE_SCHEDULE_WITHOUT_CLASS_LEVEL]);
+        }
+
+        return DB::transaction(function () use ($schedule, $sessionDate, $attributes, $classLevelIds) {
+            $session = ClassSession::create(array_merge([
+                'teaching_schedule_id' => $schedule->id,
+                'session_date' => $sessionDate->toDateString(),
+                'academic_year_id' => $schedule->academic_year_id,
+                'semester' => $schedule->semester,
+                'class_level_id' => $classLevelIds[0],
+                'subject_book_id' => $schedule->subject_book_id,
+                'teacher_id' => $schedule->teacher_id,
+            ], $attributes));
+
+            $session->classLevels()->attach($classLevelIds, ['school_id' => $session->school_id]);
+
+            return $session;
+        });
     }
 
     /**
@@ -956,6 +1047,9 @@ class ClassSessionService
             'class_session_id' => $attendance->class_session_id,
             'student_id' => $attendance->student_id,
             'student_name' => $attendance->student?->full_name,
+            // The Kelas this santri was absen for, so the edit screen can
+            // group a combined Pertemuan the way the sheet does (ADR 0006).
+            'class_level_id' => $attendance->class_level_id,
             'status' => $attendance->status,
             'notes' => $attendance->notes,
             'created_by' => $attendance->created_by,
