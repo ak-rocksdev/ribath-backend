@@ -625,7 +625,7 @@ test('create schedule fails with missing required fields', function () {
     $response->assertUnprocessable()
         ->assertJsonValidationErrors([
             'academic_year_id', 'semester', 'day_of_week',
-            'time_slot_id', 'class_level_id', 'subject_book_id', 'teacher_id',
+            'time_slot_id', 'class_level_ids', 'subject_book_id', 'teacher_id',
         ]);
 });
 
@@ -710,8 +710,9 @@ test('create schedule fails with non-existent class_level_id', function () {
     $response = $this->actingAs($user)
         ->postJson('/api/v1/teaching-schedules', $payload);
 
+    // The single Kelas of the older payload is read as a list of one (ADR 0006).
     $response->assertUnprocessable()
-        ->assertJsonValidationErrors(['class_level_id']);
+        ->assertJsonValidationErrors(['class_level_ids.0']);
 });
 
 test('create schedule fails with non-existent subject_book_id', function () {
@@ -968,10 +969,11 @@ test('application-layer validation prevents double-booking a class at the same t
         ->postJson('/api/v1/teaching-schedules', $payload);
 
     $response->assertUnprocessable()
-        ->assertJsonValidationErrors(['class_level_id']);
+        ->assertJsonValidationErrors(['class_level_ids']);
 
-    $errorMessage = $response->json('errors.class_level_id.0');
-    expect($errorMessage)->toContain('already has a schedule');
+    $errorMessage = $response->json('errors.class_level_ids.0');
+    expect($errorMessage)->toContain('Tamhidi')
+        ->toContain('sudah memiliki jadwal lain');
 });
 
 // ── Update tests ─────────────────────────────────────────────────────

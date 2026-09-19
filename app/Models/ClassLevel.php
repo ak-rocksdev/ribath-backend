@@ -20,6 +20,12 @@ class ClassLevel extends Model
         'is_active',
     ];
 
+    /**
+     * A Kelas reached through the Jadwal Mengajar join table carries its
+     * pivot row; nothing reads it, so it stays out of every payload.
+     */
+    protected $hidden = ['pivot'];
+
     protected function casts(): array
     {
         return [

@@ -235,6 +235,25 @@ test('teachers are sorted by missing_count desc then name, items by date asc', f
     expect($item['time_slot']['label'])->toBe("Ba'da Subuh");
 });
 
+test('a combined schedule raises one alert per date, naming every Kelas', function () {
+    $context = setUpAttendanceAlertContext();
+    $ibtida = ClassLevel::where('school_id', $context['school']->id)->where('slug', '!=', 'tamhidi')->firstOrFail();
+    $context['schedule']->syncClassLevelRows([$context['classLevel']->id, $ibtida->id]);
+
+    Carbon::setTestNow('2025-09-10 10:00:00');
+
+    $response = test()->actingAs($context['user'])->getJson(attendanceAlertQuery());
+    $response->assertOk();
+
+    $items = collect($response->json('data.teachers.0.items'))
+        ->where('session_date', '2025-09-01');
+
+    expect($items)->toHaveCount(1);
+    expect(collect($items->first()['class_levels'])->pluck('label')->all())
+        ->toContain('Tamhidi')
+        ->toContain($ibtida->label);
+});
+
 test('an inactive schedule is excluded from the alert', function () {
     $context = setUpAttendanceAlertContext();
     $context['schedule']->update(['is_active' => false]);
