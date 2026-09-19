@@ -13,6 +13,7 @@ use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Database\Seeders\SchoolSeeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /*
  * Kelas gabungan (ADR 0006): one Jadwal Mengajar may hold several Kelas —
@@ -90,6 +91,16 @@ function storedClassLevelIds(string $scheduleId): array
 
 // ── Membuat jadwal ───────────────────────────────────────────────────────
 
+test('the schedule table keeps no Kelas of its own any more', function () {
+    // Contract stage of ADR 0006: one source of truth. The column and the
+    // partial unique index that held "one Kelas, one slot" on it are gone —
+    // TeachingScheduleService keeps that rule now, inside its transaction.
+    expect(Schema::hasColumn('teaching_schedules', 'class_level_id'))->toBeFalse()
+        ->and(collect(Schema::getIndexes('teaching_schedules'))->pluck('name')->all())
+        ->not->toContain('unique_active_class_schedule_slot')
+        ->not->toContain('idx_schedules_class');
+});
+
 test('a schedule can be created for two Kelas at once', function () {
     $context = setUpCombinedScheduleContext();
 
@@ -109,7 +120,7 @@ test('a schedule can be created for two Kelas at once', function () {
         ->toEqual(collect([$context['ibtida2']->id, $context['tsanawiyah1']->id])->sort()->values()->all());
 });
 
-test('the single Kelas column of a combined schedule holds the first of its Kelas', function () {
+test('the Kelas of a combined schedule read in the Kelas master order, whatever order the form sent', function () {
     $context = setUpCombinedScheduleContext();
 
     $scheduleId = $this->actingAs($context['pengurus'])
@@ -120,16 +131,16 @@ test('the single Kelas column of a combined schedule holds the first of its Kela
         ->assertCreated()
         ->json('data.id');
 
-    // Expand stage: the old column stays filled with the Kelas that comes
-    // first in the Kelas master, whatever order the form sent, and never
-    // disagrees with the join table.
+    // The order is the Kelas master's, not the form's, so a schedule names
+    // its Kelas the same way everywhere and the Kelas utama a Pertemuan
+    // snapshots (classLevelIds()[0]) is the same on every save.
     $schedule = TeachingSchedule::findOrFail($scheduleId);
 
-    expect($schedule->class_level_id)->toBe($context['ibtida2']->id)
-        ->and(storedClassLevelIds($scheduleId))->toContain($context['ibtida2']->id);
+    expect($schedule->classLevelIds())->toBe([$context['ibtida2']->id, $context['tsanawiyah1']->id])
+        ->and($schedule->classLevelsLabel())->toBe('Ibtida 2 + Tsanawiyah 1');
 });
 
-test('a schedule created with one Kelas keeps the response shape it had before', function () {
+test('a schedule sent with the older single class_level_id field is stored as a set of one', function () {
     $context = setUpCombinedScheduleContext();
 
     $response = $this->actingAs($context['pengurus'])
@@ -138,9 +149,9 @@ test('a schedule created with one Kelas keeps the response shape it had before',
         ]));
 
     $response->assertCreated()
-        ->assertJsonPath('data.class_level_id', $context['tamhidi']->id)
-        ->assertJsonPath('data.class_level.label', 'Tamhidi')
-        ->assertJsonPath('data.class_levels.0.label', 'Tamhidi');
+        ->assertJsonPath('data.class_levels.0.id', $context['tamhidi']->id)
+        ->assertJsonPath('data.class_levels.0.label', 'Tamhidi')
+        ->assertJsonCount(1, 'data.class_levels');
 
     expect(storedClassLevelIds($response->json('data.id')))->toEqual([$context['tamhidi']->id]);
 });

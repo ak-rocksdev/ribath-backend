@@ -86,7 +86,7 @@ function recapScheduleSubjectBook(School $school, AcademicYear $academicYear, in
         'academic_year_id' => $academicYear->id,
         'semester' => $semester,
         'time_slot_id' => TimeSlot::factory()->create(['school_id' => $school->id])->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,

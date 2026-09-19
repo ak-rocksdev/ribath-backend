@@ -73,7 +73,7 @@ class ClassSessionService
 
     private const SESSION_RELATIONS = [
         'classLevel:id,slug,label',
-        'teachingSchedule:id,class_level_id',
+        'teachingSchedule:id',
         'teachingSchedule.classLevels:id,slug,label',
         'subjectBook:id,title',
         'teacher:id,full_name',
@@ -961,7 +961,7 @@ class ClassSessionService
             'session_date' => $sessionDate->toDateString(),
             'academic_year_id' => $schedule->academic_year_id,
             'semester' => $schedule->semester,
-            'class_level_id' => $schedule->classLevelIds()[0] ?? $schedule->class_level_id,
+            'class_level_id' => $schedule->classLevelIds()[0],
             'subject_book_id' => $schedule->subject_book_id,
             'teacher_id' => $schedule->teacher_id,
         ];

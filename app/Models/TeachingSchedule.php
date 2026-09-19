@@ -9,22 +9,22 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use LogicException;
 
 /**
- * Jadwal Mengajar. Its Kelas are a set (ADR 0006): the truth lives in
- * `teaching_schedule_class_levels`, reachable through `classLevels`, while
- * the single `class_level_id` column stays filled with the first of them
- * during the expand stage, for readers not migrated yet. Both are written
- * together — see `syncClassLevelRows()` — so they can never disagree.
+ * Jadwal Mengajar. Its Kelas are a set (ADR 0006), and the set is the only
+ * truth: `teaching_schedule_class_levels`, reachable through `classLevels`.
+ * The single `class_level_id` column it grew up with is gone.
  */
 class TeachingSchedule extends Model
 {
     use HasFactory, HasUuids;
 
     /**
-     * The Kelas the next save must store, set by TeachingScheduleService.
-     * Null means "mirror the single class_level_id column", which is what a
-     * factory, a seeder or any writer that knows only one Kelas produces.
+     * The Kelas the next save must store, set by whoever chooses them —
+     * TeachingScheduleService, or the factory in tests. Null means "leave
+     * the Kelas as they are", so saving an unrelated field (`is_active`,
+     * a replaced Ustadz) never touches the set.
      *
      * @var array<int, string>|null
      */
@@ -40,7 +40,6 @@ class TeachingSchedule extends Model
         'subjectBook.subjectCategory:id,name,color',
         'teacher:id,full_name,code',
         'timeSlot:id,code,label,type,start_time,end_time,sort_order',
-        'classLevel:id,slug,label,category',
         'classLevels:id,slug,label,category',
         'academicYear:id,name',
     ];
@@ -51,7 +50,6 @@ class TeachingSchedule extends Model
         'semester',
         'day_of_week',
         'time_slot_id',
-        'class_level_id',
         'subject_book_id',
         'teacher_id',
         'is_active',
@@ -78,11 +76,6 @@ class TeachingSchedule extends Model
     public function timeSlot(): BelongsTo
     {
         return $this->belongsTo(TimeSlot::class);
-    }
-
-    public function classLevel(): BelongsTo
-    {
-        return $this->belongsTo(ClassLevel::class);
     }
 
     /**
@@ -119,43 +112,28 @@ class TeachingSchedule extends Model
     {
         $this->loadMissing('classLevels');
 
-        $labels = $this->classLevels->pluck('label')->filter()->all();
-
-        return $labels !== [] ? implode($separator, $labels) : (string) $this->classLevel?->label;
+        return $this->classLevels->pluck('label')->filter()->implode($separator);
     }
 
     protected static function booted(): void
     {
-        // Expand stage: no saved schedule is ever left without its Kelas rows.
+        // The dropped `class_level_id` column was NOT NULL: no schedule
+        // could exist without a Kelas. Keep that invariant now that the
+        // Kelas live in a join table written just after the insert.
+        static::creating(function (TeachingSchedule $teachingSchedule) {
+            if (array_filter($teachingSchedule->classLevelIdsToSync ?? []) === []) {
+                throw new LogicException('Jadwal Mengajar dibuat bersama Kelas-nya: set classLevelIdsToSync sebelum save().');
+            }
+        });
+
         static::saved(function (TeachingSchedule $teachingSchedule) {
-            $teachingSchedule->syncClassLevelRows($teachingSchedule->classLevelIdsToSyncOnSave());
+            if ($teachingSchedule->classLevelIdsToSync === null) {
+                return;
+            }
+
+            $teachingSchedule->syncClassLevelRows($teachingSchedule->classLevelIdsToSync);
             $teachingSchedule->classLevelIdsToSync = null;
         });
-    }
-
-    /**
-     * What the join table must hold after this save. The service says so
-     * outright. A writer that knows only the single column — a factory, a
-     * seeder, an `update(['is_active' => false])` — gets the single Kelas
-     * when the schedule has no Kelas rows yet or when it just moved the
-     * schedule to another Kelas, and otherwise leaves the set as it is, so
-     * saving an unrelated field never drops the Kelas of a combined schedule.
-     *
-     * @return array<int, string|null>
-     */
-    private function classLevelIdsToSyncOnSave(): array
-    {
-        if ($this->classLevelIdsToSync !== null) {
-            return $this->classLevelIdsToSync;
-        }
-
-        if ($this->wasChanged('class_level_id')) {
-            return [$this->class_level_id];
-        }
-
-        $storedIds = $this->storedClassLevelIds();
-
-        return $storedIds !== [] ? $storedIds : [$this->class_level_id];
     }
 
     /**
@@ -173,7 +151,8 @@ class TeachingSchedule extends Model
 
     /**
      * Make the join table hold exactly these Kelas: add what is missing,
-     * drop what is gone. Called after every save of a schedule.
+     * drop what is gone. An empty list is read as "say nothing", never as
+     * "drop them all": a schedule without a Kelas has no meaning.
      *
      * @param  array<int, string|null>  $classLevelIds
      */

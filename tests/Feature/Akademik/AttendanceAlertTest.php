@@ -93,7 +93,7 @@ function attendanceAlertCreateSchedule(
         'semester' => 1,
         'day_of_week' => $dayOfWeek,
         'time_slot_id' => TimeSlot::factory()->create(['school_id' => $school->id, 'label' => 'Ba\'da Subuh'])->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => $isActive,
@@ -230,7 +230,7 @@ test('teachers are sorted by missing_count desc then name, items by date asc', f
 
     $item = $response->json('data.teachers.0.items.0');
     expect($item['teaching_schedule_id'])->toBe($context['schedule']->id);
-    expect($item['class_level']['label'])->toBe('Tamhidi');
+    expect(collect($item['class_levels'])->pluck('label')->all())->toBe(['Tamhidi']);
     expect($item['subject_book']['title'])->toBe('Safinatun Najah');
     expect($item['time_slot']['label'])->toBe("Ba'da Subuh");
 });

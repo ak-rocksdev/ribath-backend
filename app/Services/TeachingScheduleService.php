@@ -115,7 +115,6 @@ class TeachingScheduleService
         unset($data['class_level_ids']);
 
         $data['school_id'] = $school->id;
-        $data['class_level_id'] = $classLevelIds[0];
 
         $schedule = DB::transaction(function () use ($data, $classLevelIds) {
             $this->validateNoClassSlotConflict($data, $classLevelIds);
@@ -142,14 +141,12 @@ class TeachingScheduleService
     {
         $school = School::activeOrFail();
 
-        $previousClassLevelIds = $this->currentClassLevelIds($teachingSchedule);
+        $previousClassLevelIds = $teachingSchedule->classLevelIds();
 
         $newClassLevelIds = array_key_exists('class_level_ids', $data)
             ? $this->resolveClassLevelIds((array) $data['class_level_ids'], $school)
             : $previousClassLevelIds;
         unset($data['class_level_ids']);
-
-        $data['class_level_id'] = $newClassLevelIds[0];
 
         $mergedData = array_merge($teachingSchedule->only([
             'school_id', 'teacher_id', 'day_of_week', 'time_slot_id',
@@ -178,24 +175,9 @@ class TeachingScheduleService
     }
 
     /**
-     * The Kelas a schedule holds now, ordered as the Kelas master orders
-     * them. A schedule written before the join table existed falls back to
-     * its single Kelas column.
-     *
-     * @return array<int, string>
-     */
-    private function currentClassLevelIds(TeachingSchedule $teachingSchedule): array
-    {
-        $classLevelIds = $teachingSchedule->classLevelIds();
-
-        return $classLevelIds !== [] ? $classLevelIds : array_filter([$teachingSchedule->class_level_id]);
-    }
-
-    /**
-     * The chosen Kelas, ordered as the Kelas master orders them, so the
-     * single `class_level_id` column a combined schedule keeps during the
-     * expand stage is the same one on every save. Every Kelas must belong to
-     * the active school.
+     * The chosen Kelas, ordered as the Kelas master orders them, so a
+     * schedule names its Kelas the same way on every screen and in every
+     * message. Every Kelas must belong to the active school.
      *
      * @param  array<int, string>  $classLevelIds
      * @return array<int, string>
@@ -274,7 +256,7 @@ class TeachingScheduleService
             foreach ($sourceSchedules as $source) {
                 // A combined schedule is carried whole (ADR 0006), so it is
                 // skipped when ANY of its Kelas is already busy in the target.
-                $classLevelIds = $this->currentClassLevelIds($source);
+                $classLevelIds = $source->classLevelIds();
 
                 $classConflict = DB::table('teaching_schedule_class_levels as schedule_class_level')
                     ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')
@@ -312,7 +294,6 @@ class TeachingScheduleService
                     'semester' => (int) $data['target_semester'],
                     'day_of_week' => $source->day_of_week,
                     'time_slot_id' => $source->time_slot_id,
-                    'class_level_id' => $classLevelIds[0],
                     'subject_book_id' => $source->subject_book_id,
                     'teacher_id' => $source->teacher_id,
                     'is_active' => true,
@@ -386,7 +367,7 @@ class TeachingScheduleService
                     continue;
                 }
 
-                $classLevelIds = $this->currentClassLevelIds($schedule);
+                $classLevelIds = $schedule->classLevelIds();
 
                 $schedule->teacher_id = $data['target_teacher_id'];
                 $this->recordTeacherHistoryWhenAssignmentChanges($schedule, $classLevelIds, $classLevelIds);

@@ -400,7 +400,7 @@ test('a schedule of another school is not found for the edit and untouched by th
         'academic_year_id' => AcademicYear::factory()->create(['school_id' => $otherSchool->id])->id,
         'semester' => 1,
         'time_slot_id' => TimeSlot::factory()->create(['school_id' => $otherSchool->id])->id,
-        'class_level_id' => ClassLevel::factory()->create(['school_id' => $otherSchool->id])->id,
+        'class_level_ids' => [ClassLevel::factory()->create(['school_id' => $otherSchool->id])->id],
         'subject_book_id' => SubjectBook::factory()->create([
             'school_id' => $otherSchool->id,
             'subject_category_id' => SubjectCategory::factory()->create(['school_id' => $otherSchool->id])->id,

@@ -90,7 +90,7 @@ function attendanceRecapCreateSchedule(School $school, AcademicYear $academicYea
         'semester' => $semester,
         'day_of_week' => 'monday',
         'time_slot_id' => TimeSlot::factory()->create(['school_id' => $school->id])->id,
-        'class_level_id' => $classLevel->id,
+        'class_level_ids' => [$classLevel->id],
         'subject_book_id' => $subjectBook->id,
         'teacher_id' => $teacher->id,
         'is_active' => true,

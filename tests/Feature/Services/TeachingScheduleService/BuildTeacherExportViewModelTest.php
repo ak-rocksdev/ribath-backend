@@ -27,7 +27,7 @@ function makeScheduleFor(
         'day_of_week'      => $day,
         'time_slot_id'     => $slot->id,
         'subject_book_id'  => ($book ?? SubjectBook::factory()->create(['school_id' => $school->id]))->id,
-        'class_level_id'   => ($class ?? ClassLevel::factory()->create(['school_id' => $school->id]))->id,
+        'class_level_ids'  => [($class ?? ClassLevel::factory()->create(['school_id' => $school->id]))->id],
         'teacher_id'       => $teacher->id,
         'is_active'        => $active,
     ]);
@@ -156,7 +156,7 @@ test('isolates schedules by school (multi-tenant)', function () {
         'day_of_week'      => 'monday',
         'time_slot_id'     => $otherSchoolSlot->id,
         'subject_book_id'  => $otherSchoolBook->id,
-        'class_level_id'   => $otherSchoolClass->id,
+        'class_level_ids'  => [$otherSchoolClass->id],
         'teacher_id'       => $this->teacher->id,
         'is_active'        => true,
     ]);
