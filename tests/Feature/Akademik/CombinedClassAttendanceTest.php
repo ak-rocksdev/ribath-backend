@@ -475,3 +475,262 @@ test('a Pertemuan covers the Kelas its schedule held when it was recorded, not o
     expect(collect($laterResponse->json('data.class_levels'))->pluck('label')->all())
         ->toEqual(['Tamhidi', 'Ibtida 2', 'Tsanawiyah 1']);
 });
+
+// ── Cakupan per jadwal gabungan: sebagian kelas tidak cukup ────────────────
+
+/**
+ * A schedule whose Kelas set grew after its Ustadz was replaced: Ustadz
+ * Hasan taught Fathul Qorib for Ibtida 2 on Wednesday, was replaced by
+ * Ustadz Ali (so his riwayat pengajar keeps Ibtida 2 × Fathul Qorib), and
+ * only afterwards did Tsanawiyah 1 join that schedule. Hasan's Cakupan
+ * Mengajar therefore covers ONE of its two Kelas — and it is the Kelas
+ * utama, so the Pertemuan snapshot alone would let him through.
+ *
+ * @return array<string, mixed> the context plus `hasanAccount` and `partiallyCoveredScheduleId`
+ */
+function setUpPartiallyCoveredScheduleContext($testCase): array
+{
+    $context = setUpCombinedClassAttendanceContext($testCase);
+
+    $context['dhuhaSlot'] = TimeSlot::factory()->create(['school_id' => $context['school']->id, 'sort_order' => 3]);
+    $context['fathulQorib'] = combinedClassSubjectBook($context['school'], 'Fathul Qorib');
+    $context['ustadzHasan'] = Teacher::factory()->create([
+        'school_id' => $context['school']->id,
+        'full_name' => 'Ustadz Hasan',
+        'user_id' => null,
+    ]);
+    $context['hasanAccount'] = grantTeacherAccess($testCase, $context['superAdmin'], $context['ustadzHasan'], 'hasan@example.com');
+
+    $scheduleId = combinedClassCreateSchedule($testCase, $context, [
+        'day_of_week' => 'wednesday',
+        'time_slot_id' => $context['dhuhaSlot']->id,
+        'class_level_ids' => [$context['ibtida2']->id],
+        'subject_book_id' => $context['fathulQorib']->id,
+        'teacher_id' => $context['ustadzHasan']->id,
+    ]);
+
+    // Hasan is replaced by Ali: the riwayat pengajar keeps Ibtida 2 × Fathul Qorib for Hasan (ADR 0005).
+    $testCase->actingAs($context['pengurus'])
+        ->putJson("/api/v1/teaching-schedules/{$scheduleId}", ['teacher_id' => $context['ustadzAli']->id])
+        ->assertOk();
+
+    // Only now does Tsanawiyah 1 join that schedule — a Kelas Hasan never taught.
+    $testCase->actingAs($context['pengurus'])
+        ->putJson("/api/v1/teaching-schedules/{$scheduleId}", [
+            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id],
+        ])
+        ->assertOk();
+
+    $context['partiallyCoveredScheduleId'] = $scheduleId;
+
+    return $context;
+}
+
+test('a former Ustadz whose Cakupan Mengajar covers one Kelas of a combined schedule still sees it listed', function () {
+    $context = setUpPartiallyCoveredScheduleContext($this);
+
+    $scheduleIds = collect($this->actingAs($context['hasanAccount'])
+        ->getJson('/api/v1/attendance-schedules?'.http_build_query([
+            'academic_year_id' => $context['academicYear']->id,
+            'semester' => 1,
+        ]))
+        ->assertOk()
+        ->json('data'))
+        ->pluck('id')
+        ->all();
+
+    expect($scheduleIds)->toEqual([$context['partiallyCoveredScheduleId']]);
+});
+
+test('a former Ustadz whose Cakupan Mengajar covers one Kelas of a combined schedule cannot read its roster', function () {
+    $context = setUpPartiallyCoveredScheduleContext($this);
+
+    $this->actingAs($context['hasanAccount'])
+        ->getJson("/api/v1/teaching-schedules/{$context['partiallyCoveredScheduleId']}/expected-students?session_date=2025-09-03")
+        ->assertNotFound();
+});
+
+test('a former Ustadz whose Cakupan Mengajar covers one Kelas of a combined schedule cannot record its Absensi', function () {
+    $context = setUpPartiallyCoveredScheduleContext($this);
+
+    recordClassSessionThroughEndpoint($this, $context['hasanAccount'], $context['partiallyCoveredScheduleId'], '2025-09-03', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertForbidden();
+
+    expect(ClassSession::where('teaching_schedule_id', $context['partiallyCoveredScheduleId'])->count())->toBe(0);
+});
+
+test('a former Ustadz whose Cakupan Mengajar covers one Kelas of a combined schedule cannot cancel its Pertemuan', function () {
+    $context = setUpPartiallyCoveredScheduleContext($this);
+
+    $this->actingAs($context['hasanAccount'])
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $context['partiallyCoveredScheduleId'],
+            'session_date' => '2025-09-03',
+            'reason' => 'Libur',
+        ])
+        ->assertForbidden();
+
+    expect(ClassSession::where('teaching_schedule_id', $context['partiallyCoveredScheduleId'])->count())->toBe(0);
+});
+
+test('a former Ustadz whose Cakupan Mengajar covers one Kelas of a combined Pertemuan cannot change its Absensi', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpPartiallyCoveredScheduleContext($this);
+
+    // Ali, who holds the schedule now, records the Pertemuan for both Kelas.
+    $sessionId = recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['partiallyCoveredScheduleId'], '2025-09-03', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated()->json('data.class_session.id');
+
+    $this->actingAs($context['hasanAccount'])
+        ->putJson("/api/v1/class-sessions/{$sessionId}/attendances", [
+            'attendances' => [['student_id' => $context['ahmad']->id, 'status' => 'absent', 'notes' => null]],
+        ])
+        ->assertNotFound();
+
+    expect(StudentAttendance::where('student_id', $context['ahmad']->id)->value('status'))->toBe('present');
+});
+
+test('the Ustadz who holds the combined schedule now reads its roster and records it as before', function () {
+    $context = setUpPartiallyCoveredScheduleContext($this);
+
+    $response = $this->actingAs($context['aliAccount'])
+        ->getJson("/api/v1/teaching-schedules/{$context['partiallyCoveredScheduleId']}/expected-students?session_date=2025-09-03")
+        ->assertOk();
+
+    expect(collect($response->json('data.students'))->pluck('full_name')->all())->toEqual(['Ahmad', 'Bilal']);
+
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['partiallyCoveredScheduleId'], '2025-09-03', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated();
+});
+
+test('a former Ustadz of every Kelas of a combined schedule keeps reading and changing its Absensi (ADR 0005)', function () {
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpCombinedClassAttendanceContext($this);
+
+    $sessionId = recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated()->json('data.class_session.id');
+
+    // Ali is replaced by Umar on that schedule: Ali keeps both pairs through the riwayat pengajar.
+    $this->actingAs($context['pengurus'])
+        ->putJson("/api/v1/teaching-schedules/{$context['combinedScheduleId']}", [
+            'teacher_id' => $context['ustadzUmar']->id,
+        ])
+        ->assertOk();
+
+    $this->actingAs($context['aliAccount'])
+        ->getJson("/api/v1/teaching-schedules/{$context['combinedScheduleId']}/expected-students?session_date=2025-09-01")
+        ->assertOk();
+
+    $this->actingAs($context['aliAccount'])
+        ->putJson("/api/v1/class-sessions/{$sessionId}/attendances", [
+            'attendances' => [['student_id' => $context['bilal']->id, 'status' => 'sick', 'notes' => null]],
+        ])
+        ->assertOk();
+});
+
+// ── Sisi Pertemuan: himpunan Kelas, bukan Kelas utama ──────────────────────
+
+function combinedClassSessionsUrl(array $context, array $extraFilters = []): string
+{
+    return '/api/v1/class-sessions?'.http_build_query(array_merge([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+    ], $extraFilters));
+}
+
+test('a combined Pertemuan is listed under every Kelas it was held for, not only its Kelas utama', function () {
+    $context = setUpCombinedClassAttendanceContext($this);
+
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated();
+
+    foreach ([$context['ibtida2'], $context['tsanawiyah1']] as $classLevel) {
+        $sessions = $this->actingAs($context['pengurus'])
+            ->getJson(combinedClassSessionsUrl($context, ['class_level_id' => $classLevel->id]))
+            ->assertOk()
+            ->json('data');
+
+        expect($sessions)->toHaveCount(1)
+            ->and($sessions[0]['teaching_schedule_id'])->toBe($context['combinedScheduleId']);
+    }
+});
+
+test('a listed Pertemuan names every Kelas it was held for', function () {
+    $context = setUpCombinedClassAttendanceContext($this);
+
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated();
+
+    $sessions = $this->actingAs($context['pengurus'])
+        ->getJson(combinedClassSessionsUrl($context, ['teaching_schedule_id' => $context['combinedScheduleId']]))
+        ->assertOk()
+        ->json('data');
+
+    expect(collect($sessions[0]['class_levels'])->pluck('label')->all())->toEqual(['Ibtida 2', 'Tsanawiyah 1']);
+});
+
+test('each Absensi row of a combined Pertemuan says which Kelas it was recorded for', function () {
+    $context = setUpCombinedClassAttendanceContext($this);
+
+    $sessionId = recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated()->json('data.class_session.id');
+
+    $attendances = $this->actingAs($context['aliAccount'])
+        ->getJson("/api/v1/class-sessions/{$sessionId}")
+        ->assertOk()
+        ->json('data.attendances');
+
+    expect(collect($attendances)->pluck('class_level_id', 'student_id')->all())->toEqual([
+        $context['ahmad']->id => $context['ibtida2']->id,
+        $context['bilal']->id => $context['tsanawiyah1']->id,
+    ]);
+});
+
+test('an Ustadz whose Cakupan Mengajar holds only the second Kelas of a combined Pertemuan still sees it listed', function () {
+    $context = setUpCombinedClassAttendanceContext($this);
+
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated();
+
+    // Ustadz Hasan teaches Takmilah for Tsanawiyah 1 in another slot, so his
+    // Cakupan Mengajar holds that pair and not Ibtida 2 × Takmilah.
+    $dhuhaSlot = TimeSlot::factory()->create(['school_id' => $context['school']->id, 'sort_order' => 3]);
+    $ustadzHasan = Teacher::factory()->create([
+        'school_id' => $context['school']->id,
+        'full_name' => 'Ustadz Hasan',
+        'user_id' => null,
+    ]);
+    $hasanAccount = grantTeacherAccess($this, $context['superAdmin'], $ustadzHasan, 'hasan@example.com');
+
+    combinedClassCreateSchedule($this, $context, [
+        'day_of_week' => 'wednesday',
+        'time_slot_id' => $dhuhaSlot->id,
+        'class_level_ids' => [$context['tsanawiyah1']->id],
+        'subject_book_id' => $context['takmilah']->id,
+        'teacher_id' => $ustadzHasan->id,
+    ]);
+
+    $sessions = $this->actingAs($hasanAccount)
+        ->getJson(combinedClassSessionsUrl($context, ['teaching_schedule_id' => $context['combinedScheduleId']]))
+        ->assertOk()
+        ->json('data');
+
+    expect($sessions)->toHaveCount(1)
+        ->and($sessions[0]['teaching_schedule_id'])->toBe($context['combinedScheduleId']);
+});

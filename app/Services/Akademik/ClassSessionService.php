@@ -78,6 +78,7 @@ class ClassSessionService
 
     private const SESSION_RELATIONS = [
         'classLevel:id,slug,label',
+        'classLevels:id,slug,label',
         'subjectBook:id,title',
         'teacher:id,full_name',
         'updater:id,name',
@@ -129,10 +130,14 @@ class ClassSessionService
     }
 
     /**
-     * A schedule bound to the route whose pair is outside the user's
-     * Cakupan Mengajar is not found (404), the same answer as a schedule
-     * of another school. The scope is resolved for the schedule's own
-     * Semester Akademik, so its riwayat pengajar counts (ADR 0005).
+     * A schedule bound to the route none of whose Kelas forms a pair inside
+     * the user's Cakupan Mengajar is not found (404), the same answer as a
+     * schedule of another school. The scope is resolved for the schedule's
+     * own Semester Akademik, so its riwayat pengajar counts (ADR 0005).
+     *
+     * This is the LISTING rule ("any Kelas"), for naming a schedule and
+     * opening its page; reading its roster or writing its Absensi asks
+     * ensureEveryClassOfScheduleWithinTeachingScope() instead.
      *
      * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to write
      */
@@ -144,9 +149,29 @@ class ClassSessionService
     }
 
     /**
-     * A Pertemuan bound to the route whose own Kelas × Kitab (its
-     * snapshot) is outside the user's Cakupan Mengajar for its Semester
-     * Akademik is not found (404), like tenancy.
+     * The roster of a schedule holds the santri of EVERY Kelas of it, so a
+     * user whose Cakupan Mengajar covers only part of a jadwal gabungan may
+     * name the schedule but not read its roster: 404, like tenancy. For an
+     * ordinary single-class schedule, and for the Ustadz who holds a
+     * combined one, this is the rule above unchanged; what it turns away is
+     * the stale case — a former Ustadz kept by the riwayat pengajar for one
+     * Kelas while another Kelas joined the schedule after him (ADR 0005,
+     * 0006).
+     *
+     * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to write
+     */
+    public function ensureEveryClassOfScheduleWithinTeachingScope(TeachingSchedule $schedule, string $allDataPermission): void
+    {
+        $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $schedule->academic_year_id, $schedule->semester);
+
+        abort_unless($teachingScope->includesEveryClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id), 404);
+    }
+
+    /**
+     * A Pertemuan bound to the route is read and changed as a whole — one
+     * sheet for every Kelas it was held for — so it is not found (404),
+     * like tenancy, unless EVERY Kelas × Kitab of its own Kelas set is
+     * inside the user's Cakupan Mengajar for its Semester Akademik.
      *
      * @param  string  $allDataPermission  `view-attendance` to read, `manage-attendance` to change its attendances
      */
@@ -154,7 +179,7 @@ class ClassSessionService
     {
         $teachingScope = $this->teachingScopeResolver->forCurrentUser($allDataPermission, $session->academic_year_id, $session->semester);
 
-        abort_unless($teachingScope->includesClassSubjectPair($session->class_level_id, $session->subject_book_id), 404);
+        abort_unless($teachingScope->includesEveryClassSubjectPair($session->classLevelIds(), $session->subject_book_id), 404);
     }
 
     /**
@@ -177,7 +202,11 @@ class ClassSessionService
             ->where('school_id', School::activeOrFail()->id)
             ->where('academic_year_id', $filters['academic_year_id'])
             ->where('semester', (int) $filters['semester'])
-            ->when($filters['class_level_id'] ?? null, fn ($query, $classLevelId) => $query->where('class_level_id', $classLevelId))
+            // A combined Pertemuan is listed under every Kelas it was held for (ADR 0006).
+            ->when($filters['class_level_id'] ?? null, fn ($query, $classLevelId) => $query->whereHas(
+                'classLevels',
+                fn ($classLevels) => $classLevels->where('class_levels.id', $classLevelId)
+            ))
             ->when($filters['teaching_schedule_id'] ?? null, fn ($query, $scheduleId) => $query->where('teaching_schedule_id', $scheduleId))
             ->when($filters['date_from'] ?? null, fn ($query, $dateFrom) => $query->whereDate('session_date', '>=', $dateFrom))
             ->when($filters['date_to'] ?? null, fn ($query, $dateTo) => $query->whereDate('session_date', '<=', $dateTo))
@@ -185,7 +214,9 @@ class ClassSessionService
             ->orderByDesc('session_date')
             ->orderByDesc('created_at')
             ->get()
-            ->filter(fn (ClassSession $session) => $teachingScope->includesClassSubjectPair($session->class_level_id, $session->subject_book_id))
+            // Listing follows the same "any Kelas" rule as the schedule list;
+            // reading one Pertemuan needs every Kelas of it (ADR 0006).
+            ->filter(fn (ClassSession $session) => $teachingScope->includesAnyClassSubjectPair($session->classLevelIds(), $session->subject_book_id))
             ->values();
 
         $summariesBySessionId = $this->attendanceSummariesFor($sessions->pluck('id'));
@@ -234,7 +265,7 @@ class ClassSessionService
      */
     public function presentExpectedStudents(TeachingSchedule $schedule, string $sessionDate): array
     {
-        $this->ensureScheduleWithinTeachingScope($schedule, 'view-attendance');
+        $this->ensureEveryClassOfScheduleWithinTeachingScope($schedule, 'view-attendance');
 
         $sessionDateAsCarbon = Carbon::parse($sessionDate)->startOfDay();
         $classLevels = $this->findLiveSession($schedule, $sessionDateAsCarbon)?->classLevels
@@ -552,7 +583,10 @@ class ClassSessionService
             'class_level_id' => $session->class_level_id,
             'subject_book_id' => $session->subject_book_id,
             'teacher_id' => $session->teacher_id,
+            // Deprecated (jendela deploy): the Kelas utama alone. The Kelas
+            // of a Pertemuan are `class_levels`.
             'class_level' => $session->classLevel?->summary(),
+            'class_levels' => $session->classLevels->map(fn (ClassLevel $classLevel) => $classLevel->summary())->all(),
             'subject_book' => $session->subjectBook ? [
                 'id' => $session->subjectBook->id,
                 'title' => $session->subjectBook->title,
@@ -721,8 +755,10 @@ class ClassSessionService
 
     /**
      * A schedule chosen in the request body to record or cancel a
-     * Pertemuan: outside the Cakupan Mengajar of its Semester Akademik it
-     * is refused with 403 and the scope message.
+     * Pertemuan: one Pertemuan is written for EVERY Kelas of the schedule
+     * at once, so anything less than the whole set inside the Cakupan
+     * Mengajar of its Semester Akademik is refused with 403 and the scope
+     * message (ADR 0006).
      *
      * @throws OutsideTeachingScopeException
      */
@@ -730,7 +766,7 @@ class ClassSessionService
     {
         $this->teachingScopeResolver
             ->forCurrentUser('manage-attendance', $schedule->academic_year_id, $schedule->semester)
-            ->assertIncludesAnyClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id);
+            ->assertIncludesEveryClassSubjectPair($schedule->classLevelIds(), $schedule->subject_book_id);
     }
 
     private function actorIsSuperAdmin(): bool
@@ -999,6 +1035,9 @@ class ClassSessionService
             'class_session_id' => $attendance->class_session_id,
             'student_id' => $attendance->student_id,
             'student_name' => $attendance->student?->full_name,
+            // The Kelas this santri was absen for, so the edit screen can
+            // group a combined Pertemuan the way the sheet does (ADR 0006).
+            'class_level_id' => $attendance->class_level_id,
             'status' => $attendance->status,
             'notes' => $attendance->notes,
             'created_by' => $attendance->created_by,
