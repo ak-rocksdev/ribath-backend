@@ -471,7 +471,9 @@ class TeachingScheduleService
      * the claimed Kelas rows are locked first: without the partial unique
      * index the database no longer serialises two writers claiming the same
      * Kelas for the same slot, and this lock does (PostgreSQL; SQLite runs
-     * one writer at a time and ignores it).
+     * one writer at a time and ignores it). The rows are locked in id
+     * order so two writers claiming overlapping Kelas queue instead of
+     * deadlocking on each other.
      *
      * @param  array<string, mixed>  $slot  school_id, academic_year_id, semester, day_of_week, time_slot_id
      * @param  array<int, string>  $classLevelIds
@@ -479,7 +481,7 @@ class TeachingScheduleService
      */
     private function classLevelIdsBusyInSlot(array $slot, array $classLevelIds, ?string $excludeScheduleId = null): array
     {
-        ClassLevel::query()->whereIn('id', $classLevelIds)->lockForUpdate()->pluck('id');
+        ClassLevel::query()->whereIn('id', $classLevelIds)->orderBy('id')->lockForUpdate()->pluck('id');
 
         $query = DB::table('teaching_schedule_class_levels as schedule_class_level')
             ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')

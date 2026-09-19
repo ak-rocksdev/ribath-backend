@@ -130,13 +130,20 @@ final class TeachingScope
             return true;
         }
 
+        $hasClassLevel = false;
+
         foreach ($classLevelIds as $classLevelId) {
+            $hasClassLevel = true;
+
             if (! $this->includesClassSubjectPair($classLevelId, $subjectBookId)) {
                 return false;
             }
         }
 
-        return true;
+        // A Pertemuan or schedule with no Kelas at all proves nothing about
+        // the Cakupan Mengajar, so it is refused — the same answer the "any"
+        // guard gives for an empty list.
+        return $hasClassLevel;
     }
 
     /**
