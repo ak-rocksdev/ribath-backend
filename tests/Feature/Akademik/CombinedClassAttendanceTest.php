@@ -264,12 +264,18 @@ test('a single-class schedule still lists only its own Kelas and santri', functi
 test('a combined Pertemuan is recorded once and every Absensi row keeps the Kelas of its santri', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    $response = combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'absent',
     ])->assertCreated();
 
     expect(ClassSession::where('teaching_schedule_id', $context['combinedScheduleId'])->count())->toBe(1);
+
+    // The Pertemuan keeps one snapshot Kelas — its Kelas utama — and names
+    // every Kelas it was held for.
+    expect($response->json('data.class_session.class_level.label'))->toBe('Ibtida 2')
+        ->and(collect($response->json('data.class_session.class_levels'))->pluck('label')->all())
+        ->toEqual(['Ibtida 2', 'Tsanawiyah 1']);
 
     $classLevelIdByStudentId = StudentAttendance::query()
         ->pluck('class_level_id', 'student_id');
@@ -429,9 +435,11 @@ test('an unrecorded combined Pertemuan raises one alert naming every Kelas', fun
 test('a single-class Pertemuan is recorded and recapped exactly as before', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['umarAccount'], $context['singleScheduleId'], '2025-09-02', [
+    $response = combinedClassRecordSession($this, $context['umarAccount'], $context['singleScheduleId'], '2025-09-02', [
         $context['cecep']->id => 'present',
     ])->assertCreated();
+
+    expect(collect($response->json('data.class_session.class_levels'))->pluck('label')->all())->toEqual(['Tamhidi']);
 
     expect(StudentAttendance::where('student_id', $context['cecep']->id)->value('class_level_id'))
         ->toBe($context['tamhidi']->id);
