@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Models\ClassLevel;
+use App\Models\ClassSession;
 use App\Models\School;
 use App\Models\Student;
+use App\Models\TeachingSchedule;
 use Illuminate\Support\Facades\DB;
 
 class ClassLevelService
@@ -56,19 +58,52 @@ class ClassLevelService
         return $classLevel->fresh();
     }
 
-    public function deleteClassLevel(ClassLevel $classLevel): bool
+    public const MESSAGE_CLASS_LEVEL_HAS_STUDENTS = 'Kelas ini masih memiliki santri. Pindahkan santrinya lebih dulu.';
+
+    public const MESSAGE_CLASS_LEVEL_ON_SCHEDULE = 'Kelas ini masih dipakai jadwal mengajar. Keluarkan kelas dari jadwal tersebut lebih dulu.';
+
+    public const MESSAGE_CLASS_LEVEL_ON_CLASS_SESSION = 'Kelas ini masih dipakai pertemuan yang sudah tercatat.';
+
+    /**
+     * Deletes the Kelas, or says why it cannot go. Its santri, its Jadwal
+     * Mengajar and its Pertemuan all keep it: the join table of a schedule
+     * cascades, so deleting a Kelas would silently drop it out of every
+     * jadwal gabungan that holds it (ADR 0006), and a Pertemuan already
+     * recorded is history that must stay readable.
+     *
+     * @return string|null the Indonesian reason it was kept, or null when it was deleted
+     */
+    public function deleteClassLevel(ClassLevel $classLevel): ?string
     {
         $studentCount = Student::where('class_level', $classLevel->slug)
             ->whereNull('deleted_at')
             ->count();
 
         if ($studentCount > 0) {
-            return false;
+            return self::MESSAGE_CLASS_LEVEL_HAS_STUDENTS;
+        }
+
+        $isOnSchedule = TeachingSchedule::query()
+            ->whereHas('classLevels', fn ($classLevels) => $classLevels->where('class_levels.id', $classLevel->id))
+            ->exists();
+
+        if ($isOnSchedule) {
+            return self::MESSAGE_CLASS_LEVEL_ON_SCHEDULE;
+        }
+
+        $isOnClassSession = ClassSession::withTrashed()
+            ->where(fn ($query) => $query
+                ->where('class_level_id', $classLevel->id)
+                ->orWhereHas('classLevels', fn ($classLevels) => $classLevels->where('class_levels.id', $classLevel->id)))
+            ->exists();
+
+        if ($isOnClassSession) {
+            return self::MESSAGE_CLASS_LEVEL_ON_CLASS_SESSION;
         }
 
         $classLevel->delete();
 
-        return true;
+        return null;
     }
 
     public function toggleStatus(ClassLevel $classLevel, bool $isActive): ClassLevel

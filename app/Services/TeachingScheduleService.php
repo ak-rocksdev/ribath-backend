@@ -467,12 +467,20 @@ class TeachingScheduleService
      * row). The `school_id` predicate sits on the join table so its
      * (school_id, class_level_id) index is the one used.
      *
+     * Every caller runs inside the transaction that writes the schedule, so
+     * the claimed Kelas rows are locked first: without the partial unique
+     * index the database no longer serialises two writers claiming the same
+     * Kelas for the same slot, and this lock does (PostgreSQL; SQLite runs
+     * one writer at a time and ignores it).
+     *
      * @param  array<string, mixed>  $slot  school_id, academic_year_id, semester, day_of_week, time_slot_id
      * @param  array<int, string>  $classLevelIds
      * @return array<int, string> the busy Kelas, in no particular order — labelOfClassLevels() puts them in the Kelas master order
      */
     private function classLevelIdsBusyInSlot(array $slot, array $classLevelIds, ?string $excludeScheduleId = null): array
     {
+        ClassLevel::query()->whereIn('id', $classLevelIds)->lockForUpdate()->pluck('id');
+
         $query = DB::table('teaching_schedule_class_levels as schedule_class_level')
             ->join('teaching_schedules', 'teaching_schedules.id', '=', 'schedule_class_level.teaching_schedule_id')
             ->where('schedule_class_level.school_id', $slot['school_id'])
