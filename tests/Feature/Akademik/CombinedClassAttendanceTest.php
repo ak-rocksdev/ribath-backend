@@ -5,7 +5,6 @@ use App\Models\ClassLevel;
 use App\Models\ClassSession;
 use App\Models\GradingTemplate;
 use App\Models\School;
-use App\Models\Student;
 use App\Models\StudentAttendance;
 use App\Models\SubjectBook;
 use App\Models\SubjectCategory;
@@ -92,8 +91,8 @@ function setUpCombinedClassAttendanceContext($testCase): array
         'ustadzUmar' => Teacher::factory()->create(['school_id' => $school->id, 'full_name' => 'Ustadz Umar', 'user_id' => null]),
     ];
 
-    $context['aliAccount'] = combinedClassGrantAccess($testCase, $context, $context['ustadzAli'], 'ali@example.com');
-    $context['umarAccount'] = combinedClassGrantAccess($testCase, $context, $context['ustadzUmar'], 'umar@example.com');
+    $context['aliAccount'] = grantTeacherAccess($testCase, $superAdmin, $context['ustadzAli'], 'ali@example.com');
+    $context['umarAccount'] = grantTeacherAccess($testCase, $superAdmin, $context['ustadzUmar'], 'umar@example.com');
 
     $context['combinedScheduleId'] = combinedClassCreateSchedule($testCase, $context, [
         'day_of_week' => 'monday',
@@ -111,9 +110,9 @@ function setUpCombinedClassAttendanceContext($testCase): array
         'teacher_id' => $context['ustadzUmar']->id,
     ]);
 
-    $context['ahmad'] = combinedClassCreateStudent($testCase, $context, 'Ahmad', 'ibtida_2');
-    $context['bilal'] = combinedClassCreateStudent($testCase, $context, 'Bilal', 'tsanawiyah_1');
-    $context['cecep'] = combinedClassCreateStudent($testCase, $context, 'Cecep', 'tamhidi');
+    $context['ahmad'] = createSantriThroughEndpoint($testCase, $superAdmin, 'Ahmad', 'ibtida_2');
+    $context['bilal'] = createSantriThroughEndpoint($testCase, $superAdmin, 'Bilal', 'tsanawiyah_1');
+    $context['cecep'] = createSantriThroughEndpoint($testCase, $superAdmin, 'Cecep', 'tamhidi');
 
     return $context;
 }
@@ -130,61 +129,26 @@ function combinedClassSubjectBook(School $school, string $title): SubjectBook
     ]);
 }
 
-/** Creates the Akun Ustadz through "Beri Akses" and completes its first-login password change. */
-function combinedClassGrantAccess($testCase, array $context, Teacher $teacher, string $email): User
-{
-    $testCase->actingAs($context['superAdmin'])
-        ->postJson("/api/v1/teachers/{$teacher->id}/grant-access", ['email' => $email, 'password' => 'password123'])
-        ->assertCreated();
-
-    return completeFirstLoginPasswordChange($testCase, User::where('email', $email)->firstOrFail(), 'password123');
-}
-
 /**
  * @param  array<string, mixed>  $attributes
  */
 function combinedClassCreateSchedule($testCase, array $context, array $attributes): string
 {
-    return $testCase->actingAs($context['pengurus'])
-        ->postJson('/api/v1/teaching-schedules', array_merge([
-            'academic_year_id' => $context['academicYear']->id,
-            'semester' => 1,
-        ], $attributes))
-        ->assertCreated()
-        ->json('data.id');
-}
-
-function combinedClassCreateStudent($testCase, array $context, string $fullName, string $classLevelSlug): Student
-{
-    return Student::findOrFail($testCase->actingAs($context['superAdmin'])
-        ->postJson('/api/v1/students', [
-            'full_name' => $fullName,
-            'birth_date' => '2012-05-15',
-            'gender' => 'L',
-            'program' => 'regular',
-            'entry_date' => '2025-07-01',
-            'class_level' => $classLevelSlug,
-            'address' => 'Jl. Contoh No. 1',
-        ])
-        ->assertCreated()
-        ->json('data.id'));
+    return createTeachingScheduleThroughEndpoint($testCase, $context['pengurus'], array_merge([
+        'academic_year_id' => $context['academicYear']->id,
+        'semester' => 1,
+    ], $attributes));
 }
 
 /**
- * Records one held Pertemuan through POST /class-sessions.
+ * The Kelas the stored Pertemuan covers, by label, in the Kelas master
+ * order — the Pertemuan's own set, not its schedule's (ADR 0006).
  *
- * @param  array<string, string>  $statusByStudentId
+ * @return array<int, string>
  */
-function combinedClassRecordSession($testCase, User $actingUser, string $scheduleId, string $sessionDate, array $statusByStudentId)
+function combinedClassSessionClassLevelLabels(string $sessionId): array
 {
-    return $testCase->actingAs($actingUser)->postJson('/api/v1/class-sessions', [
-        'teaching_schedule_id' => $scheduleId,
-        'session_date' => $sessionDate,
-        'attendances' => collect($statusByStudentId)
-            ->map(fn (string $status, string $studentId) => ['student_id' => $studentId, 'status' => $status, 'notes' => null])
-            ->values()
-            ->all(),
-    ]);
+    return ClassSession::findOrFail($sessionId)->classLevels->pluck('label')->all();
 }
 
 function combinedClassRecapUrl(array $context, ClassLevel $classLevel, SubjectBook $subjectBook): string
@@ -264,17 +228,17 @@ test('a single-class schedule still lists only its own Kelas and santri', functi
 test('a combined Pertemuan is recorded once and every Absensi row keeps the Kelas of its santri', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    $response = combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    $response = recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'absent',
     ])->assertCreated();
 
     expect(ClassSession::where('teaching_schedule_id', $context['combinedScheduleId'])->count())->toBe(1);
 
-    // The Pertemuan keeps one snapshot Kelas — its Kelas utama — and names
+    // The Pertemuan keeps one snapshot Kelas — its Kelas utama — and covers
     // every Kelas it was held for.
     expect($response->json('data.class_session.class_level.label'))->toBe('Ibtida 2')
-        ->and(collect($response->json('data.class_session.class_levels'))->pluck('label')->all())
+        ->and(combinedClassSessionClassLevelLabels($response->json('data.class_session.id')))
         ->toEqual(['Ibtida 2', 'Tsanawiyah 1']);
 
     $classLevelIdByStudentId = StudentAttendance::query()
@@ -287,7 +251,7 @@ test('a combined Pertemuan is recorded once and every Absensi row keeps the Kela
 test('an Absensi row of a santri outside every Kelas of the schedule is rejected', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'present',
         $context['cecep']->id => 'present',
@@ -299,7 +263,7 @@ test('an Absensi row of a santri outside every Kelas of the schedule is rejected
 test('a combined Pertemuan is incomplete until every active santri of both Kelas has a status', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
     ])->assertUnprocessable()->assertJsonValidationErrors([$context['bilal']->id]);
 });
@@ -309,7 +273,7 @@ test('a santri of the second Kelas of a combined Pertemuan can be edited afterwa
     Carbon::setTestNow('2025-09-10 10:00:00');
     $context = setUpCombinedClassAttendanceContext($this);
 
-    $sessionId = combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    $sessionId = recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'present',
     ])->assertCreated()->json('data.class_session.id');
@@ -330,7 +294,7 @@ test('a santri of the second Kelas of a combined Pertemuan can be edited afterwa
 test('the Rekap Kehadiran of each Kelas of a combined schedule counts only its own santri', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'absent',
     ])->assertCreated();
@@ -359,7 +323,7 @@ test('the Rekap Kehadiran of each Kelas of a combined schedule counts only its o
 test('a Kelas taken off a combined schedule keeps the Rekap Kehadiran it was recorded for', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'present',
     ])->assertCreated();
@@ -383,7 +347,7 @@ test('a Kelas taken off a combined schedule keeps the Rekap Kehadiran it was rec
 test('a deactivated combined schedule keeps both pairs gradable when only Absensi was recorded', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    combinedClassRecordSession($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+    recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
         $context['ahmad']->id => 'present',
         $context['bilal']->id => 'present',
     ])->assertCreated();
@@ -435,11 +399,11 @@ test('an unrecorded combined Pertemuan raises one alert naming every Kelas', fun
 test('a single-class Pertemuan is recorded and recapped exactly as before', function () {
     $context = setUpCombinedClassAttendanceContext($this);
 
-    $response = combinedClassRecordSession($this, $context['umarAccount'], $context['singleScheduleId'], '2025-09-02', [
+    $response = recordClassSessionThroughEndpoint($this, $context['umarAccount'], $context['singleScheduleId'], '2025-09-02', [
         $context['cecep']->id => 'present',
     ])->assertCreated();
 
-    expect(collect($response->json('data.class_session.class_levels'))->pluck('label')->all())->toEqual(['Tamhidi']);
+    expect(combinedClassSessionClassLevelLabels($response->json('data.class_session.id')))->toEqual(['Tamhidi']);
 
     expect(StudentAttendance::where('student_id', $context['cecep']->id)->value('class_level_id'))
         ->toBe($context['tamhidi']->id);
@@ -468,4 +432,46 @@ test('the Absensi Pertemuan schedule list of an Akun Ustadz holds his combined s
 
     expect($schedules)->toHaveCount(1)
         ->and(collect($schedules[0]['class_levels'])->pluck('label')->all())->toEqual(['Ibtida 2', 'Tsanawiyah 1']);
+});
+
+test('a Pertemuan covers the Kelas its schedule held when it was recorded, not one added later', function () {
+    // Inside the 14-day attendance edit window of the 2025-09-01 Pertemuan.
+    Carbon::setTestNow('2025-09-10 10:00:00');
+    $context = setUpCombinedClassAttendanceContext($this);
+
+    $sessionId = recordClassSessionThroughEndpoint($this, $context['aliAccount'], $context['combinedScheduleId'], '2025-09-01', [
+        $context['ahmad']->id => 'present',
+        $context['bilal']->id => 'present',
+    ])->assertCreated()->json('data.class_session.id');
+
+    // Tamhidi joins the combined schedule afterwards (its own schedule sits
+    // in another slot, so nothing conflicts).
+    $this->actingAs($context['pengurus'])
+        ->putJson("/api/v1/teaching-schedules/{$context['combinedScheduleId']}", [
+            'class_level_ids' => [$context['ibtida2']->id, $context['tsanawiyah1']->id, $context['tamhidi']->id],
+        ])
+        ->assertOk();
+
+    // The Pertemuan already held keeps the two Kelas it was held for.
+    $response = $this->actingAs($context['aliAccount'])
+        ->getJson("/api/v1/teaching-schedules/{$context['combinedScheduleId']}/expected-students?session_date=2025-09-01")
+        ->assertOk();
+
+    expect(collect($response->json('data.class_levels'))->pluck('label')->all())->toEqual(['Ibtida 2', 'Tsanawiyah 1'])
+        ->and(collect($response->json('data.students'))->pluck('full_name')->all())->toEqual(['Ahmad', 'Bilal']);
+
+    $this->actingAs($context['aliAccount'])
+        ->putJson("/api/v1/class-sessions/{$sessionId}/attendances", [
+            'attendances' => [['student_id' => $context['cecep']->id, 'status' => 'present', 'notes' => null]],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([$context['cecep']->id]);
+
+    // A Pertemuan recorded from now on covers all three Kelas.
+    $laterResponse = $this->actingAs($context['aliAccount'])
+        ->getJson("/api/v1/teaching-schedules/{$context['combinedScheduleId']}/expected-students?session_date=2025-09-08")
+        ->assertOk();
+
+    expect(collect($laterResponse->json('data.class_levels'))->pluck('label')->all())
+        ->toEqual(['Tamhidi', 'Ibtida 2', 'Tsanawiyah 1']);
 });

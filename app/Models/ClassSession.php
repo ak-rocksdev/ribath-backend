@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -14,6 +15,14 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * (Pertemuan Dibatalkan) carry a cancel_reason and are neither counted in
  * the absensi denominator nor reported as bolong. Class, kitab and teacher
  * are a snapshot of the schedule at recording time.
+ *
+ * The Kelas a Pertemuan was held for are its own set (`classLevels`, ADR
+ * 0006), written when it is first stored and never re-derived from its
+ * schedule afterwards — a jadwal gabungan is one Pertemuan for several
+ * Kelas, and changing the Kelas of the schedule leaves the Pertemuan
+ * already recorded alone. `class_level_id` is the Kelas utama of that set:
+ * the snapshot shown on a Pertemuan and used by the per-Pertemuan Cakupan
+ * Mengajar guard and the session list filter.
  */
 class ClassSession extends Model
 {
@@ -73,6 +82,30 @@ class ClassSession extends Model
     public function classLevel(): BelongsTo
     {
         return $this->belongsTo(ClassLevel::class);
+    }
+
+    /**
+     * Every Kelas this Pertemuan was held for, in the order the Kelas
+     * master defines.
+     */
+    public function classLevels(): BelongsToMany
+    {
+        return $this->belongsToMany(ClassLevel::class, 'class_session_class_levels')
+            ->using(ClassSessionClassLevel::class)
+            ->withTimestamps()
+            ->inMasterOrder();
+    }
+
+    /**
+     * The ids of its Kelas, loading the relation once when needed.
+     *
+     * @return array<int, string>
+     */
+    public function classLevelIds(): array
+    {
+        $this->loadMissing('classLevels');
+
+        return $this->classLevels->pluck('id')->all();
     }
 
     public function subjectBook(): BelongsTo

@@ -231,19 +231,34 @@ class StudentGradeService
     }
 
     /**
-     * Students of a class in the active school (soft-deleted excluded):
+     * Students of one class in the active school (soft-deleted excluded):
      * status active first, then the rest, each group ordered by name.
+     *
+     * Several classes may be asked for at once — the roster of one
+     * Pertemuan of a jadwal gabungan (ADR 0006): one query, the santri of
+     * each class one class after another, in the order the classes were
+     * given.
      *
      * @return Collection<int, Student>
      */
-    public function listClassStudents(string $classLevelId): Collection
+    public function listClassStudents(string ...$classLevelIds): Collection
     {
-        return Student::query()
+        $students = Student::query()
             ->where('school_id', School::activeOrFail()->id)
-            ->where('class_level_id', $classLevelId)
+            ->whereIn('class_level_id', $classLevelIds)
             ->orderByRaw('CASE WHEN status = ? THEN 0 ELSE 1 END', [Student::STATUS_ACTIVE])
             ->orderBy('full_name')
             ->get(['id', 'full_name', 'status', 'entry_date', 'class_level_id']);
+
+        if (count($classLevelIds) < 2) {
+            return $students;
+        }
+
+        $positionOfClassLevel = array_flip(array_values($classLevelIds));
+
+        return $students
+            ->sortBy(fn (Student $student) => $positionOfClassLevel[$student->class_level_id] ?? PHP_INT_MAX)
+            ->values();
     }
 
     /**
