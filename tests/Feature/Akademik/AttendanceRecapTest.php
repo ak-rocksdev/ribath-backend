@@ -235,6 +235,7 @@ test('a late-entry student is only counted from their entry_date, even if an att
         'school_id' => $context['school']->id,
         'class_session_id' => $earlierSession->id,
         'student_id' => $budi->id,
+        'class_level_id' => $context['classLevel']->id,
         'status' => 'present',
         'created_by' => $context['user']->id,
         'updated_by' => $context['user']->id,

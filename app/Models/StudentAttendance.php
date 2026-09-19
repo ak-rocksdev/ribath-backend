@@ -9,6 +9,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * Absensi: one santri's status at one Pertemuan. Sick and excused are
  * neutral for the absensi score (left out of the denominator).
+ *
+ * `class_level_id` is the Kelas the santri was recorded for, kept per row
+ * because one Pertemuan of a jadwal gabungan covers several Kelas (ADR
+ * 0006). The Rekap Kehadiran of a Kelas is counted from these rows.
  */
 class StudentAttendance extends Model
 {
@@ -35,6 +39,7 @@ class StudentAttendance extends Model
         'school_id',
         'class_session_id',
         'student_id',
+        'class_level_id',
         'status',
         'notes',
         'created_by',
@@ -62,6 +67,11 @@ class StudentAttendance extends Model
     public function student(): BelongsTo
     {
         return $this->belongsTo(Student::class);
+    }
+
+    public function classLevel(): BelongsTo
+    {
+        return $this->belongsTo(ClassLevel::class);
     }
 
     public function creator(): BelongsTo

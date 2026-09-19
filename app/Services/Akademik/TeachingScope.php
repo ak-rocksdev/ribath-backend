@@ -72,6 +72,37 @@ final class TeachingScope
         }
     }
 
+    /**
+     * Whether any of the Kelas forms a pair inside the scope — how a whole
+     * Jadwal Mengajar is judged, since a jadwal gabungan carries one pair
+     * per Kelas and is recorded as a single Pertemuan (ADR 0006). For a
+     * single-class schedule this is includesClassSubjectPair().
+     *
+     * @param  iterable<string>  $classLevelIds
+     */
+    public function includesAnyClassSubjectPair(iterable $classLevelIds, string $subjectBookId): bool
+    {
+        foreach ($classLevelIds as $classLevelId) {
+            if ($this->includesClassSubjectPair($classLevelId, $subjectBookId)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  iterable<string>  $classLevelIds
+     *
+     * @throws OutsideTeachingScopeException (403) no Kelas of the schedule forms a pair inside the Cakupan Mengajar
+     */
+    public function assertIncludesAnyClassSubjectPair(iterable $classLevelIds, string $subjectBookId): void
+    {
+        if (! $this->includesAnyClassSubjectPair($classLevelIds, $subjectBookId)) {
+            throw OutsideTeachingScopeException::forClassSubjectPair();
+        }
+    }
+
     /** Whether the santri is one of the santri bimbingan (always true when unrestricted). */
     public function includesMentoredStudent(string $studentId): bool
     {

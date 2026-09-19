@@ -8,6 +8,7 @@ use App\Models\ClassTask;
 use App\Models\MemorizationTarget;
 use App\Models\School;
 use App\Models\Student;
+use App\Models\StudentAttendance;
 use App\Models\StudentGrade;
 use App\Models\SubjectBook;
 use App\Models\TeachingSchedule;
@@ -61,16 +62,35 @@ class GradableSubjectService
      */
     public function listForSemester(string $academicYearId, int $semester, ?string $classLevelId = null): array
     {
-        $schedulesByPairKey = $this->semesterSchedulesQuery($academicYearId, $semester)
-            ->when($classLevelId, fn (Builder $query) => $query->where('class_level_id', $classLevelId))
+        // A jadwal gabungan holds several Kelas and so belongs to one pair
+        // per Kelas (ADR 0006); each pair carries its own Kelas, never the
+        // schedule's first one.
+        $scheduleClassPairs = $this->semesterSchedulesQuery($academicYearId, $semester)
+            ->when($classLevelId, fn (Builder $query) => $query->whereHas(
+                'classLevels',
+                fn (Builder $classLevelQuery) => $classLevelQuery->where('class_levels.id', $classLevelId)
+            ))
             ->with([
-                'classLevel:id,slug,label,sort_order',
+                'classLevels:id,slug,label,sort_order',
                 'subjectBook:id,title,grading_template_id',
                 'subjectBook.gradingTemplate:id,code,name',
                 'teacher:id,full_name',
             ])
             ->get()
-            ->groupBy(fn (TeachingSchedule $schedule) => self::pairKey($schedule->class_level_id, $schedule->subject_book_id));
+            ->flatMap(fn (TeachingSchedule $schedule) => $schedule->classLevels
+                ->when($classLevelId, fn (Collection $classLevels) => $classLevels->where('id', $classLevelId))
+                ->map(fn (ClassLevel $classLevel) => [
+                    'pair_key' => self::pairKey($classLevel->id, $schedule->subject_book_id),
+                    'class_level' => $classLevel,
+                    'schedule' => $schedule,
+                ]));
+
+        $schedulesByPairKey = $scheduleClassPairs
+            ->groupBy('pair_key')
+            ->map(fn (Collection $pairEntries) => $pairEntries->pluck('schedule'));
+        $classLevelByPairKey = $scheduleClassPairs->mapWithKeys(
+            fn (array $pairEntry) => [$pairEntry['pair_key'] => $pairEntry['class_level']]
+        );
 
         $teacherHistoryByPairKey = $this->semesterTeacherHistoryQuery($academicYearId, $semester)
             ->when($classLevelId, fn (Builder $query) => $query->where('previous_class_level_id', $classLevelId))
@@ -89,6 +109,7 @@ class GradableSubjectService
             ->mapWithKeys(fn (string $pairKey) => [$pairKey => $this->buildPairPayload(
                 $schedulesByPairKey->get($pairKey, collect()),
                 $teacherHistoryByPairKey->get($pairKey, collect()),
+                $classLevelByPairKey->get($pairKey),
             )]);
 
         // One batch of queries for the whole semester, only when a stopped pair needs it.
@@ -179,9 +200,12 @@ class GradableSubjectService
      *   as a row with both NULL, does not count);
      * - a Tugas (class_tasks);
      * - a held Pertemuan (class_sessions) — cancelled ones do not count,
-     *   since a libur massal cancels every active schedule in its range.
+     *   since a libur massal cancels every active schedule in its range —
+     *   counted for the Kelas of its own snapshot and for every Kelas its
+     *   Absensi rows name, which is how a Pertemuan of a jadwal gabungan
+     *   reaches its second Kelas (ADR 0006).
      *
-     * Soft-deleted Tugas and Pertemuan do not count. Three queries,
+     * Soft-deleted Tugas and Pertemuan do not count. Four queries,
      * whatever the number of pairs.
      *
      * @return Collection<string, true>
@@ -206,7 +230,33 @@ class GradableSubjectService
                 ->distinct()
                 ->get(['class_level_id', 'subject_book_id'])
                 ->map(fn ($recordedRow) => self::pairKey($recordedRow->class_level_id, $recordedRow->subject_book_id)))
+            ->concat($this->pairKeysWithRecordedAttendance($schoolId, $academicYearId, $semester, $onlyClassLevelId))
             ->mapWithKeys(fn (string $pairKey) => [$pairKey => true]);
+    }
+
+    /**
+     * The pair keys named by the Absensi rows of held Pertemuan: each row
+     * carries the Kelas its santri was recorded for, so a Pertemuan of a
+     * jadwal gabungan names every Kelas that actually attended it, not only
+     * the snapshot Kelas the class_sessions row keeps.
+     *
+     * @return Collection<int, string>
+     */
+    private function pairKeysWithRecordedAttendance(string $schoolId, string $academicYearId, int $semester, ?string $onlyClassLevelId): Collection
+    {
+        return StudentAttendance::query()
+            ->join('class_sessions', 'class_sessions.id', '=', 'student_attendances.class_session_id')
+            ->whereNull('class_sessions.deleted_at')
+            ->where('class_sessions.status', ClassSession::STATUS_HELD)
+            ->where('class_sessions.school_id', $schoolId)
+            ->where('class_sessions.academic_year_id', $academicYearId)
+            ->where('class_sessions.semester', $semester)
+            ->whereNotNull('student_attendances.class_level_id')
+            ->when($onlyClassLevelId, fn (Builder $query) => $query->where('student_attendances.class_level_id', $onlyClassLevelId))
+            ->distinct()
+            ->get(['student_attendances.class_level_id', 'class_sessions.subject_book_id'])
+            ->map(fn (StudentAttendance $attendance) => self::pairKey($attendance->class_level_id, $attendance->subject_book_id))
+            ->values();
     }
 
     private static function pairKey(string $classLevelId, string $subjectBookId): string
@@ -217,9 +267,10 @@ class GradableSubjectService
     /**
      * @param  Collection<int, TeachingSchedule>  $pairSchedules  every row of the pair in the semester, active and deactivated (may be empty)
      * @param  Collection<int, TeachingScheduleTeacherHistory>  $pairTeacherHistory  the riwayat pengajar entries naming the pair in the semester (may be empty)
+     * @param  ClassLevel|null  $scheduledClassLevel  the pair's own Kelas when a schedule backs it — a jadwal gabungan holds several, so it cannot be read off the schedule
      * @return array<string, mixed>
      */
-    private function buildPairPayload(Collection $pairSchedules, Collection $pairTeacherHistory): array
+    private function buildPairPayload(Collection $pairSchedules, Collection $pairTeacherHistory, ?ClassLevel $scheduledClassLevel): array
     {
         $isScheduleStopped = ! $pairSchedules->contains('is_active', true);
         // A scheduled pair names its current teachers; a stopped pair the ones
@@ -233,12 +284,12 @@ class GradableSubjectService
         $firstSchedule = $pairSchedules->first();
         /** @var TeachingScheduleTeacherHistory|null $firstHistoryEntry */
         $firstHistoryEntry = $pairTeacherHistory->first();
-        $classLevel = $firstSchedule?->classLevel ?? $firstHistoryEntry?->previousClassLevel;
+        $classLevel = $scheduledClassLevel ?? $firstHistoryEntry?->previousClassLevel;
         $subjectBook = $firstSchedule?->subjectBook ?? $firstHistoryEntry?->previousSubjectBook;
         $gradingTemplate = $subjectBook?->gradingTemplate;
 
         return [
-            'class_level_id' => $firstSchedule?->class_level_id ?? $firstHistoryEntry->previous_class_level_id,
+            'class_level_id' => $classLevel?->id ?? $firstHistoryEntry->previous_class_level_id,
             'subject_book_id' => $firstSchedule?->subject_book_id ?? $firstHistoryEntry->previous_subject_book_id,
             'class_level' => $classLevel?->summary() ?? ['id' => null, 'slug' => null, 'label' => null],
             'subject_book' => [

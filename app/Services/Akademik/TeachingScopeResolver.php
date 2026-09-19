@@ -23,7 +23,8 @@ use InvalidArgumentException;
  *   Cakupan Mengajar of the Ustadz linked to the user (empty when none is
  *   linked or his status is nonaktif — User::activeLinkedTeacherId()):
  *   - the Kelas × Kitab pairs of his Jadwal Mengajar rows of that
- *     semester — active or deactivated — plus the pairs the riwayat
+ *     semester — active or deactivated, one pair per Kelas of a jadwal
+ *     gabungan (ADR 0006) — plus the pairs the riwayat
  *     pengajar of that semester records for him (a schedule since moved
  *     to another Ustadz, Kelas or Kitab);
  *   - his santri bimbingan: the santri whose non-deleted Target Hafalan of
@@ -154,9 +155,11 @@ class TeachingScopeResolver
 
     /**
      * The (class_level_id, subject_book_id) pairs the Ustadz teaches or
-     * taught in the semester, in the school: those of his Jadwal Mengajar
-     * rows, active and deactivated, and those the riwayat pengajar records
-     * with him as the previous Ustadz (ADR 0005). A pair may appear twice;
+     * taught in the semester, in the school: one per Kelas of each of his
+     * Jadwal Mengajar rows, active and deactivated — a jadwal gabungan
+     * gives one pair per Kelas it holds (ADR 0006) — and those the riwayat
+     * pengajar records with him as the previous Ustadz, which already
+     * stores one row per Kelas (ADR 0005). A pair may appear twice;
      * TeachingScope keeps it once.
      *
      * @return Collection<int, array{class_level_id: string, subject_book_id: string}>
@@ -168,10 +171,13 @@ class TeachingScopeResolver
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
             ->where('teacher_id', $teacherId)
-            ->select(['class_level_id', 'subject_book_id'])
-            ->distinct()
-            ->get()
-            ->map(fn (TeachingSchedule $schedule) => $schedule->only(['class_level_id', 'subject_book_id']));
+            ->with('classLevels:id')
+            ->get(['id', 'subject_book_id'])
+            ->flatMap(fn (TeachingSchedule $schedule) => collect($schedule->classLevelIds())
+                ->map(fn (string $classLevelId) => [
+                    'class_level_id' => $classLevelId,
+                    'subject_book_id' => $schedule->subject_book_id,
+                ]));
 
         $formerSchedulePairs = TeachingScheduleTeacherHistory::query()
             ->where('school_id', $schoolId)
