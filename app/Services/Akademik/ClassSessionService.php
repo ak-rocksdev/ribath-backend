@@ -76,6 +76,8 @@ class ClassSessionService
 
     public const MESSAGE_RANGE_ALREADY_RECORDED = 'Tanggal ini sudah memiliki pertemuan.';
 
+    public const MESSAGE_SCHEDULE_WITHOUT_CLASS_LEVEL = 'Jadwal ini belum memiliki kelas, jadi pertemuannya tidak bisa dicatat.';
+
     private const SESSION_RELATIONS = [
         'classLevel:id,slug,label',
         'classLevels:id,slug,label',
@@ -336,7 +338,9 @@ class ClassSessionService
                 // One insert for the whole sheet: a Pertemuan is saved as a
                 // whole, and a class of 30 santri is 30 rows.
                 StudentAttendance::insert(array_map(fn (array $attendanceRow) => [
-                    'id' => (string) Str::uuid(),
+                    // Ordered like every other model's key (HasUuids), so the
+                    // rows of one sheet stay contiguous in the index.
+                    'id' => (string) Str::orderedUuid(),
                     'school_id' => $schoolId,
                     'class_session_id' => $session->id,
                     'student_id' => $attendanceRow['student_id'],
@@ -552,6 +556,8 @@ class ClassSessionService
             ->where('academic_year_id', $activeAcademicSemester->academic_year_id)
             ->where('semester', $activeAcademicSemester->semester)
             ->where('is_active', true)
+            // Every schedule's Kelas are frozen onto the Pertemuan it creates.
+            ->with('classLevels:id')
             ->get();
 
         [$createdItems, $skippedItems] = $schedules->isEmpty()
@@ -933,6 +939,12 @@ class ClassSessionService
     private function createSessionForSchedule(TeachingSchedule $schedule, CarbonInterface $sessionDate, array $attributes): ClassSession
     {
         $classLevelIds = $schedule->classLevelIds();
+
+        // A schedule always holds at least one Kelas; only data repair can
+        // leave it empty, and then the refusal must say so.
+        if ($classLevelIds === []) {
+            throw ValidationException::withMessages(['teaching_schedule_id' => self::MESSAGE_SCHEDULE_WITHOUT_CLASS_LEVEL]);
+        }
 
         return DB::transaction(function () use ($schedule, $sessionDate, $attributes, $classLevelIds) {
             $session = ClassSession::create(array_merge([

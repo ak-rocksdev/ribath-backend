@@ -3,6 +3,7 @@
 namespace App\Services\Akademik;
 
 use App\Models\ClassSession;
+use App\Models\School;
 use App\Models\Student;
 use App\Models\StudentAttendance;
 use Illuminate\Database\Eloquent\Builder;
@@ -47,6 +48,7 @@ class AttendanceTallyService
     public function sessionsOfPair(string $academicYearId, int $semester, ?string $classLevelId, string $subjectBookId): Collection
     {
         return ClassSession::query()
+            ->where('school_id', School::activeOrFail()->id)
             ->where('academic_year_id', $academicYearId)
             ->where('semester', $semester)
             ->where('subject_book_id', $subjectBookId)

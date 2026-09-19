@@ -1182,3 +1182,22 @@ test('another schools session and schedule are hidden behind 404 and rejected in
 
     expect(ClassSession::where('school_id', $context['school']->id)->count())->toBe(0);
 });
+
+test('a Pertemuan for a schedule left without a Kelas is refused with a clear message', function () {
+    $context = setUpClassSessionContext();
+
+    // A schedule can only lose its Kelas through data repair; the Pertemuan
+    // must then say so, not fail on a missing array index.
+    $context['schedule']->classLevels()->detach();
+
+    $this->actingAs($context['user'])
+        ->postJson('/api/v1/class-sessions/cancel', [
+            'teaching_schedule_id' => $context['schedule']->id,
+            'session_date' => '2025-09-08',
+            'reason' => 'Libur',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['teaching_schedule_id' => 'Jadwal ini belum memiliki kelas, jadi pertemuannya tidak bisa dicatat.']);
+
+    expect(ClassSession::count())->toBe(0);
+});
